@@ -15,11 +15,13 @@ include:
     inputs:
       zig_version: "0.15.2"
       stage: build
+      extra_packages: "libssl-dev"
 
   - component: gitlab.com/devnw/ci-catalog/zig-test@latest
     inputs:
       zig_version: "0.15.2"
       stage: test
+      extra_packages: "libssl-dev"
       allow_failure: true  # Tests may require running Geode server
 
 stages:
