@@ -1,0 +1,3 @@
+Loaded and parsed certificate from 'server.crt' (DER: 386 bytes)
+Loaded and parsed private key from 'server.key' (138 bytes)
+listening on 127.0.0.1:4434

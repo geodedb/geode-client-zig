@@ -1,0 +1,166 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: spyderorg/workflows/.github/actions/nix-setup@main
+        with:
+          git-credentials: ${{ secrets.GIT_CREDENTIALS }}
+          gh-access-token: ${{ secrets.GH_ACCESS_TOKEN }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Setup Zig 0.15.1
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.1
+      - name: Build & test
+        run: |
+          zig version
+          zig build -Doptimize=ReleaseSmall -Dstrip
+          zig build doccheck
+          UA_PERF_HARNESS_ENABLE=0 zig build test
+      - name: Perf build (fuzz/bench)
+        run: zig build perf-build
+      - name: ct-perf smoke
+        run: zig build ct-perf -Dct-iters=40 -Dct-samples=4 || true
+
+  build-macos:
+    runs-on: macos-14
+    steps:
+      - uses: spyderorg/workflows/.github/actions/nix-setup@main
+        with:
+          git-credentials: ${{ secrets.GIT_CREDENTIALS }}
+          gh-access-token: ${{ secrets.GH_ACCESS_TOKEN }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Setup Zig 0.15.1
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.1
+      - name: Build & test (compile-smoke)
+        run: |
+          zig version
+          zig build -Doptimize=ReleaseSmall -Dstrip
+          UA_PERF_HARNESS_ENABLE=0 zig build test
+      - name: Perf build (fuzz/bench)
+        run: zig build perf-build
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: spyderorg/workflows/.github/actions/nix-setup@main
+        with:
+          git-credentials: ${{ secrets.GIT_CREDENTIALS }}
+          gh-access-token: ${{ secrets.GH_ACCESS_TOKEN }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Setup Zig 0.15.1
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.1
+      - name: Build & test
+        shell: pwsh
+        run: |
+          zig version
+          zig build -Doptimize=ReleaseSmall -Dstrip
+          $env:UA_PERF_HARNESS_ENABLE = "0"
+          zig build test
+      - name: Perf build (fuzz/bench)
+        shell: pwsh
+        run: zig build perf-build
+      - name: Job Object helper exists
+        shell: pwsh
+        run: |
+          if (-Not (Test-Path .\zig-out\bin\oomhog.exe)) { exit 1 }
+
+  linux-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ZIG_VERSION: 0.15.1
+      UA_SHIM_RELAX_ON_RULES: '0'
+      UA_SHIM_NET_MODE: 'deny'
+      UA_DOCTOR_EBPF_SELFTEST: '1'
+      UA_PERF_HARNESS_ENABLE: '0'
+      UA_SKIP_EBPF_TESTS: '1'
+    steps:
+      - uses: spyderorg/workflows/.github/actions/nix-setup@main
+        with:
+          git-credentials: ${{ secrets.GIT_CREDENTIALS }}
+          gh-access-token: ${{ secrets.GH_ACCESS_TOKEN }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Build
+        run: zig build -Doptimize=ReleaseSmall -Dstrip
+      - name: Doc coverage
+        run: zig build doccheck
+      - name: Run unit tests (perf gates enforced)
+        run: |
+          set -euo pipefail
+          timeout --foreground -k 1m 15m zig build test -Ddeterministic=true
+      - name: Ensure GAP updated when code changed (PRs)
+        if: github.event_name == 'pull_request'
+        run: |
+          BASE=${{ github.event.pull_request.base.sha }}
+          CHANGED=$(git diff --name-only "$BASE"...)
+          echo "$CHANGED" | grep -q . || exit 0
+          if echo "$CHANGED" | grep -qvE '^(docs/|\.github/|LICENSE|README|USAGE|configs/|fixtures/|zig-cache/|zig-out/|nix/|go/|scripts/)'; then
+            echo "$CHANGED" | grep -q '^docs/GAP_ANALYSIS.md$' || (echo "docs/GAP_ANALYSIS.md not updated" && exit 1)
+          fi
+
+  accept-handshake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: spyderorg/workflows/.github/actions/nix-setup@main
+        with:
+          git-credentials: ${{ secrets.GIT_CREDENTIALS }}
+          gh-access-token: ${{ secrets.GH_ACCESS_TOKEN }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Setup Zig 0.15.1
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.1
+      - name: Acceptance handshake (stub)
+        run: zig build test -Daccept=true -Denable_quic_stub=true -- TestAcceptance_QuicV2Handshake
+
+  linux-perf:
+    runs-on: ubuntu-latest
+    needs: [build-linux]
+    env:
+      ZIG_VERSION: 0.15.1
+      UA_PERF_HARNESS_ENABLE: '1'
+    steps:
+      - uses: spyderorg/workflows/.github/actions/nix-setup@main
+        with:
+          git-credentials: ${{ secrets.GIT_CREDENTIALS }}
+          gh-access-token: ${{ secrets.GH_ACCESS_TOKEN }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Baseline ct-perf (artifact)
+        run: |
+          set -euo pipefail
+          zig build ct-perf -Doptimize=ReleaseFast -Dct-iters=800 -Dct-samples=32 -Dct-fail-t=8.0 > ct_perf_baseline.json
+      - name: Upload baseline artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ct-perf-baseline
+          path: ct_perf_baseline.json
+      - name: Probe (expect failure)
+        run: |
+          set +e
+          zig build ct-perf -Doptimize=ReleaseFast -Dct-iters=400 -Dct-samples=16 -Dct-fail-t=8.0 -Dct-probe=true > ct_perf_probe.json && echo "UNEXPECTED PASS" && exit 1 || echo "Probe run failed as expected"
+      - name: Upload probe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ct-perf-probe
+          path: ct_perf_probe.json

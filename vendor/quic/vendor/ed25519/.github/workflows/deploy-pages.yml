@@ -1,0 +1,50 @@
+name: 'Package Docs, Benchmarks, Coverage & Metrics to GitHub Pages'
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Use doc-pages composite action
+        uses: codeprosorg/doc-pages@main
+        id: docs
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          run_benchmarks: true
+          bench_branch: bench-data
+          site_name: '${{ github.repository }} — Documentation Site'
+          extra_nav_docs: true
+          nav_order: home,reference,coverage,metrics,security,bench,docs
+          embed_coverage_html: true
+          enable_nix: true
+          git_credentials: ${{ secrets.GIT_CREDENTIALS }}
+          cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Upload doc-pages artifacts
+        uses: actions/upload-pages-artifact@v3
+        with:
+          name: github-pages
+          path: ${{ steps.docs.outputs.site_dir }}
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

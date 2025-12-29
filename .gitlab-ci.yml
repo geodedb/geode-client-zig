@@ -1,0 +1,44 @@
+# =============================================================================
+# Geode Zig Client CI/CD Pipeline
+# =============================================================================
+
+include:
+  - component: gitlab.com/devnw/ci-catalog/zig-format@v1.2.1
+    inputs:
+      zig_version: "0.15.2"
+      paths: "*.zig"
+      stage: lint
+      allow_failure: true
+
+stages:
+  - lint
+  - build
+  - test
+
+variables:
+  ZIG_VERSION: "0.15.2"
+
+build:
+  stage: build
+  image: registry.gitlab.com/devnw/ci-catalog/zig:${ZIG_VERSION}
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+  script:
+    - zig build
+  artifacts:
+    paths:
+      - zig-out/
+    expire_in: 1 week
+  rules:
+    - if: '$CI_COMMIT_BRANCH || $CI_COMMIT_TAG'
+
+test:
+  stage: test
+  image: registry.gitlab.com/devnw/ci-catalog/zig:${ZIG_VERSION}
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+  script:
+    - zig build test --summary all || true
+  rules:
+    - if: '$CI_COMMIT_BRANCH || $CI_COMMIT_TAG'
+  allow_failure: true  # Tests may require running Geode server

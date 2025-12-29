@@ -1,0 +1,28 @@
+name: vendor-ed25519
+
+on:
+  push:
+    paths:
+      - 'vendor/ed25519/**'
+      - '.github/workflows/ed25519-vendor-ci.yml'
+  pull_request:
+    paths:
+      - 'vendor/ed25519/**'
+  workflow_dispatch: {}
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.15.1
+      - name: Build & Test (vendor ed25519)
+        run: zig build test -Duse_vendor_ed25519=true --summary all
+      - name: Basic RFC8032 Smoke (future)
+        if: always()
+        run: |
+          echo "(Add vector tests once synced)"

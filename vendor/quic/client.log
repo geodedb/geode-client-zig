@@ -1,0 +1,1241 @@
+Endpoint role determined as: .Client
+[createClientConnection] Generated DCID len=8 bytes: 59 2E 9A CC B8 CC B8 45 
+Client connection registered:
+  peer_hash=1FED790BB0697913
+  By DCID hash=4D399E819A819015 (peer_initial_dcid)
+  By SCID hash=E221091A6A7EBABE (our_scid)
+client: deriving Initial keys with dcid (peer_initial_dcid) len=8: 59 2E 9A CC B8 CC B8 45 
+       original_dcid len=8: 59 2E 9A CC B8 CC B8 45 
+[Client TX] Initial key[0..4]: F9 35 B9 AE 
+protectPacket INPUT: plaintext.len=1156 out_cipher.len=1172
+protectPacket INPUT: plaintext first 30 bytes: 06 00 40 a9 01 00 00 a5 03 03 0c ca 97 cb d7 26 d0 5a a1 4f cd 52 24 d6 37 7e f3 0b e0 11 
+protectPacket: pn=0 pn_len=2 header_prefix_len=25 aad_len=28
+protectPacket: header_first=0xC1
+protectPacket: AAD (first 20 bytes): C1 00 00 00 01 08 59 2E 9A CC B8 CC B8 45 08 5C 1A 8E 93 49
+protectPacket: Nonce: DE 16 76 4A 35 7D F3 F2 AA DC E4 73
+client: built Initial pn=0 dcid=
+59
+2E
+9A
+CC
+B8
+CC
+B8
+45
+ scid=
+5C
+1A
+8E
+93
+49
+A0
+2B
+7C
+ payload_len=1156
+[PHASE50-CC] onPacketSent: space=Initial pn=0 bytes=1200 ack_eliciting=true inflight: 0→1200 cwnd=12000
+connecting to 127.0.0.1:4433
+processIncomingDatagram: Extracted type 0 packet, len=138 from datagram offset=0
+setPeerInitialCids: ENTER - dcid.len=8, scid.len=8
+setPeerInitialCids: Before setting peer_initial_scid, current len=0
+setPeerInitialCids: EXIT - peer_initial_dcid.len=8, peer_initial_scid.len=8
+[LOCALHOST] IPv4 check: 127.0.0.1 -> true
+[PHASE42] processInitial: role=Client address_validated=true isLocalhost=true enable_retry=false
+[Server RX] Initial key[0..4]: 70 D0 B3 A5  (dcid len=8)
+[processInitial] Before decrypt: largest_pn_for_expansion=0
+[unprotectInitial] PN bytes after unmasking: 00 00 
+[unprotectInitial] truncated=0 actual_pn_len=2 largest_pn=0
+[unprotectInitial] expanded to full_pn=0
+[processInitial] After decrypt: expanded packet_number=0
+setCurrentConnection: Setting conn=conn.Connection@71b4d5780000 role=Client
+[processInitial] Tracking received packet number: 0
+[processInitial] After tracking - pn_initial.max=0, have_any=true
+[processInitial] Decrypted payload length: 94 bytes
+[processInitial] Decoding frame at offset 0/94
+[processInitial] Decoded frame type: .crypto
+Client: Received Initial CRYPTO frame with 90 bytes at offset 0 (expected 0)
+pushCrypto: role=Client, level=Initial, hs_len=90
+onSecretAvailable: conn=conn.Connection@71b4d5780000 role=Client level=Handshake
+  secret: d47f60370c5e43fc35fdb69b5dc2b4a2cb964cbd12865b90bda6803d115843a5
+onSecretAvailable[Client]: Stored client HS secret (1st call): D47F...
+onSecretAvailable: conn=conn.Connection@71b4d5780000 role=Client level=Handshake
+  secret: 0012e776c7a8441829008a4cb1be7396a25a11d3b2a46dd80c9234a62fad69f4
+onSecretAvailable[Client]: Stored server HS secret (2nd call): 0012...
+installHandshakeKeys: CALLED with role=Client
+  client_secret[0..4]: D47F6037
+  server_secret[0..4]: 0012E776
+  Derived client_keys: key[0..4]=F099416D, hp[0..4]=AABC333B
+  Derived server_keys: key[0..4]=AD66E200, hp[0..4]=CC453983
+installHandshakeKeys: Client installed Handshake keys (conn=conn.Connection@71b4d5780000)
+  Client RX HP key: CC453983
+[pushCrypto] Checking if should derive Application keys: app_tx_keys=false, conn=conn.Connection@71b4d5780000
+[pushCrypto] Flags: conn=conn.Connection@71b4d5780000, conn.peer_finished_verified=false, flags.local_finished_sent=false
+[processInitial] Checking ServerHello condition: role=Client, saw_crypto=true
+[processInitial] Building ACK: largest=0, first_range=0, ranges_len=0
+[processInitial] pn_initial: max=0, have_any=true
+[processInitial] ACK frame bytes (5 bytes): 02 00 00 00 00 
+protectPacket INPUT: plaintext.len=5 out_cipher.len=21
+protectPacket INPUT: plaintext first 30 bytes: 02 00 00 00 00 
+protectPacket: pn=1 pn_len=2 header_prefix_len=24 aad_len=27
+protectPacket: header_first=0xC1
+protectPacket: AAD (first 20 bytes): C1 00 00 00 01 08 3F 78 3F 72 F1 8F 57 B7 08 5C 1A 8E 93 49
+protectPacket: Nonce: DE 16 76 4A 35 7D F3 F2 AA DC E4 72
+protectPacket WARNING: small plaintext.len=5, ct_len=21
+[PHASE50-CC] onPacketSent: space=Initial pn=1 bytes=48 ack_eliciting=false inflight: 1200→1200 cwnd=12000
+clearCurrentConnection: Clearing conn=conn.Connection@71b4d5780000 role=Client
+processIncomingDatagram: Extracted type 2 packet, len=648 from datagram offset=138
+processHandshake: Looking up conn with peer_hash=1FED790BB0697913, DCID len=8, DCID hash=E221091A6A7EBABE
+processHandshake: Packet len=648, header offset=23, role=Client, conn_ptr=conn.Connection@71b4d5780000
+  RX keys - key[0..4]: AD66E200, hp[0..4]: CC453983
+  TX keys - key[0..4]: F099416D, hp[0..4]: AABC333B
+decryptHandshakePacket: bytes.len=648, length_offset=23, payload_len=623, end_total=648
+decryptHandshakePacket: PN length detection - original=0xE4, mask=0x05, unmasked=0xE1
+  Detected PN length: 2 (from bits 0x01)
+decryptHandshakePacket: Attempting decrypt with pn_len=2, header_prefix.len=24, ciphertext.len=623
+decryptHandshakePacket: Unmasking PN bytes:
+  PN[0]: 0xD9 XOR 0xD9 = 0x00
+  PN[1]: 0xB5 XOR 0xB5 = 0x00
+decryptHandshakePacket: After HP removal: first=0xE1, expected=0xE1
+decryptHandshakePacket AAD: first_byte=0xE1 (should be ~0xE2-E3 for Handshake), header_prefix.len=24, pn_len=2
+  AAD bytes: E1 00 00 00 01 08 5C 1A 8E 93 49 A0 2B 7C 08 3F 78 3F 72 F1 8F 57 B7 42 6F 00 00 
+decryptHandshakePacket: PN expansion: truncated=0, pn_len=2, largest_pn=0, expanded=0
+  PN bytes (unmasked): 00 00 
+decryptHandshakePacket: Using keys for AEAD decrypt:
+  key[0..4]: AD66E200
+  iv[0..4]: 4DE3B294
+  ciphertext_len=621
+setCurrentConnection: Setting conn=conn.Connection@71b4d5780000 role=Client
+Client: Received Handshake CRYPTO frame with 601 bytes at offset 0 (expected 0)
+[CRYPTO-HS-CLIENT] recv offset=0 len=601 expected=0
+pushCrypto: role=Client, level=Handshake, hs_len=601
+[TLS-HS-CLIENT] Handshake bytes head (16): { 8, 0, 0, 83, 0, 81, 0, 16, 0, 13, 0, 11, 10, 104, 113, 45 }
+[TLS-HS-CLIENT] Handshake bytes mid (80..112): { 120, 63, 114, 241, 143, 87, 183, 11, 0, 1, 139, 0, 0, 1, 135, 0, 1, 130, 48, 130, 1, 126, 48, 130, 1, 35, 160, 3, 2, 1, 2, 2 }
+[TLS-HS-CLIENT] Handshake hash=0x56FF29549AD0143C, tail (16): { 120, 166, 233, 187, 234, 224, 83, 149, 168, 154, 143, 59, 174, 237, 229, 169 }
+onSecretAvailable: conn=conn.Connection@71b4d5780000 role=Client level=Application
+  secret: 65e254786540d616c383e87af2ad4eda7fd01b8a019807231a85391dc148472f
+onSecretAvailable: conn=conn.Connection@71b4d5780000 role=Client level=Application
+  secret: 69c020d51e7c3099079ed9a918b2160144f6cb7a13dab17794b4f9de5e83597b
+
+[installApplicationKeys] Called for Client
+  client_secret[0..4]: 65E25478
+  server_secret[0..4]: 69C020D5
+  client_keys.key[0..4]: FB11C8B6
+  server_keys.key[0..4]: F5FFEC32
+[PHASE57-INSTALL] Client: next_secret=e4097ace2eb4a34ea0fda8d27233fa06d82a16cdaa294dad33d8d7153b3ea53b key=836a9708d80e6173909ba9a86259f096 iv=1a67840d038b15afc3b9df3b hp=4b82a1d6d66fcb7b9e2990e2288992a7
+  Client: app_rx_keys (server) = F5FFEC32
+  Client: app_tx_keys (client) = FB11C8B6
+  Client: Dropping Initial keys (Application keys installed)
+  Client: Deferring Handshake key drop (peer_finished_verified=false, handshake_packet_sent=false)
+[onPeerFinished] CALLBACK INVOKED for Client, conn=conn.Connection@71b4d5780000
+[onPeerFinished] Set peer_finished_verified=true for Client, conn=conn.Connection@71b4d5780000, value now=true
+onHandshakeComplete: Handshake complete for role=.Client
+[pushCrypto] Client polled 36 bytes of outgoing CRYPTO at Handshake level
+encodeHandshakeProtected: CALLED with packet_number=0 version=0x00000001
+encodeHandshakeProtected: Keys at function entry - key[0..4]=F099416D, iv[0..4]=FF5495F5
+encodeHandshakeProtected: dcid.len=8, scid.len=8
+encodeHandshakeProtected: dcid bytes: 3F
+78
+3F
+72
+F1
+8F
+57
+B7
+encodeHandshakeProtected: scid bytes: 5C
+1A
+8E
+93
+49
+A0
+2B
+7C
+encodeHandshakeProtected: packet_number_len=2, pn_bits=1, first=0xE1
+encodeHandshakeProtected: writing version bytes 00 00 00 01
+encodeHandshakeProtected: payload_len=39, ct_len=55, pn_len=2, length_value=57
+encodeHandshakeProtected: PN 0 encoded as bytes [00 00 ]
+encodeHandshakeProtected: Keys before header_first - key[0..4]=F099416D
+encodeHandshakeProtected: Keys after memcpy - key[0..4]=F099416D
+encodeHandshakeProtected: Using keys - key[0..4]=F099416D, iv[0..4]=FF5495F5, hp[0..4]=AABC333B
+protectPacket INPUT: plaintext.len=39 out_cipher.len=55
+protectPacket INPUT: plaintext first 30 bytes: 06 00 24 14 00 00 20 3e 6e a7 a2 7a 35 bd 4f ae ef 01 3b 79 cb 63 a7 59 b7 f1 49 02 f0 a4 
+protectPacket: pn=0 pn_len=2 header_prefix_len=23 aad_len=26
+protectPacket: header_first=0xE1
+protectPacket: AAD (first 20 bytes): E1 00 00 00 01 08 3F 78 3F 72 F1 8F 57 B7 08 5C 1A 8E 93 49
+protectPacket: Nonce: FF 54 95 F5 E5 9C 8E 0D E9 92 84 27
+protectPacket WARNING: small plaintext.len=39, ct_len=55
+encodeHandshakeProtected: AFTER header protection - first byte changed from 0xE1 to 0xE1
+encodeHandshakeProtected: Final packet first 5 bytes: E1 00 00 00 01
+=== HANDSHAKE PACKET HEXDUMP (first 64 bytes) ===
+0000: E1 00 00 00 01 08 3F 78 3F 72 F1 8F 57 B7 08 5C 0010: 1A 8E 93 49 A0 2B 7C 39 91 15 8D FF 8A 86 33 BD 0020: 29 41 83 37 14 35 D2 61 C6 47 A2 02 54 A4 A2 20 0030: 9B 87 41 42 4F 1E 0E D6 C5 B7 3C 40 1B FD 05 4F === END HEXDUMP (total packet size: 81 bytes) ===
+encodeHandshakeProtected: SUCCESS - packet length verified: declared_in_header=57, actual_packet_len=57
+[PHASE50-CC] onPacketSent: space=Handshake pn=0 bytes=81 ack_eliciting=true inflight: 1200→1281 cwnd=12000
+[sendHandshakeCrypto] Sent 36 bytes of CRYPTO in Handshake packet
+onHandshakeComplete: Handshake complete for role=.Client
+[pushCrypto] Client marked local_finished_sent=true
+[pushCrypto] Checking if should derive Application keys: app_tx_keys=true, conn=conn.Connection@71b4d5780000
+processHandshake: App keys ready - handshake complete
+setCurrentConnection: Setting conn=conn.Connection@71b4d5780000 role=Client
+clearCurrentConnection: Clearing conn=conn.Connection@71b4d5780000 role=Client
+encodeHandshakeProtected: CALLED with packet_number=1 version=0x00000001
+encodeHandshakeProtected: Keys at function entry - key[0..4]=F099416D, iv[0..4]=FF5495F5
+encodeHandshakeProtected: dcid.len=8, scid.len=8
+encodeHandshakeProtected: dcid bytes: 3F
+78
+3F
+72
+F1
+8F
+57
+B7
+encodeHandshakeProtected: scid bytes: 5C
+1A
+8E
+93
+49
+A0
+2B
+7C
+encodeHandshakeProtected: packet_number_len=2, pn_bits=1, first=0xE1
+encodeHandshakeProtected: writing version bytes 00 00 00 01
+encodeHandshakeProtected: payload_len=5, ct_len=21, pn_len=2, length_value=23
+encodeHandshakeProtected: PN 1 encoded as bytes [00 01 ]
+encodeHandshakeProtected: Keys before header_first - key[0..4]=F099416D
+encodeHandshakeProtected: Keys after memcpy - key[0..4]=F099416D
+encodeHandshakeProtected: Using keys - key[0..4]=F099416D, iv[0..4]=FF5495F5, hp[0..4]=AABC333B
+protectPacket INPUT: plaintext.len=5 out_cipher.len=21
+protectPacket INPUT: plaintext first 30 bytes: 02 00 00 00 00 
+protectPacket: pn=1 pn_len=2 header_prefix_len=23 aad_len=26
+protectPacket: header_first=0xE1
+protectPacket: AAD (first 20 bytes): E1 00 00 00 01 08 3F 78 3F 72 F1 8F 57 B7 08 5C 1A 8E 93 49
+protectPacket: Nonce: FF 54 95 F5 E5 9C 8E 0D E9 92 84 26
+protectPacket WARNING: small plaintext.len=5, ct_len=21
+encodeHandshakeProtected: AFTER header protection - first byte changed from 0xE1 to 0xE9
+encodeHandshakeProtected: Final packet first 5 bytes: E9 00 00 00 01
+=== HANDSHAKE PACKET HEXDUMP (first 64 bytes) ===
+0000: E9 00 00 00 01 08 3F 78 3F 72 F1 8F 57 B7 08 5C 0010: 1A 8E 93 49 A0 2B 7C 17 EB 7B 38 34 11 CD B7 EB 0020: F9 25 93 95 FE 92 73 B9 52 EB 74 E4 6E E5 F4 === END HEXDUMP (total packet size: 47 bytes) ===
+encodeHandshakeProtected: SUCCESS - packet length verified: declared_in_header=23, actual_packet_len=23
+processIncomingDatagram: Extracted type 0 packet, len=48 from datagram offset=0
+setPeerInitialCids: ENTER - dcid.len=8, scid.len=8
+setPeerInitialCids: Before setting peer_initial_scid, current len=8
+setPeerInitialCids: EXIT - peer_initial_dcid.len=8, peer_initial_scid.len=8
+[LOCALHOST] IPv4 check: 127.0.0.1 -> true
+[PHASE42] processInitial: role=Client address_validated=true isLocalhost=true enable_retry=false
+[Server RX] Initial key[0..4]: 70 D0 B3 A5  (dcid len=8)
+[processInitial] Before decrypt: largest_pn_for_expansion=0
+[unprotectInitial] PN bytes after unmasking: 00 01 
+[unprotectInitial] truncated=1 actual_pn_len=2 largest_pn=0
+[unprotectInitial] expanded to full_pn=1
+[processInitial] After decrypt: expanded packet_number=1
+setCurrentConnection: Setting conn=conn.Connection@71b4d5780000 role=Client
+[processInitial] Tracking received packet number: 1
+[processInitial] After tracking - pn_initial.max=1, have_any=true
+[processInitial] Decrypted payload length: 5 bytes
+[processInitial] Decoding frame at offset 0/5
+[processInitial] Decoded frame type: .ack
+[P42-22-ACK-RX] 📥 space=Initial acked_count=1 prev_largest=0
+[PHASE49-CC] ✅ ACK: acked=1200B cwnd: 12000→13200 inflight: 1281→81 ssthresh=9223372036854775807 mode=slow_start available=13119B
+[processInitial] Checking ServerHello condition: role=Client, saw_crypto=false
+clearCurrentConnection: Clearing conn=conn.Connection@71b4d5780000 role=Client
+[processShortHeader] Called for 40 bytes
+[processShortHeader] Found connection, role=Client, has_app_rx_keys=true
+[APP-DECRYPT-START] attempt=1 dcid_len=8 bytes=40 cached=null
+[APP-PATH] Enter enumerateDcidLength (short header) bytes_len=40 try_dcid_len=8 largest_pn=0 conn_set=true
+[APP-DECODE] TRY CURRENT dcid_len=8 largest_pn=0 rx_phase=false bytes=40
+[SHORT-DECODE-ENTRY] bytes=40 dcid_len=8 largest_pn=0 key0=F5
+SHORT HEADER HP: pn_start=9, sample_offset=13, packet_len=40
+SHORT HEADER HP: sample16 = 37 B7 95 D6 B3 DA 56 41 BE 70 29 87 F1 E4 80 92 
+HP mask (first 5 bytes): 61
+CA
+AD
+D1
+09
+is_long=false, hdr_mask=1F, header_first_before=40
+header_first_after=41
+Decoded pn_len from header: 2
+pn_buf before unmasking: { 202, 173, 114, 113 }
+pn_buf after unmasking: { 0, 0, 163, 120 }, using pn_len=2
+decodeShortProtected: EARLY KEY_PHASE extraction = false (header_first=0x41)
+decodeShortProtected: truncated PN=0 -> expanded PN=0 (largest_pn=0)
+decodeShortProtected: KEY_PHASE bit = false (header_first=0x41)
+[PHASE57] ✅ Decrypted with CURRENT keys: dcid_len=8 pn=0
+[PHASE57-DECRYPT] ✅ Decrypted with CURRENT keys: pn=0 key_phase=false conn_rx_kp=false
+[APP-DECRYPT-SUCCESS] attempt=1 pn=0 payload_len=13 used_next=false used_prev=false rx_phase=false success_ratio=1/1
+[APP-DISPATCH] Parsing 1-RTT frames payload_len=13 pn=0
+[APP-STREAM-SCAN] no STREAM type bytes found in first 13 bytes
+[APP-PAYLOAD-HEX] 11 00 80 20 00 00 10 80 A0 00 00 12 10 
+Parsing frames from payload, total_len=13, role=Client
+Decoded frame at offset 0: type=max_stream_data
+[FC-TX] Received MAX_STREAM_DATA(stream=0, max=2097152) creating TX state
+[processFrames] Frame processed: saw_handshake_done=false
+Decoded frame at offset 6: type=max_data
+[FC-CONN] Received MAX_DATA(max=10485760) ignored (current=10485760)
+[processFrames] Frame processed: saw_handshake_done=false
+Decoded frame at offset 11: type=max_streams_bidi
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=true, saw_handshake_done=false, saw_close=false
+Client: Using DCID for 1-RTT packet: 3f
+78
+3f
+72
+f1
+8f
+57
+b7
+ (len=8)
+encodeShortProtected: pn=0 (0x0) pn_len=2 dcid=?x?r�W�
+protectPacket INPUT: plaintext.len=5 out_cipher.len=21
+protectPacket INPUT: plaintext first 30 bytes: 02 00 00 00 00 
+protectPacket: pn=0 pn_len=2 header_prefix_len=8 aad_len=11
+protectPacket: header_first=0x41
+protectPacket: AAD (first 20 bytes): 41 3F 78 3F 72 F1 8F 57 B7 00 00 00 00 00 00 00 00 00 00 00
+protectPacket: Nonce: D1 26 48 AE 55 06 1C 61 6B 82 DB E5
+protectPacket WARNING: small plaintext.len=5, ct_len=21
+[PHASE51] onShortHeaderPacketSent called: bytes=32 ack_eliciting=false pn=0
+[PHASE50-CC] onPacketSent: space=Application pn=0 bytes=32 ack_eliciting=false inflight: 81→81 cwnd=13200
+[APP-ACK] immediate ack largest=0 pn=1 bytes=32
+[APP-DISPATCH] ack-eliciting pn=0
+[PHASE57-STEP5] ✓ used_next=false, no key promotion needed
+[P42-20-PN-OK] ✓ Sequential PN received: pn=0, prev_largest=0
+Parsing frames from payload, total_len=13, role=Client
+Decoded frame at offset 0: type=max_stream_data
+[FC-TX] Received MAX_STREAM_DATA(stream=0, max=2097152) ignored (current=2097152)
+[processFrames] Frame processed: saw_handshake_done=false
+Decoded frame at offset 6: type=max_data
+[FC-CONN] Received MAX_DATA(max=10485760) ignored (current=10485760)
+[processFrames] Frame processed: saw_handshake_done=false
+Decoded frame at offset 11: type=max_streams_bidi
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=true, saw_handshake_done=false, saw_close=false
+Client: Using DCID for 1-RTT packet: 3f
+78
+3f
+72
+f1
+8f
+57
+b7
+ (len=8)
+encodeShortProtected: pn=2 (0x2) pn_len=2 dcid=?x?r�W�
+protectPacket INPUT: plaintext.len=5 out_cipher.len=21
+protectPacket INPUT: plaintext first 30 bytes: 02 00 00 00 00 
+protectPacket: pn=2 pn_len=2 header_prefix_len=8 aad_len=11
+protectPacket: header_first=0x41
+protectPacket: AAD (first 20 bytes): 41 3F 78 3F 72 F1 8F 57 B7 00 02 00 00 00 00 00 00 00 00 00
+protectPacket: Nonce: D1 26 48 AE 55 06 1C 61 6B 82 DB E7
+protectPacket WARNING: small plaintext.len=5, ct_len=21
+[PHASE51] onShortHeaderPacketSent called: bytes=32 ack_eliciting=false pn=2
+[PHASE50-CC] onPacketSent: space=Application pn=2 bytes=32 ack_eliciting=false inflight: 81→81 cwnd=13200
+[APP-ACK] immediate ack largest=0 pn=3 bytes=32
+[P42-21-ACK-TRIGGER] ⏰ ACK triggered: saw_ack_elicit=Y ecn=N delay_since_rx=0us
+[LOCALHOST] IPv4 check: 127.0.0.1 -> true
+[AMPLIFICATION] validated=true isLocalhost=true rx=0 tx=0 tx/3=0 allow=true
+[P42-21-ACK-AMPLIF] allow_send=Y rx_unval=0 tx_unval=0 validated=Y ratio=0.00
+encodeShortProtected: pn=4 (0x4) pn_len=2 dcid=?x?r�W�
+protectPacket INPUT: plaintext.len=12 out_cipher.len=28
+protectPacket INPUT: plaintext first 30 bytes: 02 00 00 00 00 10 80 a0 00 00 12 10 
+protectPacket: pn=4 pn_len=2 header_prefix_len=8 aad_len=11
+protectPacket: header_first=0x41
+protectPacket: AAD (first 20 bytes): 41 3F 78 3F 72 F1 8F 57 B7 00 04 00 00 00 00 00 00 00 00 00
+protectPacket: Nonce: D1 26 48 AE 55 06 1C 61 6B 82 DB E1
+protectPacket WARNING: small plaintext.len=12, ct_len=28
+[P42-21-ACK-SENT] ✅ Normal ACK sent: pkt_len=39B largest=0 delay_rx_to_tx=0us send_us=11us total=11us
+[PHASE51] onShortHeaderPacketSent called: bytes=39 ack_eliciting=false pn=4
+[PHASE50-CC] onPacketSent: space=Application pn=4 bytes=39 ack_eliciting=false inflight: 81→81 cwnd=13200
+[processShortHeader] Called for 41 bytes
+[processShortHeader] Found connection, role=Client, has_app_rx_keys=true
+[APP-DECRYPT-START] attempt=2 dcid_len=8 bytes=41 cached=8
+[APP-PATH] Enter enumerateDcidLength (short header) bytes_len=41 try_dcid_len=8 largest_pn=0 conn_set=true
+[APP-DECODE] TRY CURRENT dcid_len=8 largest_pn=0 rx_phase=false bytes=41
+[SHORT-DECODE-ENTRY] bytes=41 dcid_len=8 largest_pn=0 key0=F5
+SHORT HEADER HP: pn_start=9, sample_offset=13, packet_len=41
+SHORT HEADER HP: sample16 = 73 BF 9F DB 7A 34 09 0A A6 BE 04 B0 47 22 05 C2 
+HP mask (first 5 bytes): A8
+FF
+58
+77
+FA
+is_long=false, hdr_mask=1F, header_first_before=49
+header_first_after=41
+Decoded pn_len from header: 2
+pn_buf before unmasking: { 255, 89, 3, 208 }
+pn_buf after unmasking: { 0, 1, 116, 42 }, using pn_len=2
+decodeShortProtected: EARLY KEY_PHASE extraction = false (header_first=0x41)
+decodeShortProtected: truncated PN=1 -> expanded PN=1 (largest_pn=0)
+decodeShortProtected: KEY_PHASE bit = false (header_first=0x41)
+[PHASE57] ✅ Decrypted with CURRENT keys: dcid_len=8 pn=1
+[PHASE57-DECRYPT] ✅ Decrypted with CURRENT keys: pn=1 key_phase=false conn_rx_kp=false
+[APP-DECRYPT-SUCCESS] attempt=2 pn=1 payload_len=14 used_next=false used_prev=false rx_phase=false success_ratio=2/2
+[APP-DISPATCH] Parsing 1-RTT frames payload_len=14 pn=1
+[APP-STREAM-SCAN] no STREAM type bytes found in first 14 bytes
+[APP-PAYLOAD-HEX] 1E 11 00 80 20 00 00 10 80 A0 00 00 12 10 
+Parsing frames from payload, total_len=14, role=Client
+Decoded frame at offset 0: type=handshake_done
+[handleHandshakeDone] HANDSHAKE_DONE frame received, role=Client
+[processFrames] Frame processed: saw_handshake_done=true
+Decoded frame at offset 1: type=max_stream_data
+[FC-TX] Received MAX_STREAM_DATA(stream=0, max=2097152) ignored (current=2097152)
+[processFrames] Frame processed: saw_handshake_done=false
+Decoded frame at offset 7: type=max_data
+[FC-CONN] Received MAX_DATA(max=10485760) ignored (current=10485760)
+[processFrames] Frame processed: saw_handshake_done=false
+Decoded frame at offset 12: type=max_streams_bidi
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=true, saw_handshake_done=true, saw_close=false
+Client: Using DCID for 1-RTT packet: 3f
+78
+3f
+72
+f1
+8f
+57
+b7
+ (len=8)
+encodeShortProtected: pn=5 (0x5) pn_len=2 dcid=?x?r�W�
+protectPacket INPUT: plaintext.len=5 out_cipher.len=21
+protectPacket INPUT: plaintext first 30 bytes: 02 00 00 00 00 
+protectPacket: pn=5 pn_len=2 header_prefix_len=8 aad_len=11
+protectPacket: header_first=0x41
+protectPacket: AAD (first 20 bytes): 41 3F 78 3F 72 F1 8F 57 B7 00 05 00 00 00 00 00 00 00 00 00
+protectPacket: Nonce: D1 26 48 AE 55 06 1C 61 6B 82 DB E0
+protectPacket WARNING: small plaintext.len=5, ct_len=21
+[PHASE51] onShortHeaderPacketSent called: bytes=32 ack_eliciting=false pn=5
+[PHASE50-CC] onPacketSent: space=Application pn=5 bytes=32 ack_eliciting=false inflight: 81→81 cwnd=13200
+[APP-ACK] immediate ack largest=0 pn=6 bytes=32
+[processApplicationFrames] Setting handshake_done_seen=true for Client
+[processApplicationFrames] Client: Deferring Handshake key drop (handshake_packet_sent=false)
+[APP-DISPATCH] ack-eliciting pn=1
+[PHASE57-STEP5] ✓ used_next=false, no key promotion needed
+[P42-20-PN-OK] ✓ Sequential PN received: pn=1, prev_largest=0
+Parsing frames from payload, total_len=14, role=Client
+Decoded frame at offset 0: type=handshake_done
+[handleHandshakeDone] HANDSHAKE_DONE frame received, role=Client
+[processFrames] Frame processed: saw_handshake_done=true
+Decoded frame at offset 1: type=max_stream_data
+[FC-TX] Received MAX_STREAM_DATA(stream=0, max=2097152) ignored (current=2097152)
+[processFrames] Frame processed: saw_handshake_done=false
+Decoded frame at offset 7: type=max_data
+[FC-CONN] Received MAX_DATA(max=10485760) ignored (current=10485760)
+[processFrames] Frame processed: saw_handshake_done=false
+Decoded frame at offset 12: type=max_streams_bidi
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=true, saw_handshake_done=true, saw_close=false
+Client: Using DCID for 1-RTT packet: 3f
+78
+3f
+72
+f1
+8f
+57
+b7
+ (len=8)
+encodeShortProtected: pn=7 (0x7) pn_len=2 dcid=?x?r�W�
+protectPacket INPUT: plaintext.len=5 out_cipher.len=21
+protectPacket INPUT: plaintext first 30 bytes: 02 01 00 00 01 
+protectPacket: pn=7 pn_len=2 header_prefix_len=8 aad_len=11
+protectPacket: header_first=0x41
+protectPacket: AAD (first 20 bytes): 41 3F 78 3F 72 F1 8F 57 B7 00 07 00 00 00 00 00 00 00 00 00
+protectPacket: Nonce: D1 26 48 AE 55 06 1C 61 6B 82 DB E2
+protectPacket WARNING: small plaintext.len=5, ct_len=21
+[PHASE51] onShortHeaderPacketSent called: bytes=32 ack_eliciting=false pn=7
+[PHASE50-CC] onPacketSent: space=Application pn=7 bytes=32 ack_eliciting=false inflight: 81→81 cwnd=13200
+[APP-ACK] immediate ack largest=1 pn=8 bytes=32
+[processApplicationFrames] Setting handshake_done_seen=true for Client
+[processApplicationFrames] Client: Deferring Handshake key drop (handshake_packet_sent=false)
+[processShortHeader] CRITICAL: Setting handshake_done_seen=true for Client
+[processShortHeader] Client: Deferring Handshake key drop (handshake_packet_sent=false)
+[P42-21-ACK-TRIGGER] ⏰ ACK triggered: saw_ack_elicit=Y ecn=N delay_since_rx=0us
+[LOCALHOST] IPv4 check: 127.0.0.1 -> true
+[AMPLIFICATION] validated=true isLocalhost=true rx=0 tx=0 tx/3=0 allow=true
+[P42-21-ACK-AMPLIF] allow_send=Y rx_unval=0 tx_unval=0 validated=Y ratio=0.00
+encodeShortProtected: pn=9 (0x9) pn_len=2 dcid=?x?r�W�
+protectPacket INPUT: plaintext.len=5 out_cipher.len=21
+protectPacket INPUT: plaintext first 30 bytes: 02 01 00 00 01 
+protectPacket: pn=9 pn_len=2 header_prefix_len=8 aad_len=11
+protectPacket: header_first=0x41
+protectPacket: AAD (first 20 bytes): 41 3F 78 3F 72 F1 8F 57 B7 00 09 00 00 00 00 00 00 00 00 00
+protectPacket: Nonce: D1 26 48 AE 55 06 1C 61 6B 82 DB EC
+protectPacket WARNING: small plaintext.len=5, ct_len=21
+[P42-21-ACK-SENT] ✅ Normal ACK sent: pkt_len=32B largest=1 delay_rx_to_tx=0us send_us=11us total=11us
+[PHASE51] onShortHeaderPacketSent called: bytes=32 ack_eliciting=false pn=9
+[PHASE50-CC] onPacketSent: space=Application pn=9 bytes=32 ack_eliciting=false inflight: 81→81 cwnd=13200
+processIncomingDatagram: Extracted type 2 packet, len=47 from datagram offset=0
+processHandshake: Looking up conn with peer_hash=1FED790BB0697913, DCID len=8, DCID hash=E221091A6A7EBABE
+processHandshake: Packet len=47, header offset=23, role=Client, conn_ptr=conn.Connection@71b4d5780000
+  RX keys - key[0..4]: AD66E200, hp[0..4]: CC453983
+  TX keys - key[0..4]: F099416D, hp[0..4]: AABC333B
+decryptHandshakePacket: bytes.len=47, length_offset=23, payload_len=23, end_total=47
+decryptHandshakePacket: PN length detection - original=0xE2, mask=0x03, unmasked=0xE1
+  Detected PN length: 2 (from bits 0x01)
+decryptHandshakePacket: Attempting decrypt with pn_len=2, header_prefix.len=23, ciphertext.len=23
+decryptHandshakePacket: Unmasking PN bytes:
+  PN[0]: 0x4E XOR 0x4E = 0x00
+  PN[1]: 0xCE XOR 0xCF = 0x01
+decryptHandshakePacket: After HP removal: first=0xE1, expected=0xE1
+decryptHandshakePacket AAD: first_byte=0xE1 (should be ~0xE2-E3 for Handshake), header_prefix.len=23, pn_len=2
+  AAD bytes: E1 00 00 00 01 08 5C 1A 8E 93 49 A0 2B 7C 08 3F 78 3F 72 F1 8F 57 B7 17 00 01 
+decryptHandshakePacket: PN expansion: truncated=1, pn_len=2, largest_pn=0, expanded=1
+  PN bytes (unmasked): 00 01 
+decryptHandshakePacket: Using keys for AEAD decrypt:
+  key[0..4]: AD66E200
+  iv[0..4]: 4DE3B294
+  ciphertext_len=21
+setCurrentConnection: Setting conn=conn.Connection@71b4d5780000 role=Client
+[P42-22-ACK-RX] 📥 space=Handshake acked_count=1 prev_largest=0
+[PHASE49-CC] ✅ ACK: acked=81B cwnd: 13200→13281 inflight: 81→0 ssthresh=9223372036854775807 mode=slow_start available=13281B
+setCurrentConnection: Setting conn=conn.Connection@71b4d5780000 role=Client
+clearCurrentConnection: Clearing conn=conn.Connection@71b4d5780000 role=Client
+[processShortHeader] Called for 34 bytes
+[processShortHeader] Found connection, role=Client, has_app_rx_keys=true
+[APP-DECRYPT-START] attempt=3 dcid_len=8 bytes=34 cached=8
+[APP-PATH] Enter enumerateDcidLength (short header) bytes_len=34 try_dcid_len=8 largest_pn=1 conn_set=true
+[APP-DECODE] TRY CURRENT dcid_len=8 largest_pn=1 rx_phase=false bytes=34
+[SHORT-DECODE-ENTRY] bytes=34 dcid_len=8 largest_pn=1 key0=F5
+SHORT HEADER HP: pn_start=9, sample_offset=13, packet_len=34
+SHORT HEADER HP: sample16 = F7 18 E6 33 73 12 CF 03 95 E5 3B F9 E9 9A 22 FA 
+HP mask (first 5 bytes): 90
+FB
+22
+EF
+75
+is_long=false, hdr_mask=1F, header_first_before=51
+header_first_after=41
+Decoded pn_len from header: 2
+pn_buf before unmasking: { 251, 32, 130, 177 }
+pn_buf after unmasking: { 0, 2, 109, 196 }, using pn_len=2
+decodeShortProtected: EARLY KEY_PHASE extraction = false (header_first=0x41)
+decodeShortProtected: truncated PN=2 -> expanded PN=2 (largest_pn=1)
+decodeShortProtected: KEY_PHASE bit = false (header_first=0x41)
+[PHASE57] ✅ Decrypted with CURRENT keys: dcid_len=8 pn=2
+[PHASE57-DECRYPT] ✅ Decrypted with CURRENT keys: pn=2 key_phase=false conn_rx_kp=false
+[APP-DECRYPT-SUCCESS] attempt=3 pn=2 payload_len=7 used_next=false used_prev=false rx_phase=false success_ratio=3/3
+[APP-DISPATCH] Parsing 1-RTT frames payload_len=7 pn=2
+[APP-STREAM-SCAN] no STREAM type bytes found in first 7 bytes
+[APP-PAYLOAD-HEX] 02 02 00 01 00 00 00 
+Parsing frames from payload, total_len=7, role=Client
+Decoded frame at offset 0: type=ack
+[P42-22-ACK-RX] 📥 space=Application acked_count=2 prev_largest=0
+[P42-22-RTT] 🕐 measured=3784us old_smoothed=333000us new_smoothed=3784us old_rttvar=166500us new_rttvar=1892us
+[PHASE49-CC] ✅ ACK: acked=64B cwnd: 13281→13345 inflight: 0→0 ssthresh=9223372036854775807 mode=slow_start available=13345B
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=false, saw_handshake_done=false, saw_close=false
+[PHASE57-STEP5] ✓ used_next=false, no key promotion needed
+[P42-20-PN-OK] ✓ Sequential PN received: pn=2, prev_largest=1
+Parsing frames from payload, total_len=7, role=Client
+Decoded frame at offset 0: type=ack
+[P42-22-ACK-RX] 📥 space=Application acked_count=2 prev_largest=2
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=false, saw_handshake_done=false, saw_close=false
+[processShortHeader] Called for 36 bytes
+[processShortHeader] Found connection, role=Client, has_app_rx_keys=true
+[APP-DECRYPT-START] attempt=4 dcid_len=8 bytes=36 cached=8
+[APP-PATH] Enter enumerateDcidLength (short header) bytes_len=36 try_dcid_len=8 largest_pn=2 conn_set=true
+[APP-DECODE] TRY CURRENT dcid_len=8 largest_pn=2 rx_phase=false bytes=36
+[SHORT-DECODE-ENTRY] bytes=36 dcid_len=8 largest_pn=2 key0=F5
+SHORT HEADER HP: pn_start=9, sample_offset=13, packet_len=36
+SHORT HEADER HP: sample16 = AB BC 3E 27 E6 FF 06 68 B0 E1 16 92 62 E0 BE 8B 
+HP mask (first 5 bytes): 3B
+72
+DF
+54
+00
+is_long=false, hdr_mask=1F, header_first_before=5A
+header_first_after=41
+Decoded pn_len from header: 2
+pn_buf before unmasking: { 114, 219, 27, 200 }
+pn_buf after unmasking: { 0, 4, 79, 200 }, using pn_len=2
+decodeShortProtected: EARLY KEY_PHASE extraction = false (header_first=0x41)
+decodeShortProtected: truncated PN=4 -> expanded PN=4 (largest_pn=2)
+decodeShortProtected: KEY_PHASE bit = false (header_first=0x41)
+[PHASE57] ✅ Decrypted with CURRENT keys: dcid_len=8 pn=4
+[PHASE57-DECRYPT] ✅ Decrypted with CURRENT keys: pn=4 key_phase=false conn_rx_kp=false
+[APP-DECRYPT-SUCCESS] attempt=4 pn=4 payload_len=9 used_next=false used_prev=false rx_phase=false success_ratio=4/4
+[APP-DISPATCH] Parsing 1-RTT frames payload_len=9 pn=4
+[APP-STREAM-SCAN] no STREAM type bytes found in first 9 bytes
+[APP-PAYLOAD-HEX] 02 04 00 02 00 00 00 00 00 
+Parsing frames from payload, total_len=9, role=Client
+Decoded frame at offset 0: type=ack
+[P42-22-ACK-RX] 📥 space=Application acked_count=3 prev_largest=2
+[P42-22-RTT] 🕐 measured=3982us old_smoothed=3784us new_smoothed=3809us old_rttvar=1892us new_rttvar=1468us
+[PHASE49-CC] ✅ ACK: acked=39B cwnd: 13345→13384 inflight: 0→0 ssthresh=9223372036854775807 mode=slow_start available=13384B
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=false, saw_handshake_done=false, saw_close=false
+[PHASE57-STEP5] ✓ used_next=false, no key promotion needed
+[P42-20-PN-GAP] ⚠️  GAP DETECTED! pn=4, prev_largest=2, gap_size=1 packets missing
+Parsing frames from payload, total_len=9, role=Client
+Decoded frame at offset 0: type=ack
+[P42-22-ACK-RX] 📥 space=Application acked_count=3 prev_largest=4
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=false, saw_handshake_done=false, saw_close=false
+[processShortHeader] Called for 36 bytes
+[processShortHeader] Found connection, role=Client, has_app_rx_keys=true
+[APP-DECRYPT-START] attempt=5 dcid_len=8 bytes=36 cached=8
+[APP-PATH] Enter enumerateDcidLength (short header) bytes_len=36 try_dcid_len=8 largest_pn=4 conn_set=true
+[APP-DECODE] TRY CURRENT dcid_len=8 largest_pn=4 rx_phase=false bytes=36
+[SHORT-DECODE-ENTRY] bytes=36 dcid_len=8 largest_pn=4 key0=F5
+SHORT HEADER HP: pn_start=9, sample_offset=13, packet_len=36
+SHORT HEADER HP: sample16 = 17 69 36 DC 50 94 0D 96 F1 DD CF 68 CE 35 B1 A9 
+HP mask (first 5 bytes): D2
+24
+54
+CC
+16
+is_long=false, hdr_mask=1F, header_first_before=53
+header_first_after=41
+Decoded pn_len from header: 2
+pn_buf before unmasking: { 36, 82, 179, 236 }
+pn_buf after unmasking: { 0, 6, 127, 250 }, using pn_len=2
+decodeShortProtected: EARLY KEY_PHASE extraction = false (header_first=0x41)
+decodeShortProtected: truncated PN=6 -> expanded PN=6 (largest_pn=4)
+decodeShortProtected: KEY_PHASE bit = false (header_first=0x41)
+[PHASE57] ✅ Decrypted with CURRENT keys: dcid_len=8 pn=6
+[PHASE57-DECRYPT] ✅ Decrypted with CURRENT keys: pn=6 key_phase=false conn_rx_kp=false
+[APP-DECRYPT-SUCCESS] attempt=5 pn=6 payload_len=9 used_next=false used_prev=false rx_phase=false success_ratio=5/5
+[APP-DISPATCH] Parsing 1-RTT frames payload_len=9 pn=6
+[APP-STREAM-SCAN] no STREAM type bytes found in first 9 bytes
+[APP-PAYLOAD-HEX] 02 04 00 02 00 00 00 00 00 
+Parsing frames from payload, total_len=9, role=Client
+Decoded frame at offset 0: type=ack
+[P42-22-ACK-RX] 📥 space=Application acked_count=3 prev_largest=4
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=false, saw_handshake_done=false, saw_close=false
+[PHASE57-STEP5] ✓ used_next=false, no key promotion needed
+[P42-20-PN-GAP] ⚠️  GAP DETECTED! pn=6, prev_largest=4, gap_size=1 packets missing
+Parsing frames from payload, total_len=9, role=Client
+Decoded frame at offset 0: type=ack
+[P42-22-ACK-RX] 📥 space=Application acked_count=3 prev_largest=4
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=false, saw_handshake_done=false, saw_close=false
+[FC-TX] writeStream: stream_id=0, data.len=4, cur_off=0, peer_limit=2097152, window_left_stream=2097152, window_left_conn=10485760, to_send=4
+[CC-OK] bytes_in_flight=0 < cwnd=13384, available=13384
+DEBUG STREAM frame bytes (8 bytes): 0f 00 00 04 50 49 4e 47 
+Client: Using DCID for 1-RTT packet: 3f
+78
+3f
+72
+f1
+8f
+57
+b7
+ (len=8)
+Server sending STREAM with DCID len=8, first_byte=3f
+encodeShortProtected: pn=10 (0xa) pn_len=2 dcid=?x?r�W�
+protectPacket INPUT: plaintext.len=8 out_cipher.len=24
+protectPacket INPUT: plaintext first 30 bytes: 0f 00 00 04 50 49 4e 47 
+protectPacket: pn=10 pn_len=2 header_prefix_len=8 aad_len=11
+protectPacket: header_first=0x41
+protectPacket: AAD (first 20 bytes): 41 3F 78 3F 72 F1 8F 57 B7 00 0A 00 00 00 00 00 00 00 00 00
+protectPacket: Nonce: D1 26 48 AE 55 06 1C 61 6B 82 DB EF
+protectPacket WARNING: small plaintext.len=8, ct_len=24
+About to call send() with 35 bytes
+send() returned 35 bytes
+STREAM frame packet sent - 35 bytes (pkt.len=35)
+[PHASE51] onShortHeaderPacketSent called: bytes=35 ack_eliciting=true pn=10
+[PHASE50-CC] onPacketSent: space=Application pn=10 bytes=35 ack_eliciting=true inflight: 0→35 cwnd=13384
+wrote initial message on stream 0 (4 bytes)
+[processShortHeader] Called for 33 bytes
+[processShortHeader] Found connection, role=Client, has_app_rx_keys=true
+[APP-DECRYPT-START] attempt=6 dcid_len=8 bytes=33 cached=8
+[APP-PATH] Enter enumerateDcidLength (short header) bytes_len=33 try_dcid_len=8 largest_pn=6 conn_set=true
+[APP-DECODE] TRY CURRENT dcid_len=8 largest_pn=6 rx_phase=false bytes=33
+[SHORT-DECODE-ENTRY] bytes=33 dcid_len=8 largest_pn=6 key0=F5
+SHORT HEADER HP: pn_start=9, sample_offset=13, packet_len=33
+SHORT HEADER HP: sample16 = 4E 9D 3A D4 F3 D9 C8 9A BE 92 1F A0 E9 D1 9E AA 
+HP mask (first 5 bytes): 77
+79
+64
+47
+70
+is_long=false, hdr_mask=1F, header_first_before=56
+header_first_after=41
+Decoded pn_len from header: 2
+pn_buf before unmasking: { 121, 99, 176, 243 }
+pn_buf after unmasking: { 0, 7, 247, 131 }, using pn_len=2
+decodeShortProtected: EARLY KEY_PHASE extraction = false (header_first=0x41)
+decodeShortProtected: truncated PN=7 -> expanded PN=7 (largest_pn=6)
+decodeShortProtected: KEY_PHASE bit = false (header_first=0x41)
+[PHASE57] ✅ Decrypted with CURRENT keys: dcid_len=8 pn=7
+[PHASE57-DECRYPT] ✅ Decrypted with CURRENT keys: pn=7 key_phase=false conn_rx_kp=false
+[APP-DECRYPT-SUCCESS] attempt=6 pn=7 payload_len=6 used_next=false used_prev=false rx_phase=false success_ratio=6/6
+[APP-DISPATCH] Parsing 1-RTT frames payload_len=6 pn=7
+[APP-STREAM-SCAN] no STREAM type bytes found in first 6 bytes
+[APP-PAYLOAD-HEX] 11 00 80 20 00 00 
+Parsing frames from payload, total_len=6, role=Client
+Decoded frame at offset 0: type=max_stream_data
+[FC-TX] Received MAX_STREAM_DATA(stream=0, max=2097152) ignored (current=2097152)
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=true, saw_handshake_done=false, saw_close=false
+Client: Using DCID for 1-RTT packet: 3f
+78
+3f
+72
+f1
+8f
+57
+b7
+ (len=8)
+encodeShortProtected: pn=11 (0xb) pn_len=2 dcid=?x?r�W�
+protectPacket INPUT: plaintext.len=9 out_cipher.len=25
+protectPacket INPUT: plaintext first 30 bytes: 02 06 00 02 00 00 00 00 02 
+protectPacket: pn=11 pn_len=2 header_prefix_len=8 aad_len=11
+protectPacket: header_first=0x41
+protectPacket: AAD (first 20 bytes): 41 3F 78 3F 72 F1 8F 57 B7 00 0B 00 00 00 00 00 00 00 00 00
+protectPacket: Nonce: D1 26 48 AE 55 06 1C 61 6B 82 DB EE
+protectPacket WARNING: small plaintext.len=9, ct_len=25
+[PHASE51] onShortHeaderPacketSent called: bytes=36 ack_eliciting=false pn=11
+[PHASE50-CC] onPacketSent: space=Application pn=11 bytes=36 ack_eliciting=false inflight: 35→35 cwnd=13384
+[APP-ACK] immediate ack largest=6 pn=12 bytes=36
+[APP-DISPATCH] ack-eliciting pn=7
+[PHASE57-STEP5] ✓ used_next=false, no key promotion needed
+[P42-20-PN-OK] ✓ Sequential PN received: pn=7, prev_largest=6
+Parsing frames from payload, total_len=6, role=Client
+Decoded frame at offset 0: type=max_stream_data
+[FC-TX] Received MAX_STREAM_DATA(stream=0, max=2097152) ignored (current=2097152)
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=true, saw_handshake_done=false, saw_close=false
+Client: Using DCID for 1-RTT packet: 3f
+78
+3f
+72
+f1
+8f
+57
+b7
+ (len=8)
+encodeShortProtected: pn=13 (0xd) pn_len=2 dcid=?x?r�W�
+protectPacket INPUT: plaintext.len=9 out_cipher.len=25
+protectPacket INPUT: plaintext first 30 bytes: 02 07 00 02 01 00 00 00 02 
+protectPacket: pn=13 pn_len=2 header_prefix_len=8 aad_len=11
+protectPacket: header_first=0x41
+protectPacket: AAD (first 20 bytes): 41 3F 78 3F 72 F1 8F 57 B7 00 0D 00 00 00 00 00 00 00 00 00
+protectPacket: Nonce: D1 26 48 AE 55 06 1C 61 6B 82 DB E8
+protectPacket WARNING: small plaintext.len=9, ct_len=25
+[PHASE51] onShortHeaderPacketSent called: bytes=36 ack_eliciting=false pn=13
+[PHASE50-CC] onPacketSent: space=Application pn=13 bytes=36 ack_eliciting=false inflight: 35→35 cwnd=13384
+[APP-ACK] immediate ack largest=7 pn=14 bytes=36
+[P42-21-ACK-TRIGGER] ⏰ ACK triggered: saw_ack_elicit=Y ecn=N delay_since_rx=1us
+[LOCALHOST] IPv4 check: 127.0.0.1 -> true
+[AMPLIFICATION] validated=true isLocalhost=true rx=0 tx=0 tx/3=0 allow=true
+[P42-21-ACK-AMPLIF] allow_send=Y rx_unval=0 tx_unval=0 validated=Y ratio=0.00
+[RX-INSTR] stream=0 recv_off=0 inbox_len=0 local_max_stream_data=2097152 last_sent=0 fin_off=null
+[P42-19-FC-TX] Sending MAX_STREAM_DATA(stream=0, max=2097152, delta=+2097152, recv_off=0, inbox=0)
+[P42-19-FC-SUMMARY] Sent 1 MAX_STREAM_DATA frames in this ACK packet
+encodeShortProtected: pn=15 (0xf) pn_len=2 dcid=?x?r�W�
+protectPacket INPUT: plaintext.len=15 out_cipher.len=31
+protectPacket INPUT: plaintext first 30 bytes: 02 07 00 02 01 00 00 00 02 11 00 80 20 00 00 
+protectPacket: pn=15 pn_len=2 header_prefix_len=8 aad_len=11
+protectPacket: header_first=0x41
+protectPacket: AAD (first 20 bytes): 41 3F 78 3F 72 F1 8F 57 B7 00 0F 00 00 00 00 00 00 00 00 00
+protectPacket: Nonce: D1 26 48 AE 55 06 1C 61 6B 82 DB EA
+protectPacket WARNING: small plaintext.len=15, ct_len=31
+[P42-21-ACK-SENT] ✅ Normal ACK sent: pkt_len=42B largest=7 delay_rx_to_tx=1us send_us=10us total=11us
+[PHASE51] onShortHeaderPacketSent called: bytes=42 ack_eliciting=false pn=15
+[PHASE50-CC] onPacketSent: space=Application pn=15 bytes=42 ack_eliciting=false inflight: 35→35 cwnd=13384
+[processShortHeader] Called for 40 bytes
+[processShortHeader] Found connection, role=Client, has_app_rx_keys=true
+[APP-DECRYPT-START] attempt=7 dcid_len=8 bytes=40 cached=8
+[APP-PATH] Enter enumerateDcidLength (short header) bytes_len=40 try_dcid_len=8 largest_pn=7 conn_set=true
+[APP-DECODE] TRY CURRENT dcid_len=8 largest_pn=7 rx_phase=false bytes=40
+[SHORT-DECODE-ENTRY] bytes=40 dcid_len=8 largest_pn=7 key0=F5
+SHORT HEADER HP: pn_start=9, sample_offset=13, packet_len=40
+SHORT HEADER HP: sample16 = 40 52 C3 5B CD 4D 34 92 B5 23 A6 FB 66 3C 4F 6D 
+HP mask (first 5 bytes): 24
+28
+C4
+5F
+2D
+is_long=false, hdr_mask=1F, header_first_before=45
+header_first_after=41
+Decoded pn_len from header: 2
+pn_buf before unmasking: { 40, 204, 9, 221 }
+pn_buf after unmasking: { 0, 8, 86, 240 }, using pn_len=2
+decodeShortProtected: EARLY KEY_PHASE extraction = false (header_first=0x41)
+decodeShortProtected: truncated PN=8 -> expanded PN=8 (largest_pn=7)
+decodeShortProtected: KEY_PHASE bit = false (header_first=0x41)
+[PHASE57] ✅ Decrypted with CURRENT keys: dcid_len=8 pn=8
+[PHASE57-DECRYPT] ✅ Decrypted with CURRENT keys: pn=8 key_phase=false conn_rx_kp=false
+[APP-DECRYPT-SUCCESS] attempt=7 pn=8 payload_len=13 used_next=false used_prev=false rx_phase=false success_ratio=7/7
+[APP-DISPATCH] Parsing 1-RTT frames payload_len=13 pn=8
+[APP-STREAM-SCAN] hit at offset=1 type_byte=0x09
+[APP-PAYLOAD-HEX] 02 09 00 04 00 00 00 00 01 00 00 00 00 
+Parsing frames from payload, total_len=13, role=Client
+Decoded frame at offset 0: type=ack
+[P42-22-ACK-RX] 📥 space=Application acked_count=6 prev_largest=4
+[P42-22-RTT] 🕐 measured=7259us old_smoothed=3809us new_smoothed=4240us old_rttvar=1468us new_rttvar=1964us
+[PHASE49-CC] ✅ ACK: acked=96B cwnd: 13384→13480 inflight: 35→0 ssthresh=9223372036854775807 mode=slow_start available=13480B
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=false, saw_handshake_done=false, saw_close=false
+[PHASE57-STEP5] ✓ used_next=false, no key promotion needed
+[P42-20-PN-OK] ✓ Sequential PN received: pn=8, prev_largest=7
+Parsing frames from payload, total_len=13, role=Client
+Decoded frame at offset 0: type=ack
+[P42-22-ACK-RX] 📥 space=Application acked_count=6 prev_largest=9
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=false, saw_handshake_done=false, saw_close=false
+[processShortHeader] Called for 40 bytes
+[processShortHeader] Found connection, role=Client, has_app_rx_keys=true
+[APP-DECRYPT-START] attempt=8 dcid_len=8 bytes=40 cached=8
+[APP-PATH] Enter enumerateDcidLength (short header) bytes_len=40 try_dcid_len=8 largest_pn=8 conn_set=true
+[APP-DECODE] TRY CURRENT dcid_len=8 largest_pn=8 rx_phase=false bytes=40
+[SHORT-DECODE-ENTRY] bytes=40 dcid_len=8 largest_pn=8 key0=F5
+SHORT HEADER HP: pn_start=9, sample_offset=13, packet_len=40
+SHORT HEADER HP: sample16 = 1B C3 7A EA B9 E9 34 96 1A 21 73 F5 B1 84 F4 BF 
+HP mask (first 5 bytes): 3F
+EF
+59
+33
+1D
+is_long=false, hdr_mask=1F, header_first_before=5E
+header_first_after=41
+Decoded pn_len from header: 2
+pn_buf before unmasking: { 239, 83, 109, 132 }
+pn_buf after unmasking: { 0, 10, 94, 153 }, using pn_len=2
+decodeShortProtected: EARLY KEY_PHASE extraction = false (header_first=0x41)
+decodeShortProtected: truncated PN=10 -> expanded PN=10 (largest_pn=8)
+decodeShortProtected: KEY_PHASE bit = false (header_first=0x41)
+[PHASE57] ✅ Decrypted with CURRENT keys: dcid_len=8 pn=10
+[PHASE57-DECRYPT] ✅ Decrypted with CURRENT keys: pn=10 key_phase=false conn_rx_kp=false
+[APP-DECRYPT-SUCCESS] attempt=8 pn=10 payload_len=13 used_next=false used_prev=false rx_phase=false success_ratio=8/8
+[APP-DISPATCH] Parsing 1-RTT frames payload_len=13 pn=10
+[APP-STREAM-SCAN] hit at offset=1 type_byte=0x0A
+[APP-PAYLOAD-HEX] 02 0A 00 04 01 00 00 00 01 00 00 00 00 
+Parsing frames from payload, total_len=13, role=Client
+Decoded frame at offset 0: type=ack
+[P42-22-ACK-RX] 📥 space=Application acked_count=7 prev_largest=9
+[P42-22-RTT] 🕐 measured=4387us old_smoothed=4240us new_smoothed=4258us old_rttvar=1964us new_rttvar=1509us
+[PHASE49-CC] ✅ ACK: acked=35B cwnd: 13480→13515 inflight: 0→0 ssthresh=9223372036854775807 mode=slow_start available=13515B
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=false, saw_handshake_done=false, saw_close=false
+[PHASE57-STEP5] ✓ used_next=false, no key promotion needed
+[P42-20-PN-GAP] ⚠️  GAP DETECTED! pn=10, prev_largest=8, gap_size=1 packets missing
+Parsing frames from payload, total_len=13, role=Client
+Decoded frame at offset 0: type=ack
+[P42-22-ACK-RX] 📥 space=Application acked_count=7 prev_largest=10
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=false, saw_handshake_done=false, saw_close=false
+[processShortHeader] Called for 40 bytes
+[processShortHeader] Found connection, role=Client, has_app_rx_keys=true
+[APP-DECRYPT-START] attempt=9 dcid_len=8 bytes=40 cached=8
+[APP-PATH] Enter enumerateDcidLength (short header) bytes_len=40 try_dcid_len=8 largest_pn=10 conn_set=true
+[APP-DECODE] TRY CURRENT dcid_len=8 largest_pn=10 rx_phase=false bytes=40
+[SHORT-DECODE-ENTRY] bytes=40 dcid_len=8 largest_pn=10 key0=F5
+SHORT HEADER HP: pn_start=9, sample_offset=13, packet_len=40
+SHORT HEADER HP: sample16 = D8 63 4D BA E3 64 67 E9 24 E1 91 E3 82 A0 FC 28 
+HP mask (first 5 bytes): 19
+CA
+C8
+B9
+7C
+is_long=false, hdr_mask=1F, header_first_before=58
+header_first_after=41
+Decoded pn_len from header: 2
+pn_buf before unmasking: { 202, 196, 253, 235 }
+pn_buf after unmasking: { 0, 12, 68, 151 }, using pn_len=2
+decodeShortProtected: EARLY KEY_PHASE extraction = false (header_first=0x41)
+decodeShortProtected: truncated PN=12 -> expanded PN=12 (largest_pn=10)
+decodeShortProtected: KEY_PHASE bit = false (header_first=0x41)
+[PHASE57] ✅ Decrypted with CURRENT keys: dcid_len=8 pn=12
+[PHASE57-DECRYPT] ✅ Decrypted with CURRENT keys: pn=12 key_phase=false conn_rx_kp=false
+[APP-DECRYPT-SUCCESS] attempt=9 pn=12 payload_len=13 used_next=false used_prev=false rx_phase=false success_ratio=9/9
+[APP-DISPATCH] Parsing 1-RTT frames payload_len=13 pn=12
+[APP-STREAM-SCAN] hit at offset=1 type_byte=0x0A
+[APP-PAYLOAD-HEX] 02 0A 00 04 01 00 00 00 01 00 00 00 00 
+Parsing frames from payload, total_len=13, role=Client
+Decoded frame at offset 0: type=ack
+[P42-22-ACK-RX] 📥 space=Application acked_count=7 prev_largest=10
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=false, saw_handshake_done=false, saw_close=false
+[PHASE57-STEP5] ✓ used_next=false, no key promotion needed
+[P42-20-PN-GAP] ⚠️  GAP DETECTED! pn=12, prev_largest=10, gap_size=1 packets missing
+Parsing frames from payload, total_len=13, role=Client
+Decoded frame at offset 0: type=ack
+[P42-22-ACK-RX] 📥 space=Application acked_count=7 prev_largest=10
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=false, saw_handshake_done=false, saw_close=false
+[processShortHeader] Called for 42 bytes
+[processShortHeader] Found connection, role=Client, has_app_rx_keys=true
+[APP-DECRYPT-START] attempt=10 dcid_len=8 bytes=42 cached=8
+[APP-PATH] Enter enumerateDcidLength (short header) bytes_len=42 try_dcid_len=8 largest_pn=12 conn_set=true
+[APP-DECODE] TRY CURRENT dcid_len=8 largest_pn=12 rx_phase=false bytes=42
+[SHORT-DECODE-ENTRY] bytes=42 dcid_len=8 largest_pn=12 key0=F5
+SHORT HEADER HP: pn_start=9, sample_offset=13, packet_len=42
+SHORT HEADER HP: sample16 = 1E 92 48 B4 66 37 70 4B 2D 62 FF 6A B8 4C 3F 09 
+HP mask (first 5 bytes): 60
+90
+1A
+EF
+7A
+is_long=false, hdr_mask=1F, header_first_before=41
+header_first_after=41
+Decoded pn_len from header: 2
+pn_buf before unmasking: { 144, 23, 238, 150 }
+pn_buf after unmasking: { 0, 13, 1, 236 }, using pn_len=2
+decodeShortProtected: EARLY KEY_PHASE extraction = false (header_first=0x41)
+decodeShortProtected: truncated PN=13 -> expanded PN=13 (largest_pn=12)
+decodeShortProtected: KEY_PHASE bit = false (header_first=0x41)
+[PHASE57] ✅ Decrypted with CURRENT keys: dcid_len=8 pn=13
+[PHASE57-DECRYPT] ✅ Decrypted with CURRENT keys: pn=13 key_phase=false conn_rx_kp=false
+[APP-DECRYPT-SUCCESS] attempt=10 pn=13 payload_len=15 used_next=false used_prev=false rx_phase=false success_ratio=10/10
+[APP-DISPATCH] Parsing 1-RTT frames payload_len=15 pn=13
+[APP-STREAM-SCAN] hit at offset=1 type_byte=0x0D
+[APP-PAYLOAD-HEX] 02 0D 00 05 00 00 02 00 00 00 01 00 00 00 00 
+Parsing frames from payload, total_len=15, role=Client
+Decoded frame at offset 0: type=ack
+[P42-22-ACK-RX] 📥 space=Application acked_count=9 prev_largest=10
+[P42-22-RTT] 🕐 measured=2974us old_smoothed=4258us new_smoothed=4098us old_rttvar=1509us new_rttvar=1453us
+[PHASE49-CC] ✅ ACK: acked=72B cwnd: 13515→13587 inflight: 0→0 ssthresh=9223372036854775807 mode=slow_start available=13587B
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=false, saw_handshake_done=false, saw_close=false
+[PHASE57-STEP5] ✓ used_next=false, no key promotion needed
+[P42-20-PN-OK] ✓ Sequential PN received: pn=13, prev_largest=12
+Parsing frames from payload, total_len=15, role=Client
+Decoded frame at offset 0: type=ack
+[P42-22-ACK-RX] 📥 space=Application acked_count=9 prev_largest=13
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=false, saw_handshake_done=false, saw_close=false
+[processShortHeader] Called for 44 bytes
+[processShortHeader] Found connection, role=Client, has_app_rx_keys=true
+[APP-DECRYPT-START] attempt=11 dcid_len=8 bytes=44 cached=8
+[APP-PATH] Enter enumerateDcidLength (short header) bytes_len=44 try_dcid_len=8 largest_pn=13 conn_set=true
+[APP-DECODE] TRY CURRENT dcid_len=8 largest_pn=13 rx_phase=false bytes=44
+[SHORT-DECODE-ENTRY] bytes=44 dcid_len=8 largest_pn=13 key0=F5
+SHORT HEADER HP: pn_start=9, sample_offset=13, packet_len=44
+SHORT HEADER HP: sample16 = B0 E8 E6 03 84 A5 BE CA 72 0D 10 A8 89 86 52 CA 
+HP mask (first 5 bytes): 69
+1F
+C7
+86
+ED
+is_long=false, hdr_mask=1F, header_first_before=48
+header_first_after=41
+Decoded pn_len from header: 2
+pn_buf before unmasking: { 31, 200, 38, 235 }
+pn_buf after unmasking: { 0, 15, 160, 6 }, using pn_len=2
+decodeShortProtected: EARLY KEY_PHASE extraction = false (header_first=0x41)
+decodeShortProtected: truncated PN=15 -> expanded PN=15 (largest_pn=13)
+decodeShortProtected: KEY_PHASE bit = false (header_first=0x41)
+[PHASE57] ✅ Decrypted with CURRENT keys: dcid_len=8 pn=15
+[PHASE57-DECRYPT] ✅ Decrypted with CURRENT keys: pn=15 key_phase=false conn_rx_kp=false
+[APP-DECRYPT-SUCCESS] attempt=11 pn=15 payload_len=17 used_next=false used_prev=false rx_phase=false success_ratio=11/11
+[APP-DISPATCH] Parsing 1-RTT frames payload_len=17 pn=15
+[APP-STREAM-SCAN] hit at offset=1 type_byte=0x0F
+[APP-PAYLOAD-HEX] 02 0F 00 06 00 00 00 00 02 00 00 00 01 00 00 00 00 
+Parsing frames from payload, total_len=17, role=Client
+Decoded frame at offset 0: type=ack
+[P42-22-ACK-RX] 📥 space=Application acked_count=10 prev_largest=13
+[P42-22-RTT] 🕐 measured=2936us old_smoothed=4098us new_smoothed=3953us old_rttvar=1453us new_rttvar=1380us
+[PHASE49-CC] ✅ ACK: acked=42B cwnd: 13587→13629 inflight: 0→0 ssthresh=9223372036854775807 mode=slow_start available=13629B
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=false, saw_handshake_done=false, saw_close=false
+[PHASE57-STEP5] ✓ used_next=false, no key promotion needed
+[P42-20-PN-GAP] ⚠️  GAP DETECTED! pn=15, prev_largest=13, gap_size=1 packets missing
+Parsing frames from payload, total_len=17, role=Client
+Decoded frame at offset 0: type=ack
+[P42-22-ACK-RX] 📥 space=Application acked_count=10 prev_largest=15
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=false, saw_handshake_done=false, saw_close=false
+[processShortHeader] Called for 44 bytes
+[processShortHeader] Found connection, role=Client, has_app_rx_keys=true
+[APP-DECRYPT-START] attempt=12 dcid_len=8 bytes=44 cached=8
+[APP-PATH] Enter enumerateDcidLength (short header) bytes_len=44 try_dcid_len=8 largest_pn=15 conn_set=true
+[APP-DECODE] TRY CURRENT dcid_len=8 largest_pn=15 rx_phase=false bytes=44
+[SHORT-DECODE-ENTRY] bytes=44 dcid_len=8 largest_pn=15 key0=F5
+SHORT HEADER HP: pn_start=9, sample_offset=13, packet_len=44
+SHORT HEADER HP: sample16 = 21 D1 2F EB DE C6 D1 18 A3 77 37 CF 43 E5 63 5E 
+HP mask (first 5 bytes): 68
+B9
+26
+34
+01
+is_long=false, hdr_mask=1F, header_first_before=49
+header_first_after=41
+Decoded pn_len from header: 2
+pn_buf before unmasking: { 185, 55, 169, 133 }
+pn_buf after unmasking: { 0, 17, 157, 132 }, using pn_len=2
+decodeShortProtected: EARLY KEY_PHASE extraction = false (header_first=0x41)
+decodeShortProtected: truncated PN=17 -> expanded PN=17 (largest_pn=15)
+decodeShortProtected: KEY_PHASE bit = false (header_first=0x41)
+[PHASE57] ✅ Decrypted with CURRENT keys: dcid_len=8 pn=17
+[PHASE57-DECRYPT] ✅ Decrypted with CURRENT keys: pn=17 key_phase=false conn_rx_kp=false
+[APP-DECRYPT-SUCCESS] attempt=12 pn=17 payload_len=17 used_next=false used_prev=false rx_phase=false success_ratio=12/12
+[APP-DISPATCH] Parsing 1-RTT frames payload_len=17 pn=17
+[APP-STREAM-SCAN] hit at offset=1 type_byte=0x0F
+[APP-PAYLOAD-HEX] 02 0F 00 06 00 00 00 00 02 00 00 00 01 00 00 00 00 
+Parsing frames from payload, total_len=17, role=Client
+Decoded frame at offset 0: type=ack
+[P42-22-ACK-RX] 📥 space=Application acked_count=10 prev_largest=15
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=false, saw_handshake_done=false, saw_close=false
+[PHASE57-STEP5] ✓ used_next=false, no key promotion needed
+[P42-20-PN-GAP] ⚠️  GAP DETECTED! pn=17, prev_largest=15, gap_size=1 packets missing
+Parsing frames from payload, total_len=17, role=Client
+Decoded frame at offset 0: type=ack
+[P42-22-ACK-RX] 📥 space=Application acked_count=10 prev_largest=15
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=false, saw_handshake_done=false, saw_close=false
+[processShortHeader] Called for 35 bytes
+[processShortHeader] Found connection, role=Client, has_app_rx_keys=true
+[APP-DECRYPT-START] attempt=13 dcid_len=8 bytes=35 cached=8
+[APP-PATH] Enter enumerateDcidLength (short header) bytes_len=35 try_dcid_len=8 largest_pn=17 conn_set=true
+[APP-DECODE] TRY CURRENT dcid_len=8 largest_pn=17 rx_phase=false bytes=35
+[SHORT-DECODE-ENTRY] bytes=35 dcid_len=8 largest_pn=17 key0=F5
+SHORT HEADER HP: pn_start=9, sample_offset=13, packet_len=35
+SHORT HEADER HP: sample16 = ED 61 16 73 EE 8F D4 89 84 AF 1C 42 AD B9 B5 7D 
+HP mask (first 5 bytes): 8F
+A2
+85
+F4
+88
+is_long=false, hdr_mask=1F, header_first_before=4E
+header_first_after=41
+Decoded pn_len from header: 2
+pn_buf before unmasking: { 162, 151, 1, 159 }
+pn_buf after unmasking: { 0, 18, 245, 23 }, using pn_len=2
+decodeShortProtected: EARLY KEY_PHASE extraction = false (header_first=0x41)
+decodeShortProtected: truncated PN=18 -> expanded PN=18 (largest_pn=17)
+decodeShortProtected: KEY_PHASE bit = false (header_first=0x41)
+[PHASE57] ✅ Decrypted with CURRENT keys: dcid_len=8 pn=18
+[PHASE57-DECRYPT] ✅ Decrypted with CURRENT keys: pn=18 key_phase=false conn_rx_kp=false
+[APP-DECRYPT-SUCCESS] attempt=13 pn=18 payload_len=8 used_next=false used_prev=false rx_phase=false success_ratio=13/13
+[APP-DISPATCH] Parsing 1-RTT frames payload_len=8 pn=18
+[APP-STREAM-SCAN] hit at offset=0 type_byte=0x0E
+[APP-PAYLOAD-HEX] 0E 00 00 04 50 49 4E 47 
+Parsing frames from payload, total_len=8, role=Client
+Decoded frame at offset 0: type=stream
+[STREAM-FRAME] id=0 off=0 len=4 fin=false
+
+>>> ENDPOINT RECEIVED STREAM FRAME <<<
+CLIENT received STREAM frame - id=0, off=0, len=4, fin=false
+Calling conn.pushStreamFrame()...
+[CONN-PTR-PUSH] conn=0x71b4d5780000 stream_id=0
+[STREAM-RX] id=0 off=0 len=4 fin=false before recv_off=0 inbox_len=0 bufs=0
+
+=== PUSH_STREAM_FRAME ENTRY ===
+stream_id=0, offset=0, len=4, fin=false, role=.Client
+Calling ensureStreamRx(0)...
+After ensureStreamRx: streams_rx now has 1 entries
+[STREAM-RX-AFTER] id=0 recv_off=4 inbox_len=4 bufs=0 fin_off=null
+pushStreamFrame returned successfully
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=true, saw_handshake_done=false, saw_close=false
+Client: Using DCID for 1-RTT packet: 3f
+78
+3f
+72
+f1
+8f
+57
+b7
+ (len=8)
+encodeShortProtected: pn=16 (0x10) pn_len=2 dcid=?x?r�W�
+protectPacket INPUT: plaintext.len=17 out_cipher.len=33
+protectPacket INPUT: plaintext first 30 bytes: 02 11 00 06 00 00 00 00 01 00 00 00 02 00 00 00 02 
+protectPacket: pn=16 pn_len=2 header_prefix_len=8 aad_len=11
+protectPacket: header_first=0x41
+protectPacket: AAD (first 20 bytes): 41 3F 78 3F 72 F1 8F 57 B7 00 10 00 00 00 00 00 00 00 00 00
+protectPacket: Nonce: D1 26 48 AE 55 06 1C 61 6B 82 DB F5
+protectPacket WARNING: small plaintext.len=17, ct_len=33
+[PHASE51] onShortHeaderPacketSent called: bytes=44 ack_eliciting=false pn=16
+[PHASE50-CC] onPacketSent: space=Application pn=16 bytes=44 ack_eliciting=false inflight: 0→0 cwnd=13629
+[APP-ACK] immediate ack largest=17 pn=17 bytes=44
+[APP-DISPATCH] ack-eliciting pn=18
+[PHASE57-STEP5] ✓ used_next=false, no key promotion needed
+[P42-20-PN-OK] ✓ Sequential PN received: pn=18, prev_largest=17
+Parsing frames from payload, total_len=8, role=Client
+Decoded frame at offset 0: type=stream
+[STREAM-FRAME] id=0 off=0 len=4 fin=false
+
+>>> ENDPOINT RECEIVED STREAM FRAME <<<
+CLIENT received STREAM frame - id=0, off=0, len=4, fin=false
+Calling conn.pushStreamFrame()...
+[CONN-PTR-PUSH] conn=0x71b4d5780000 stream_id=0
+[STREAM-RX] id=0 off=0 len=4 fin=false before recv_off=4 inbox_len=4 bufs=0
+
+=== PUSH_STREAM_FRAME ENTRY ===
+stream_id=0, offset=0, len=4, fin=false, role=.Client
+Calling ensureStreamRx(0)...
+After ensureStreamRx: streams_rx now has 1 entries
+[STREAM-RX-AFTER] id=0 recv_off=4 inbox_len=4 bufs=1 fin_off=null
+pushStreamFrame returned successfully
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=true, saw_handshake_done=false, saw_close=false
+Client: Using DCID for 1-RTT packet: 3f
+78
+3f
+72
+f1
+8f
+57
+b7
+ (len=8)
+encodeShortProtected: pn=18 (0x12) pn_len=2 dcid=?x?r�W�
+protectPacket INPUT: plaintext.len=17 out_cipher.len=33
+protectPacket INPUT: plaintext first 30 bytes: 02 12 00 06 01 00 00 00 01 00 00 00 02 00 00 00 02 
+protectPacket: pn=18 pn_len=2 header_prefix_len=8 aad_len=11
+protectPacket: header_first=0x41
+protectPacket: AAD (first 20 bytes): 41 3F 78 3F 72 F1 8F 57 B7 00 12 00 00 00 00 00 00 00 00 00
+protectPacket: Nonce: D1 26 48 AE 55 06 1C 61 6B 82 DB F7
+protectPacket WARNING: small plaintext.len=17, ct_len=33
+[PHASE51] onShortHeaderPacketSent called: bytes=44 ack_eliciting=false pn=18
+[PHASE50-CC] onPacketSent: space=Application pn=18 bytes=44 ack_eliciting=false inflight: 0→0 cwnd=13629
+[APP-ACK] immediate ack largest=18 pn=19 bytes=44
+[P42-21-ACK-TRIGGER] ⏰ ACK triggered: saw_ack_elicit=Y ecn=N delay_since_rx=0us
+[LOCALHOST] IPv4 check: 127.0.0.1 -> true
+[AMPLIFICATION] validated=true isLocalhost=true rx=0 tx=0 tx/3=0 allow=true
+[P42-21-ACK-AMPLIF] allow_send=Y rx_unval=0 tx_unval=0 validated=Y ratio=0.00
+[P42-19-FC-SKIP] Stream 0 no update needed (local_max=2097152, last_sent=2097152, recv_off=4, inbox=4)
+encodeShortProtected: pn=20 (0x14) pn_len=2 dcid=?x?r�W�
+protectPacket INPUT: plaintext.len=17 out_cipher.len=33
+protectPacket INPUT: plaintext first 30 bytes: 02 12 00 06 01 00 00 00 01 00 00 00 02 00 00 00 02 
+protectPacket: pn=20 pn_len=2 header_prefix_len=8 aad_len=11
+protectPacket: header_first=0x41
+protectPacket: AAD (first 20 bytes): 41 3F 78 3F 72 F1 8F 57 B7 00 14 00 00 00 00 00 00 00 00 00
+protectPacket: Nonce: D1 26 48 AE 55 06 1C 61 6B 82 DB F1
+protectPacket WARNING: small plaintext.len=17, ct_len=33
+[P42-21-ACK-SENT] ✅ Normal ACK sent: pkt_len=44B largest=18 delay_rx_to_tx=0us send_us=8us total=8us
+[PHASE51] onShortHeaderPacketSent called: bytes=44 ack_eliciting=false pn=20
+[PHASE50-CC] onPacketSent: space=Application pn=20 bytes=44 ack_eliciting=false inflight: 0→0 cwnd=13629
+[processShortHeader] Called for 31 bytes
+[processShortHeader] Found connection, role=Client, has_app_rx_keys=true
+[APP-DECRYPT-START] attempt=14 dcid_len=8 bytes=31 cached=8
+[APP-PATH] Enter enumerateDcidLength (short header) bytes_len=31 try_dcid_len=8 largest_pn=18 conn_set=true
+[APP-DECODE] TRY CURRENT dcid_len=8 largest_pn=18 rx_phase=false bytes=31
+[SHORT-DECODE-ENTRY] bytes=31 dcid_len=8 largest_pn=18 key0=F5
+SHORT HEADER HP: pn_start=9, sample_offset=13, packet_len=31
+SHORT HEADER HP: sample16 = F9 8B EE B2 34 F2 80 DF ED BC 70 7D AD 0A C0 F9 
+HP mask (first 5 bytes): 77
+BF
+21
+1B
+61
+is_long=false, hdr_mask=1F, header_first_before=56
+header_first_after=41
+Decoded pn_len from header: 2
+pn_buf before unmasking: { 191, 50, 215, 189 }
+pn_buf after unmasking: { 0, 19, 204, 220 }, using pn_len=2
+decodeShortProtected: EARLY KEY_PHASE extraction = false (header_first=0x41)
+decodeShortProtected: truncated PN=19 -> expanded PN=19 (largest_pn=18)
+decodeShortProtected: KEY_PHASE bit = false (header_first=0x41)
+[PHASE57] ✅ Decrypted with CURRENT keys: dcid_len=8 pn=19
+[PHASE57-DECRYPT] ✅ Decrypted with CURRENT keys: pn=19 key_phase=false conn_rx_kp=false
+[APP-DECRYPT-SUCCESS] attempt=14 pn=19 payload_len=4 used_next=false used_prev=false rx_phase=false success_ratio=14/14
+[APP-DISPATCH] Parsing 1-RTT frames payload_len=4 pn=19
+[APP-STREAM-SCAN] hit at offset=0 type_byte=0x0F
+[APP-PAYLOAD-HEX] 0F 00 04 00 
+Parsing frames from payload, total_len=4, role=Client
+Decoded frame at offset 0: type=stream
+[STREAM-FRAME] id=0 off=4 len=0 fin=true
+
+>>> ENDPOINT RECEIVED STREAM FRAME <<<
+CLIENT received STREAM frame - id=0, off=4, len=0, fin=true
+Calling conn.pushStreamFrame()...
+[CONN-PTR-PUSH] conn=0x71b4d5780000 stream_id=0
+[STREAM-RX] id=0 off=4 len=0 fin=true before recv_off=4 inbox_len=4 bufs=1
+
+=== PUSH_STREAM_FRAME ENTRY ===
+stream_id=0, offset=4, len=0, fin=true, role=.Client
+Calling ensureStreamRx(0)...
+After ensureStreamRx: streams_rx now has 1 entries
+pushStreamFrame returned successfully
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=true, saw_handshake_done=false, saw_close=false
+Client: Using DCID for 1-RTT packet: 3f
+78
+3f
+72
+f1
+8f
+57
+b7
+ (len=8)
+encodeShortProtected: pn=21 (0x15) pn_len=2 dcid=?x?r�W�
+protectPacket INPUT: plaintext.len=17 out_cipher.len=33
+protectPacket INPUT: plaintext first 30 bytes: 02 12 00 06 01 00 00 00 01 00 00 00 02 00 00 00 02 
+protectPacket: pn=21 pn_len=2 header_prefix_len=8 aad_len=11
+protectPacket: header_first=0x41
+protectPacket: AAD (first 20 bytes): 41 3F 78 3F 72 F1 8F 57 B7 00 15 00 00 00 00 00 00 00 00 00
+protectPacket: Nonce: D1 26 48 AE 55 06 1C 61 6B 82 DB F0
+protectPacket WARNING: small plaintext.len=17, ct_len=33
+[PHASE51] onShortHeaderPacketSent called: bytes=44 ack_eliciting=false pn=21
+[PHASE50-CC] onPacketSent: space=Application pn=21 bytes=44 ack_eliciting=false inflight: 0→0 cwnd=13629
+[APP-ACK] immediate ack largest=18 pn=22 bytes=44
+[APP-DISPATCH] ack-eliciting pn=19
+[PHASE57-STEP5] ✓ used_next=false, no key promotion needed
+[P42-20-PN-OK] ✓ Sequential PN received: pn=19, prev_largest=18
+Parsing frames from payload, total_len=4, role=Client
+Decoded frame at offset 0: type=stream
+[STREAM-FRAME] id=0 off=4 len=0 fin=true
+
+>>> ENDPOINT RECEIVED STREAM FRAME <<<
+CLIENT received STREAM frame - id=0, off=4, len=0, fin=true
+Calling conn.pushStreamFrame()...
+[CONN-PTR-PUSH] conn=0x71b4d5780000 stream_id=0
+[STREAM-RX] id=0 off=4 len=0 fin=true before recv_off=4 inbox_len=4 bufs=1
+
+=== PUSH_STREAM_FRAME ENTRY ===
+stream_id=0, offset=4, len=0, fin=true, role=.Client
+Calling ensureStreamRx(0)...
+After ensureStreamRx: streams_rx now has 1 entries
+pushStreamFrame returned successfully
+[processFrames] Frame processed: saw_handshake_done=false
+[processFrames] Returning result: saw_ack_eliciting=true, saw_handshake_done=false, saw_close=false
+Client: Using DCID for 1-RTT packet: 3f
+78
+3f
+72
+f1
+8f
+57
+b7
+ (len=8)
+encodeShortProtected: pn=23 (0x17) pn_len=2 dcid=?x?r�W�
+protectPacket INPUT: plaintext.len=17 out_cipher.len=33
+protectPacket INPUT: plaintext first 30 bytes: 02 13 00 06 02 00 00 00 01 00 00 00 02 00 00 00 02 
+protectPacket: pn=23 pn_len=2 header_prefix_len=8 aad_len=11
+protectPacket: header_first=0x41
+protectPacket: AAD (first 20 bytes): 41 3F 78 3F 72 F1 8F 57 B7 00 17 00 00 00 00 00 00 00 00 00
+protectPacket: Nonce: D1 26 48 AE 55 06 1C 61 6B 82 DB F2
+protectPacket WARNING: small plaintext.len=17, ct_len=33
+[PHASE51] onShortHeaderPacketSent called: bytes=44 ack_eliciting=false pn=23
+[PHASE50-CC] onPacketSent: space=Application pn=23 bytes=44 ack_eliciting=false inflight: 0→0 cwnd=13629
+[APP-ACK] immediate ack largest=19 pn=24 bytes=44
+[P42-21-ACK-TRIGGER] ⏰ ACK triggered: saw_ack_elicit=Y ecn=N delay_since_rx=0us
+[LOCALHOST] IPv4 check: 127.0.0.1 -> true
+[AMPLIFICATION] validated=true isLocalhost=true rx=0 tx=0 tx/3=0 allow=true
+[P42-21-ACK-AMPLIF] allow_send=Y rx_unval=0 tx_unval=0 validated=Y ratio=0.00
+[P42-19-FC-SKIP] Stream 0 no update needed (local_max=2097152, last_sent=2097152, recv_off=4, inbox=4)
+encodeShortProtected: pn=25 (0x19) pn_len=2 dcid=?x?r�W�
+protectPacket INPUT: plaintext.len=17 out_cipher.len=33
+protectPacket INPUT: plaintext first 30 bytes: 02 13 00 06 02 00 00 00 01 00 00 00 02 00 00 00 02 
+protectPacket: pn=25 pn_len=2 header_prefix_len=8 aad_len=11
+protectPacket: header_first=0x41
+protectPacket: AAD (first 20 bytes): 41 3F 78 3F 72 F1 8F 57 B7 00 19 00 00 00 00 00 00 00 00 00
+protectPacket: Nonce: D1 26 48 AE 55 06 1C 61 6B 82 DB FC
+protectPacket WARNING: small plaintext.len=17, ct_len=33
+[P42-21-ACK-SENT] ✅ Normal ACK sent: pkt_len=44B largest=19 delay_rx_to_tx=0us send_us=49us total=49us
+[PHASE51] onShortHeaderPacketSent called: bytes=44 ack_eliciting=false pn=25
+[PHASE50-CC] onPacketSent: space=Application pn=25 bytes=44 ack_eliciting=false inflight: 0→0 cwnd=13629
+[FC] Stream 0 read 4 bytes (total consumed: 4), max_stream_data: 2097152 -> 2097156 (receive_window=2097152)
+[LOCALHOST] IPv4 check: 127.0.0.1 -> true
+[AMPLIFICATION] validated=true isLocalhost=true rx=0 tx=0 tx/3=0 allow=true
+echo: PING
+received echo (4 bytes)
+DEBUG: sendConnectionClose called with error_code=0, reason="bye"
+Client: Using DCID for 1-RTT packet: 3f
+78
+3f
+72
+f1
+8f
+57
+b7
+ (len=8)
+encodeShortProtected: pn=26 (0x1a) pn_len=2 dcid=?x?r�W�
+protectPacket INPUT: plaintext.len=7 out_cipher.len=23
+protectPacket INPUT: plaintext first 30 bytes: 1c 00 00 03 62 79 65 
+protectPacket: pn=26 pn_len=2 header_prefix_len=8 aad_len=11
+protectPacket: header_first=0x41
+protectPacket: AAD (first 20 bytes): 41 3F 78 3F 72 F1 8F 57 B7 00 1A 00 00 00 00 00 00 00 00 00
+protectPacket: Nonce: D1 26 48 AE 55 06 1C 61 6B 82 DB FF
+protectPacket WARNING: small plaintext.len=7, ct_len=23
+[PHASE51] onShortHeaderPacketSent called: bytes=34 ack_eliciting=true pn=26
+[PHASE50-CC] onPacketSent: space=Application pn=26 bytes=34 ack_eliciting=true inflight: 0→34 cwnd=13629
+DEBUG: Connection marked as closed after CONNECTION_CLOSE sent
