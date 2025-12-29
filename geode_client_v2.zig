@@ -253,9 +253,9 @@ pub fn executeQuery(
     query: []const u8,
     params: ?std.json.Value,
     insecure: bool,
-    ) !std.json.Parsed(std.json.Value) {
-        var client = GeodeClient.init(allocator, host, port, insecure);
-        defer client.deinit();
+) !std.json.Parsed(std.json.Value) {
+    var client = GeodeClient.init(allocator, host, port, insecure);
+    defer client.deinit();
 
     try client.connect();
 
@@ -265,13 +265,13 @@ pub fn executeQuery(
     defer allocator.free(hello_response);
 
     // Send query
-        const request_id: u64 = 1;
-        try client.sendRunGql(request_id, query, params);
-        const schema_response = try client.receiveMessage(3000);
-        defer allocator.free(schema_response);
+    const request_id: u64 = 1;
+    try client.sendRunGql(request_id, query, params);
+    const schema_response = try client.receiveMessage(3000);
+    defer allocator.free(schema_response);
 
     // Pull results
-        try client.sendPull(request_id, 1000);
+    try client.sendPull(request_id, 1000);
     const bindings_response = try client.receiveMessage(3000);
 
     // Parse and return
