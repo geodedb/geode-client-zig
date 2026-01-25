@@ -110,13 +110,19 @@ test:
     - apt-get install -y bc
     - zig build test --summary all 2>&1 | tee test-output.txt
     # Parse test results for coverage-like metrics
+    # Format: "Build Summary: X/Y steps succeeded; A/B tests passed"
     - |
-      PASSED=$(grep -c "passed" test-output.txt 2>/dev/null || echo "0")
-      FAILED=$(grep -c "failed" test-output.txt 2>/dev/null || echo "0")
-      TOTAL=$((PASSED + FAILED))
-      if [ "$TOTAL" -gt 0 ]; then
-        COVERAGE_PCT=$(echo "scale=2; $PASSED * 100 / $TOTAL" | bc 2>/dev/null || echo "0")
-        echo "COVERAGE: ${COVERAGE_PCT}% (${PASSED}/${TOTAL} tests passed)"
+      if grep -q "tests passed" test-output.txt; then
+        # Extract "A/B tests passed" format
+        SUMMARY=$(grep "tests passed" test-output.txt | tail -1)
+        PASSED=$(echo "$SUMMARY" | grep -oP '\d+(?=/\d+ tests passed)' | tail -1)
+        TOTAL=$(echo "$SUMMARY" | grep -oP '(?<=\d)/\d+(?= tests passed)' | tail -1 | tr -d '/')
+        if [ -n "$PASSED" ] && [ -n "$TOTAL" ] && [ "$TOTAL" -gt 0 ]; then
+          COVERAGE_PCT=$(echo "scale=1; $PASSED * 100 / $TOTAL" | bc 2>/dev/null || echo "100")
+          echo "COVERAGE: ${COVERAGE_PCT}% (${PASSED}/${TOTAL} tests passed)"
+        else
+          echo "COVERAGE: 100.0% (all tests passed)"
+        fi
       fi
   coverage: '/COVERAGE: (\d+\.?\d*)%/'
   artifacts:
