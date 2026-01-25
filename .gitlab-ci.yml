@@ -26,7 +26,7 @@ stages:
   - integration
 
 # =============================================================================
-# Lint Stage - Code Formatting
+# Include CI/CD Catalog Components
 # =============================================================================
 
 include:
@@ -37,10 +37,6 @@ include:
       paths: "*.zig src/*.zig tests/*.zig benchmarks/*.zig fuzz/*.zig"
       stage: lint
 
-# =============================================================================
-# Build Stage
-# =============================================================================
-
   # Build the library
   - component: gitlab.com/devnw/ci-catalog/zig-build@latest
     inputs:
@@ -50,10 +46,6 @@ include:
       artifact_paths: "zig-out/"
       artifact_expire: "1 day"
 
-# =============================================================================
-# Test Stage - Unit Tests
-# =============================================================================
-
   # Run unit tests with coverage
   - component: gitlab.com/devnw/ci-catalog/zig-test@latest
     inputs:
@@ -62,10 +54,6 @@ include:
       extra_packages: "libssl-dev bc"
       test_options: "--summary all"
       coverage: true
-
-# =============================================================================
-# Test Stage - Fuzz Tests
-# =============================================================================
 
   # Run fuzz/property-based tests
   - component: gitlab.com/devnw/ci-catalog/zig-fuzz@latest
@@ -79,23 +67,70 @@ include:
 # =============================================================================
 # Integration Stage - Docker-based Integration Tests
 # =============================================================================
+# Note: Integration tests are defined inline because they require custom rules
+# and service configuration that varies per project.
 
-  # Run integration tests against Geode server
-  - component: gitlab.com/devnw/ci-catalog/zig-integration-test@latest
-    inputs:
-      zig_version: $ZIG_VERSION
-      stage: integration
-      extra_packages: "libssl-dev"
-      service_image: $GEODE_IMAGE
-      service_port: "3141"
-      service_protocol: "udp"
-      service_ready_log: "Server ready"
-      startup_timeout: "60"
-      insecure: true
-    rules:
-      - if: $SKIP_INTEGRATION == "true"
-        when: never
-      - when: on_success
+integration-tests:
+  stage: integration
+  image: "ubuntu:24.04"
+  variables:
+    ZIG_VERSION: $ZIG_VERSION
+    SERVICE_PORT: "3141"
+    STARTUP_TIMEOUT: "60"
+  services:
+    - name: $GEODE_IMAGE
+      alias: geode
+      command:
+        - serve
+        - --listen
+        - "0.0.0.0:3141"
+        - --log-level
+        - info
+  cache:
+    key: "linux-zig-${ZIG_VERSION}"
+    paths:
+      - zig-${ZIG_VERSION}/
+  before_script:
+    - apt-get update && apt-get install -y curl xz-utils netcat-openbsd libssl-dev
+    - |
+      if [ ! -f "zig-${ZIG_VERSION}/zig" ]; then
+        curl -L "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" | tar -xJ
+        mv "zig-linux-x86_64-${ZIG_VERSION}" "zig-${ZIG_VERSION}"
+      fi
+    - export PATH="$PWD/zig-${ZIG_VERSION}:$PATH"
+    - zig version
+    # Wait for Geode service to be ready
+    - |
+      echo "Waiting for Geode service to be ready (timeout: ${STARTUP_TIMEOUT}s)..."
+      ELAPSED=0
+      while [ $ELAPSED -lt $STARTUP_TIMEOUT ]; do
+        # For UDP, we just wait and hope - nc -u doesn't work well for checking
+        sleep 1
+        ELAPSED=$((ELAPSED + 1))
+        if [ $((ELAPSED % 10)) -eq 0 ]; then
+          echo "  Still waiting... (${ELAPSED}s/${STARTUP_TIMEOUT}s)"
+        fi
+      done
+      echo "Service should be ready"
+  script:
+    - export PATH="$PWD/zig-${ZIG_VERSION}:$PATH"
+    - export GEODE_SERVER="geode:${SERVICE_PORT}"
+    - export GEODE_INSECURE=1
+    - |
+      echo "Running integration tests..."
+      echo "  Server: $GEODE_SERVER"
+      zig build test-integration --summary all 2>&1 | tee integration-test-output.txt
+      echo "Integration tests completed"
+  artifacts:
+    paths:
+      - integration-test-output.txt
+    expire_in: 1 week
+    when: always
+  rules:
+    - if: $SKIP_INTEGRATION == "true"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 # =============================================================================
 # Optional: Manual Release Build
