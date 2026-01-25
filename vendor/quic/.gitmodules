@@ -1,3 +1,0 @@
-[submodule "vendor/ztls"]
-	path = vendor/ztls
-	url = git@gitlab.com:devnw/spyder/ztls.git

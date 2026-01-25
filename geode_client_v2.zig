@@ -1,8 +1,8 @@
 const std = @import("std");
-const quic = @import("vendor_quic");
+const quic = @import("quic");
 
-// CANARY: REQ=REQ-ZIG-CLIENT-002; FEATURE="Zig Client v2"; ASPECT=VendorQuicClient; STATUS=IMPL; OWNER=clients; UPDATED=2025-11-21
-// Zig client now uses the shared vendor/quic transport for full compatibility with the server.
+// CANARY: REQ=REQ-ZIG-CLIENT-002; FEATURE="Zig Client v2"; ASPECT=QuicPackageClient; STATUS=IMPL; OWNER=clients; UPDATED=2026-01-24
+// Zig client uses the quic package from zig package manager for full compatibility with the server.
 
 pub const GeodeClient = struct {
     allocator: std.mem.Allocator,
@@ -11,7 +11,7 @@ pub const GeodeClient = struct {
     insecure: bool,
 
     endpoint: ?*quic.QuicEndpoint = null,
-    conn: ?*quic.Connection = null,
+    conn: ?*quic.QuicConnection = null,
     stream_id: ?u64 = null,
     recv_buffer: std.ArrayList(u8),
 

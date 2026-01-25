@@ -1,7 +1,0 @@
-/home/benji/src/spyder/geode/vendor/quic/test-clients/quinn-client/target/release/deps/smallvec-cf175a76e2934242.d: /home/benji/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smallvec-1.15.1/src/lib.rs
-
-/home/benji/src/spyder/geode/vendor/quic/test-clients/quinn-client/target/release/deps/libsmallvec-cf175a76e2934242.rlib: /home/benji/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smallvec-1.15.1/src/lib.rs
-
-/home/benji/src/spyder/geode/vendor/quic/test-clients/quinn-client/target/release/deps/libsmallvec-cf175a76e2934242.rmeta: /home/benji/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smallvec-1.15.1/src/lib.rs
-
-/home/benji/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smallvec-1.15.1/src/lib.rs:

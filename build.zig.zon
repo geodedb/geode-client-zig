@@ -1,0 +1,48 @@
+.{
+    .name = .geode_client_zig,
+    .version = "0.1.0",
+    .fingerprint = 0x13ee9771571b2bf3,
+    .minimum_zig_version = "0.15.1",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "geode_client_v2.zig",
+        "test_connection.zig",
+        "test_connection_v2.zig",
+        "LICENSE",
+    },
+    .dependencies = .{
+        // QUIC transport protocol (RFC 9000) - handles secure UDP connections
+        .quic = .{
+            .path = "../../../zig/quic",
+        },
+        // TLS 1.3 cryptographic implementation (transitive dependency of quic)
+        .tls = .{
+            .path = "../../../zig/tls",
+        },
+        // DNS resolution library
+        .dns = .{
+            .path = "../../../zig/dns",
+        },
+        // JSON parsing and serialization
+        .json = .{
+            .path = "../../../zig/json",
+        },
+        // Multi-format configuration (YAML, TOML, JSON)
+        .config = .{
+            .path = "../../../zig/config",
+        },
+        // Structured logging with JSON output
+        .slog = .{
+            .path = "../../../zig/slog",
+        },
+        // URI parsing (RFC 3986/3987)
+        .uri = .{
+            .path = "../../../zig/uri",
+        },
+        // String manipulation utilities
+        .strings = .{
+            .path = "../../../zig/strings",
+        },
+    },
+}
