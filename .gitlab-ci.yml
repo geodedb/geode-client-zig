@@ -1,30 +1,132 @@
 # =============================================================================
 # Geode Zig Client CI/CD Pipeline
-# Uses DevNW CI/CD Catalog components
+# Uses DevNW CI/CD Catalog components for standardized, organization-wide CI
+# =============================================================================
+#
+# Pipeline stages:
+#   1. lint     - Code formatting checks
+#   2. build    - Compile the library
+#   3. test     - Unit tests and fuzz tests
+#   4. integration - Integration tests with Geode server
+#
+# Environment variables:
+#   ZIG_VERSION     - Override Zig version (default: 0.15.2)
+#   SKIP_INTEGRATION - Set to "true" to skip integration tests
+#
 # =============================================================================
 
-include:
-  - component: gitlab.com/devnw/ci-catalog/zig-format@latest
-    inputs:
-      zig_version: "0.15.2"
-      paths: "*.zig"
-      stage: lint
-      allow_failure: true
-
-  - component: gitlab.com/devnw/ci-catalog/zig-build@latest
-    inputs:
-      zig_version: "0.15.2"
-      stage: build
-      extra_packages: "libssl-dev"
-
-  - component: gitlab.com/devnw/ci-catalog/zig-test@latest
-    inputs:
-      zig_version: "0.15.2"
-      stage: test
-      extra_packages: "libssl-dev"
-      allow_failure: true  # Tests may require running Geode server
+variables:
+  ZIG_VERSION: "0.15.2"
+  GEODE_IMAGE: "registry.gitlab.com/devnw/geode/geode:latest"
 
 stages:
   - lint
   - build
   - test
+  - integration
+
+# =============================================================================
+# Lint Stage - Code Formatting
+# =============================================================================
+
+include:
+  # Format check for all Zig source files
+  - component: gitlab.com/devnw/ci-catalog/zig-format@latest
+    inputs:
+      zig_version: $ZIG_VERSION
+      paths: "*.zig src/*.zig tests/*.zig benchmarks/*.zig fuzz/*.zig"
+      stage: lint
+
+# =============================================================================
+# Build Stage
+# =============================================================================
+
+  # Build the library
+  - component: gitlab.com/devnw/ci-catalog/zig-build@latest
+    inputs:
+      zig_version: $ZIG_VERSION
+      stage: build
+      extra_packages: "libssl-dev"
+      artifact_paths: "zig-out/"
+      artifact_expire: "1 day"
+
+# =============================================================================
+# Test Stage - Unit Tests
+# =============================================================================
+
+  # Run unit tests with coverage
+  - component: gitlab.com/devnw/ci-catalog/zig-test@latest
+    inputs:
+      zig_version: $ZIG_VERSION
+      stage: test
+      extra_packages: "libssl-dev bc"
+      test_options: "--summary all"
+      coverage: true
+
+# =============================================================================
+# Test Stage - Fuzz Tests
+# =============================================================================
+
+  # Run fuzz/property-based tests
+  - component: gitlab.com/devnw/ci-catalog/zig-fuzz@latest
+    inputs:
+      zig_version: $ZIG_VERSION
+      stage: test
+      test_step: "test-fuzz"
+      extra_packages: "libssl-dev"
+      timeout: "15m"
+
+# =============================================================================
+# Integration Stage - Docker-based Integration Tests
+# =============================================================================
+
+  # Run integration tests against Geode server
+  - component: gitlab.com/devnw/ci-catalog/zig-integration-test@latest
+    inputs:
+      zig_version: $ZIG_VERSION
+      stage: integration
+      extra_packages: "libssl-dev"
+      service_image: $GEODE_IMAGE
+      service_port: "3141"
+      service_protocol: "udp"
+      service_ready_log: "Server ready"
+      startup_timeout: "60"
+      insecure: true
+    rules:
+      - if: $SKIP_INTEGRATION == "true"
+        when: never
+      - when: on_success
+
+# =============================================================================
+# Optional: Manual Release Build
+# =============================================================================
+
+release-build:
+  stage: build
+  image: "ubuntu:24.04"
+  variables:
+    ZIG_VERSION: $ZIG_VERSION
+  cache:
+    key: "linux-zig-${ZIG_VERSION}"
+    paths:
+      - zig-${ZIG_VERSION}/
+  before_script:
+    - apt-get update && apt-get install -y curl xz-utils libssl-dev
+    - |
+      if [ ! -f "zig-${ZIG_VERSION}/zig" ]; then
+        curl -L "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" | tar -xJ
+        mv "zig-linux-x86_64-${ZIG_VERSION}" "zig-${ZIG_VERSION}"
+      fi
+    - export PATH="$PWD/zig-${ZIG_VERSION}:$PATH"
+    - zig version
+  script:
+    - export PATH="$PWD/zig-${ZIG_VERSION}:$PATH"
+    - zig build -Doptimize=ReleaseSafe
+  artifacts:
+    paths:
+      - zig-out/
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_TAG
+    - when: manual
+      allow_failure: true

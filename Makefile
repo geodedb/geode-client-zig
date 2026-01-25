@@ -13,9 +13,11 @@ GEODE_HOST ?= 127.0.0.1
 GEODE_PORT ?= 3141
 
 .PHONY: all build release test test-unit test-integration test-integration-docker \
+        test-integration-docker-legacy test-integration-docker-verbose test-integration-docker-keep \
+        test-connection test-connection-v2 test-all test-fuzz bench \
         fmt fmt-check lint clean check ci ci-quick ci-full help \
-        docker-start docker-stop docker-logs docker-status \
-        run run-v2 deps
+        docker-start docker-stop docker-logs docker-status docker-pull docker-wait \
+        run run-v2 deps watch deps-tree build-verbose
 
 # Default target
 all: build fmt-check test
@@ -41,8 +43,11 @@ help:
 	@echo "Test targets:"
 	@echo "  make test           - Run all unit tests"
 	@echo "  make test-unit      - Run unit tests only"
-	@echo "  make test-integration       - Run integration tests (requires Geode server)"
-	@echo "  make test-integration-docker - Run integration tests with Docker"
+	@echo "  make test-integration        - Run integration tests (requires Geode server)"
+	@echo "  make test-integration-docker - Run integration tests with Docker (auto container)"
+	@echo "  make test-integration-docker-verbose - Run with verbose Docker output"
+	@echo "  make test-integration-docker-keep    - Keep container running after tests"
+	@echo "  make test-fuzz      - Run property-based and fuzz tests"
 	@echo ""
 	@echo "Quality targets:"
 	@echo "  make lint           - Run zig fmt check (lint)"
@@ -59,6 +64,9 @@ help:
 	@echo "Run targets:"
 	@echo "  make run            - Run test_connection"
 	@echo "  make run-v2         - Run test_connection_v2"
+	@echo ""
+	@echo "Benchmark targets:"
+	@echo "  make bench          - Run performance benchmarks"
 	@echo ""
 	@echo "CI targets:"
 	@echo "  make ci             - Run full CI pipeline"
@@ -117,49 +125,94 @@ test-unit:
 	$(ZIG) build test $(ZIG_FLAGS)
 	@echo "✓ Unit tests complete"
 
-test-integration: build
+test-integration:
 	@echo "Running integration tests..."
 	@echo ""
 	@echo "Tests connect to Geode server at $(GEODE_HOST):$(GEODE_PORT)"
 	@echo "Start server first: cd ../geode && ./zig-out/bin/geode serve"
+	@echo "Or use: make test-integration-docker"
 	@echo ""
-	GEODE_SERVER=$(GEODE_HOST):$(GEODE_PORT) ./zig-out/bin/test_connection
-	@echo ""
-	GEODE_SERVER=$(GEODE_HOST):$(GEODE_PORT) ./zig-out/bin/test_connection_v2
+	GEODE_SERVER=$(GEODE_HOST):$(GEODE_PORT) GEODE_INSECURE=1 $(ZIG) build test-integration $(ZIG_FLAGS)
 	@echo ""
 	@echo "✓ Integration tests complete"
 
-test-integration-docker: docker-start
+test-integration-docker: build
 	@echo "Running integration tests with Docker..."
+	@./scripts/docker-integration-test.sh
 	@echo ""
-	@echo "Waiting for server to be ready..."
-	@sleep 3
+	@echo "✓ Docker integration tests complete"
+
+test-integration-docker-verbose: build
+	@echo "Running integration tests with Docker (verbose)..."
+	@./scripts/docker-integration-test.sh --verbose
+	@echo ""
+	@echo "✓ Docker integration tests complete"
+
+test-integration-docker-keep: build
+	@echo "Running integration tests with Docker (keeping container)..."
+	@./scripts/docker-integration-test.sh --keep --verbose
+	@echo ""
+	@echo "✓ Docker integration tests complete"
+
+# Legacy Docker integration test (manual container management)
+test-integration-docker-legacy: build docker-start docker-wait
+	@echo "Running integration tests with Docker (legacy)..."
+	@echo ""
 	@echo "Using Docker container: $(DOCKER_CONTAINER_NAME)"
 	@echo ""
-	GEODE_SERVER=127.0.0.1:$(GEODE_PORT) GEODE_INSECURE=1 ./zig-out/bin/test_connection_v2 || ($(MAKE) docker-stop && exit 1)
+	GEODE_SERVER=127.0.0.1:$(GEODE_PORT) GEODE_INSECURE=1 $(ZIG) build test-integration $(ZIG_FLAGS) || ($(MAKE) docker-stop && exit 1)
 	@echo ""
 	@echo "✓ Docker integration tests complete"
 	$(MAKE) docker-stop
 
-test-all: test-unit test-integration
-	@echo "✓ All tests complete (including integration)"
+# Run test executables (legacy)
+test-connection: build
+	@echo "Running test_connection..."
+	GEODE_SERVER=$(GEODE_HOST):$(GEODE_PORT) ./zig-out/bin/test_connection
+
+test-connection-v2: build
+	@echo "Running test_connection_v2..."
+	GEODE_SERVER=$(GEODE_HOST):$(GEODE_PORT) GEODE_INSECURE=1 ./zig-out/bin/test_connection_v2
+
+test-all: test-unit test-integration test-fuzz
+	@echo "✓ All tests complete (including integration and fuzz)"
+
+test-fuzz:
+	@echo "Running property-based and fuzz tests..."
+	$(ZIG) build test-fuzz $(ZIG_FLAGS)
+	@echo "✓ Fuzz tests complete"
+
+# =============================================================================
+# Benchmark Targets
+# =============================================================================
+
+bench:
+	@echo "Running performance benchmarks..."
+	@echo ""
+	$(ZIG) build bench $(ZIG_FLAGS)
+	@echo ""
+	@echo "✓ Benchmarks complete"
 
 # =============================================================================
 # Code Quality Targets
 # =============================================================================
 
 lint: fmt-check
-	@echo "✓ Lint complete"
+	@echo "✓ Lint complete (all files pass zig fmt)"
 
 fmt:
-	@echo "Formatting code..."
-	$(ZIG) fmt *.zig
+	@echo "Formatting all code..."
+	$(ZIG) fmt *.zig src/*.zig tests/*.zig benchmarks/*.zig fuzz/*.zig
 	@echo "✓ Format complete"
 
 fmt-check:
 	@echo "Checking code format..."
-	$(ZIG) fmt --check *.zig
-	@echo "✓ Format check complete"
+	@$(ZIG) fmt --check *.zig && \
+	$(ZIG) fmt --check src/*.zig && \
+	$(ZIG) fmt --check tests/*.zig && \
+	$(ZIG) fmt --check benchmarks/*.zig && \
+	$(ZIG) fmt --check fuzz/*.zig
+	@echo "✓ Format check complete (all files properly formatted)"
 
 # =============================================================================
 # Docker Targets
@@ -172,11 +225,22 @@ docker-start:
 	else \
 		docker run -d --rm \
 			--name $(DOCKER_CONTAINER_NAME) \
-			-p $(GEODE_PORT):3141 \
+			-p $(GEODE_PORT):3141/udp \
 			$(DOCKER_IMAGE) \
-			serve --listen 0.0.0.0:3141; \
+			serve --listen 0.0.0.0:3141 --log-level info; \
 		echo "✓ Container started: $(DOCKER_CONTAINER_NAME)"; \
 	fi
+
+docker-wait:
+	@echo "Waiting for Geode server to be ready..."
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if docker logs $(DOCKER_CONTAINER_NAME) 2>&1 | grep -q "Server ready"; then \
+			echo "✓ Server ready"; \
+			break; \
+		fi; \
+		echo "  Waiting... ($$i/10)"; \
+		sleep 1; \
+	done
 
 docker-stop:
 	@echo "Stopping Geode Docker container..."

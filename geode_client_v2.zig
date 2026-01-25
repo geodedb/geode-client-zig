@@ -210,7 +210,7 @@ pub const GeodeClient = struct {
         const params_json = if (params) |p|
             try std.json.Stringify.valueAlloc(self.allocator, p, .{})
         else
-            try self.allocator.dupe(u8, "null");
+            try self.allocator.dupe(u8, "{}");
         defer self.allocator.free(params_json);
 
         const msg = try std.fmt.allocPrint(

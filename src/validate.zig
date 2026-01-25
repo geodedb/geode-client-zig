@@ -1,0 +1,387 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2024-2026 CodePros
+//
+// Input validation for the Geode Zig client library.
+// Provides validation functions for queries, parameters, and configuration.
+
+const std = @import("std");
+const GeodeError = @import("error").GeodeError;
+
+/// Maximum allowed query length (1MB)
+pub const MAX_QUERY_LENGTH: usize = 1024 * 1024;
+
+/// Maximum parameter name length
+pub const MAX_PARAM_NAME_LENGTH: usize = 256;
+
+/// Maximum hostname length
+pub const MAX_HOSTNAME_LENGTH: usize = 253;
+
+/// Minimum valid port number
+pub const MIN_PORT: u16 = 1;
+
+/// Maximum valid port number
+pub const MAX_PORT: u16 = 65535;
+
+/// Maximum page size
+pub const MAX_PAGE_SIZE: u32 = 100000;
+
+/// Minimum page size
+pub const MIN_PAGE_SIZE: u32 = 1;
+
+/// Validation error types
+pub const ValidationError = error{
+    QueryTooLong,
+    QueryEmpty,
+    QueryContainsNull,
+    ParamNameTooLong,
+    ParamNameEmpty,
+    ParamNameInvalid,
+    HostnameEmpty,
+    HostnameTooLong,
+    HostnameInvalid,
+    PortOutOfRange,
+    PageSizeOutOfRange,
+};
+
+/// Validate a query string
+pub fn query(q: []const u8) ValidationError!void {
+    if (q.len == 0) {
+        return ValidationError.QueryEmpty;
+    }
+
+    if (q.len > MAX_QUERY_LENGTH) {
+        return ValidationError.QueryTooLong;
+    }
+
+    // Check for null bytes
+    for (q) |c| {
+        if (c == 0) {
+            return ValidationError.QueryContainsNull;
+        }
+    }
+}
+
+/// Validate a parameter name
+pub fn paramName(name: []const u8) ValidationError!void {
+    if (name.len == 0) {
+        return ValidationError.ParamNameEmpty;
+    }
+
+    if (name.len > MAX_PARAM_NAME_LENGTH) {
+        return ValidationError.ParamNameTooLong;
+    }
+
+    // Must start with letter or underscore
+    const first = name[0];
+    if (!isLetter(first) and first != '_') {
+        return ValidationError.ParamNameInvalid;
+    }
+
+    // Rest must be alphanumeric or underscore
+    for (name[1..]) |c| {
+        if (!isAlphanumeric(c) and c != '_') {
+            return ValidationError.ParamNameInvalid;
+        }
+    }
+}
+
+/// Validate a hostname
+pub fn hostname(host: []const u8) ValidationError!void {
+    if (host.len == 0) {
+        return ValidationError.HostnameEmpty;
+    }
+
+    if (host.len > MAX_HOSTNAME_LENGTH) {
+        return ValidationError.HostnameTooLong;
+    }
+
+    // Check for valid hostname characters
+    // Allow: letters, digits, hyphens, dots, colons (IPv6), brackets (IPv6)
+    for (host) |c| {
+        if (!isHostnameChar(c)) {
+            return ValidationError.HostnameInvalid;
+        }
+    }
+
+    // Additional checks for standard hostname format
+    // (not strict DNS validation, allows IPs)
+}
+
+/// Validate a port number
+pub fn port(p: u16) ValidationError!void {
+    if (p < MIN_PORT or p > MAX_PORT) {
+        return ValidationError.PortOutOfRange;
+    }
+}
+
+/// Validate page size
+pub fn pageSize(size: u32) ValidationError!void {
+    if (size < MIN_PAGE_SIZE or size > MAX_PAGE_SIZE) {
+        return ValidationError.PageSizeOutOfRange;
+    }
+}
+
+/// Validate an IPv4 address
+pub fn ipv4(addr: []const u8) bool {
+    var parts: u8 = 0;
+    var current_value: u32 = 0;
+    var digits: u8 = 0;
+
+    for (addr) |c| {
+        if (c == '.') {
+            if (digits == 0 or current_value > 255) {
+                return false;
+            }
+            parts += 1;
+            current_value = 0;
+            digits = 0;
+        } else if (c >= '0' and c <= '9') {
+            current_value = current_value * 10 + (c - '0');
+            digits += 1;
+            if (digits > 3) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    // Check final part
+    if (digits == 0 or current_value > 255) {
+        return false;
+    }
+
+    return parts == 3;
+}
+
+/// Check if string looks like an IPv6 address
+pub fn isIpv6(addr: []const u8) bool {
+    // Simple check: contains colons but not just one
+    var colon_count: u8 = 0;
+    for (addr) |c| {
+        if (c == ':') {
+            colon_count += 1;
+        }
+    }
+    return colon_count >= 2;
+}
+
+/// Sanitize a string by removing control characters
+pub fn sanitize(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
+    var result: std.ArrayListUnmanaged(u8) = .{};
+    errdefer result.deinit(allocator);
+
+    for (input) |c| {
+        // Skip control characters except tab, newline, carriage return
+        if (c < 32 and c != '\t' and c != '\n' and c != '\r') {
+            continue;
+        }
+        // Skip DEL character
+        if (c == 127) {
+            continue;
+        }
+        try result.append(allocator, c);
+    }
+
+    return result.toOwnedSlice(allocator);
+}
+
+// Helper functions
+
+fn isLetter(c: u8) bool {
+    return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z');
+}
+
+fn isDigit(c: u8) bool {
+    return c >= '0' and c <= '9';
+}
+
+fn isAlphanumeric(c: u8) bool {
+    return isLetter(c) or isDigit(c);
+}
+
+fn isHostnameChar(c: u8) bool {
+    return isAlphanumeric(c) or c == '-' or c == '.' or c == ':' or c == '[' or c == ']';
+}
+
+// =============================================================================
+// Unit Tests
+// =============================================================================
+
+test "query validates normal query" {
+    try query("MATCH (n) RETURN n");
+    try query("CREATE (p:Person {name: 'Alice'})");
+    try query("MATCH (a)-[:KNOWS]->(b) RETURN a, b");
+}
+
+test "query rejects empty query" {
+    try std.testing.expectError(ValidationError.QueryEmpty, query(""));
+}
+
+test "query rejects query with null byte" {
+    try std.testing.expectError(ValidationError.QueryContainsNull, query("MATCH\x00(n)"));
+}
+
+test "query rejects too long query" {
+    const long_query = "M" ** (MAX_QUERY_LENGTH + 1);
+    try std.testing.expectError(ValidationError.QueryTooLong, query(long_query));
+}
+
+test "query accepts max length query" {
+    const max_query = "M" ** MAX_QUERY_LENGTH;
+    try query(max_query);
+}
+
+test "paramName validates normal names" {
+    try paramName("name");
+    try paramName("_private");
+    try paramName("param1");
+    try paramName("my_param_123");
+    try paramName("A");
+}
+
+test "paramName rejects empty name" {
+    try std.testing.expectError(ValidationError.ParamNameEmpty, paramName(""));
+}
+
+test "paramName rejects name starting with digit" {
+    try std.testing.expectError(ValidationError.ParamNameInvalid, paramName("1name"));
+    try std.testing.expectError(ValidationError.ParamNameInvalid, paramName("123"));
+}
+
+test "paramName rejects name with invalid chars" {
+    try std.testing.expectError(ValidationError.ParamNameInvalid, paramName("name-with-dash"));
+    try std.testing.expectError(ValidationError.ParamNameInvalid, paramName("name.with.dots"));
+    try std.testing.expectError(ValidationError.ParamNameInvalid, paramName("name with spaces"));
+    try std.testing.expectError(ValidationError.ParamNameInvalid, paramName("name@domain"));
+}
+
+test "paramName rejects too long name" {
+    const long_name = "a" ** (MAX_PARAM_NAME_LENGTH + 1);
+    try std.testing.expectError(ValidationError.ParamNameTooLong, paramName(long_name));
+}
+
+test "hostname validates normal hostnames" {
+    try hostname("localhost");
+    try hostname("example.com");
+    try hostname("sub.domain.example.com");
+    try hostname("my-server");
+    try hostname("server123");
+}
+
+test "hostname validates IP addresses" {
+    try hostname("127.0.0.1");
+    try hostname("192.168.1.1");
+    try hostname("10.0.0.1");
+}
+
+test "hostname validates IPv6 addresses" {
+    try hostname("::1");
+    try hostname("2001:db8::1");
+    try hostname("[::1]");
+    try hostname("[2001:db8::1]");
+}
+
+test "hostname rejects empty hostname" {
+    try std.testing.expectError(ValidationError.HostnameEmpty, hostname(""));
+}
+
+test "hostname rejects too long hostname" {
+    const long_host = "a" ** (MAX_HOSTNAME_LENGTH + 1);
+    try std.testing.expectError(ValidationError.HostnameTooLong, hostname(long_host));
+}
+
+test "hostname rejects invalid characters" {
+    try std.testing.expectError(ValidationError.HostnameInvalid, hostname("host name"));
+    try std.testing.expectError(ValidationError.HostnameInvalid, hostname("host@domain"));
+    try std.testing.expectError(ValidationError.HostnameInvalid, hostname("host/path"));
+}
+
+test "port validates normal ports" {
+    try port(80);
+    try port(443);
+    try port(3141);
+    try port(8443);
+    try port(1);
+    try port(65535);
+}
+
+test "port rejects port 0" {
+    try std.testing.expectError(ValidationError.PortOutOfRange, port(0));
+}
+
+test "pageSize validates normal sizes" {
+    try pageSize(1);
+    try pageSize(100);
+    try pageSize(1000);
+    try pageSize(10000);
+    try pageSize(100000);
+}
+
+test "pageSize rejects zero" {
+    try std.testing.expectError(ValidationError.PageSizeOutOfRange, pageSize(0));
+}
+
+test "pageSize rejects too large" {
+    try std.testing.expectError(ValidationError.PageSizeOutOfRange, pageSize(100001));
+    try std.testing.expectError(ValidationError.PageSizeOutOfRange, pageSize(1000000));
+}
+
+test "ipv4 validates correct addresses" {
+    try std.testing.expect(ipv4("127.0.0.1"));
+    try std.testing.expect(ipv4("192.168.1.1"));
+    try std.testing.expect(ipv4("10.0.0.1"));
+    try std.testing.expect(ipv4("255.255.255.255"));
+    try std.testing.expect(ipv4("0.0.0.0"));
+}
+
+test "ipv4 rejects invalid addresses" {
+    try std.testing.expect(!ipv4(""));
+    try std.testing.expect(!ipv4("127.0.0"));
+    try std.testing.expect(!ipv4("127.0.0.1.1"));
+    try std.testing.expect(!ipv4("256.0.0.1"));
+    try std.testing.expect(!ipv4("127.0.0.256"));
+    try std.testing.expect(!ipv4("abc.def.ghi.jkl"));
+    try std.testing.expect(!ipv4("127.0.0.1."));
+    try std.testing.expect(!ipv4(".127.0.0.1"));
+}
+
+test "isIpv6 identifies IPv6 addresses" {
+    try std.testing.expect(isIpv6("::1"));
+    try std.testing.expect(isIpv6("2001:db8::1"));
+    try std.testing.expect(isIpv6("fe80::1%eth0"));
+    try std.testing.expect(isIpv6("::ffff:192.168.1.1"));
+}
+
+test "isIpv6 rejects non-IPv6" {
+    try std.testing.expect(!isIpv6("127.0.0.1"));
+    try std.testing.expect(!isIpv6("localhost"));
+    try std.testing.expect(!isIpv6("example.com"));
+}
+
+test "sanitize removes control characters" {
+    const input = "hello\x00world\x01test\x7f";
+    const result = try sanitize(std.testing.allocator, input);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("helloworldtest", result);
+}
+
+test "sanitize preserves whitespace" {
+    const input = "hello\tworld\ntest\r";
+    const result = try sanitize(std.testing.allocator, input);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("hello\tworld\ntest\r", result);
+}
+
+test "sanitize handles empty string" {
+    const result = try sanitize(std.testing.allocator, "");
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("", result);
+}
+
+test "sanitize handles normal string" {
+    const input = "MATCH (n:Person) RETURN n.name";
+    const result = try sanitize(std.testing.allocator, input);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings(input, result);
+}

@@ -58,6 +58,103 @@ pub fn build(b: *std.Build) void {
     const strings_mod = strings_dep.module("strings");
 
     // ========================================================================
+    // Internal Modules (src/)
+    // ========================================================================
+
+    // Error module
+    const error_mod = b.createModule(.{
+        .root_source_file = b.path("src/error.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    // Types module
+    const types_mod = b.createModule(.{
+        .root_source_file = b.path("src/types.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    types_mod.addImport("error", error_mod);
+
+    // Config module
+    const cfg_mod = b.createModule(.{
+        .root_source_file = b.path("src/config.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    cfg_mod.addImport("error", error_mod);
+
+    // Validate module
+    const validate_mod = b.createModule(.{
+        .root_source_file = b.path("src/validate.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    validate_mod.addImport("error", error_mod);
+
+    // Query builder module
+    const query_builder_mod = b.createModule(.{
+        .root_source_file = b.path("src/query_builder.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    query_builder_mod.addImport("types", types_mod);
+
+    // Pool module
+    const pool_mod = b.createModule(.{
+        .root_source_file = b.path("src/pool.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    pool_mod.addImport("config", cfg_mod);
+    pool_mod.addImport("error", error_mod);
+
+    // Protocol module
+    const protocol_mod = b.createModule(.{
+        .root_source_file = b.path("src/protocol.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    protocol_mod.addImport("types", types_mod);
+
+    // Prepared statement module
+    const prepared_mod = b.createModule(.{
+        .root_source_file = b.path("src/prepared.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    prepared_mod.addImport("types", types_mod);
+    prepared_mod.addImport("validate", validate_mod);
+    prepared_mod.addImport("protocol", protocol_mod);
+
+    // Explain/profile module
+    const explain_mod = b.createModule(.{
+        .root_source_file = b.path("src/explain.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    explain_mod.addImport("protocol", protocol_mod);
+
+    // Batch module
+    const batch_mod = b.createModule(.{
+        .root_source_file = b.path("src/batch.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    batch_mod.addImport("types", types_mod);
+    batch_mod.addImport("validate", validate_mod);
+    batch_mod.addImport("protocol", protocol_mod);
+
+    // Auth module
+    const auth_mod = b.createModule(.{
+        .root_source_file = b.path("src/auth.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    auth_mod.addImport("protocol", protocol_mod);
+    auth_mod.addImport("validate", validate_mod);
+
+    // ========================================================================
     // Geode Client Module
     // ========================================================================
 
@@ -71,10 +168,23 @@ pub fn build(b: *std.Build) void {
     // Add QUIC as the primary transport dependency
     geode_client_mod.addImport("quic", quic_mod);
 
-    // Add optional utility dependencies
+    // Add internal modules
+    geode_client_mod.addImport("error", error_mod);
+    geode_client_mod.addImport("types", types_mod);
+    geode_client_mod.addImport("config", cfg_mod);
+    geode_client_mod.addImport("validate", validate_mod);
+    geode_client_mod.addImport("query_builder", query_builder_mod);
+    geode_client_mod.addImport("pool", pool_mod);
+    geode_client_mod.addImport("protocol", protocol_mod);
+    geode_client_mod.addImport("prepared", prepared_mod);
+    geode_client_mod.addImport("explain", explain_mod);
+    geode_client_mod.addImport("batch", batch_mod);
+    geode_client_mod.addImport("auth", auth_mod);
+
+    // Add external utility dependencies
     geode_client_mod.addImport("json", json_mod);
     geode_client_mod.addImport("dns", dns_mod);
-    geode_client_mod.addImport("config", config_mod);
+    geode_client_mod.addImport("ext_config", config_mod);
     geode_client_mod.addImport("slog", slog_mod);
     geode_client_mod.addImport("uri", uri_mod);
     geode_client_mod.addImport("strings", strings_mod);
@@ -84,9 +194,20 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("geode_client_v2.zig"),
         .imports = &.{
             .{ .name = "quic", .module = quic_mod },
+            .{ .name = "error", .module = error_mod },
+            .{ .name = "types", .module = types_mod },
+            .{ .name = "config", .module = cfg_mod },
+            .{ .name = "validate", .module = validate_mod },
+            .{ .name = "query_builder", .module = query_builder_mod },
+            .{ .name = "pool", .module = pool_mod },
+            .{ .name = "protocol", .module = protocol_mod },
+            .{ .name = "prepared", .module = prepared_mod },
+            .{ .name = "explain", .module = explain_mod },
+            .{ .name = "batch", .module = batch_mod },
+            .{ .name = "auth", .module = auth_mod },
             .{ .name = "json", .module = json_mod },
             .{ .name = "dns", .module = dns_mod },
-            .{ .name = "config", .module = config_mod },
+            .{ .name = "ext_config", .module = config_mod },
             .{ .name = "slog", .module = slog_mod },
             .{ .name = "uri", .module = uri_mod },
             .{ .name = "strings", .module = strings_mod },
@@ -173,7 +294,147 @@ pub fn build(b: *std.Build) void {
     // Unit Tests
     // ========================================================================
 
-    const unit_tests = b.addTest(.{
+    const test_step = b.step("test", "Run all unit tests");
+
+    // Test error module
+    const error_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/error.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_error_tests = b.addRunArtifact(error_tests);
+    test_step.dependOn(&run_error_tests.step);
+
+    // Test types module
+    const types_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/types.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    types_tests.root_module.addImport("error", error_mod);
+    const run_types_tests = b.addRunArtifact(types_tests);
+    test_step.dependOn(&run_types_tests.step);
+
+    // Test config module
+    const config_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/config.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    config_tests.root_module.addImport("error", error_mod);
+    const run_config_tests = b.addRunArtifact(config_tests);
+    test_step.dependOn(&run_config_tests.step);
+
+    // Test validate module
+    const validate_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/validate.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    validate_tests.root_module.addImport("error", error_mod);
+    const run_validate_tests = b.addRunArtifact(validate_tests);
+    test_step.dependOn(&run_validate_tests.step);
+
+    // Test query_builder module
+    const qb_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/query_builder.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    qb_tests.root_module.addImport("types", types_mod);
+    const run_qb_tests = b.addRunArtifact(qb_tests);
+    test_step.dependOn(&run_qb_tests.step);
+
+    // Test pool module
+    const pool_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/pool.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    pool_tests.root_module.addImport("config", cfg_mod);
+    pool_tests.root_module.addImport("error", error_mod);
+    const run_pool_tests = b.addRunArtifact(pool_tests);
+    test_step.dependOn(&run_pool_tests.step);
+
+    // Test protocol module
+    const protocol_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/protocol.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    protocol_tests.root_module.addImport("types", types_mod);
+    const run_protocol_tests = b.addRunArtifact(protocol_tests);
+    test_step.dependOn(&run_protocol_tests.step);
+
+    // Test prepared module
+    const prepared_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/prepared.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    prepared_tests.root_module.addImport("types", types_mod);
+    prepared_tests.root_module.addImport("validate", validate_mod);
+    prepared_tests.root_module.addImport("protocol", protocol_mod);
+    const run_prepared_tests = b.addRunArtifact(prepared_tests);
+    test_step.dependOn(&run_prepared_tests.step);
+
+    // Test explain module
+    const explain_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/explain.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    explain_tests.root_module.addImport("protocol", protocol_mod);
+    const run_explain_tests = b.addRunArtifact(explain_tests);
+    test_step.dependOn(&run_explain_tests.step);
+
+    // Test batch module
+    const batch_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/batch.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    batch_tests.root_module.addImport("types", types_mod);
+    batch_tests.root_module.addImport("validate", validate_mod);
+    batch_tests.root_module.addImport("protocol", protocol_mod);
+    const run_batch_tests = b.addRunArtifact(batch_tests);
+    test_step.dependOn(&run_batch_tests.step);
+
+    // Test auth module
+    const auth_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/auth.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    auth_tests.root_module.addImport("protocol", protocol_mod);
+    auth_tests.root_module.addImport("validate", validate_mod);
+    const run_auth_tests = b.addRunArtifact(auth_tests);
+    test_step.dependOn(&run_auth_tests.step);
+
+    // Test geode_client module
+    const client_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("geode_client_v2.zig"),
             .target = target,
@@ -181,24 +442,163 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    unit_tests.root_module.addImport("quic", quic_mod);
-    unit_tests.root_module.addImport("json", json_mod);
-    unit_tests.root_module.addImport("dns", dns_mod);
-    unit_tests.root_module.addImport("config", config_mod);
-    unit_tests.root_module.addImport("slog", slog_mod);
-    unit_tests.root_module.addImport("uri", uri_mod);
-    unit_tests.root_module.addImport("strings", strings_mod);
+    client_tests.root_module.addImport("quic", quic_mod);
+    client_tests.root_module.addImport("error", error_mod);
+    client_tests.root_module.addImport("types", types_mod);
+    client_tests.root_module.addImport("config", cfg_mod);
+    client_tests.root_module.addImport("validate", validate_mod);
+    client_tests.root_module.addImport("query_builder", query_builder_mod);
+    client_tests.root_module.addImport("pool", pool_mod);
+    client_tests.root_module.addImport("protocol", protocol_mod);
+    client_tests.root_module.addImport("prepared", prepared_mod);
+    client_tests.root_module.addImport("explain", explain_mod);
+    client_tests.root_module.addImport("batch", batch_mod);
+    client_tests.root_module.addImport("auth", auth_mod);
+    client_tests.root_module.addImport("json", json_mod);
+    client_tests.root_module.addImport("dns", dns_mod);
+    client_tests.root_module.addImport("ext_config", config_mod);
+    client_tests.root_module.addImport("slog", slog_mod);
+    client_tests.root_module.addImport("uri", uri_mod);
+    client_tests.root_module.addImport("strings", strings_mod);
 
-    unit_tests.linkLibC();
+    client_tests.linkLibC();
     if (target.result.os.tag != .windows) {
-        unit_tests.linkSystemLibrary("ssl");
-        unit_tests.linkSystemLibrary("crypto");
+        client_tests.linkSystemLibrary("ssl");
+        client_tests.linkSystemLibrary("crypto");
     }
     if (target.result.os.tag == .linux) {
-        unit_tests.linkSystemLibrary("dl");
+        client_tests.linkSystemLibrary("dl");
     }
 
-    const run_unit_tests = b.addRunArtifact(unit_tests);
-    const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_unit_tests.step);
+    const run_client_tests = b.addRunArtifact(client_tests);
+    test_step.dependOn(&run_client_tests.step);
+
+    // ========================================================================
+    // Integration Tests
+    // ========================================================================
+
+    const integration_test_step = b.step("test-integration", "Run integration tests (requires Geode server)");
+
+    const integration_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/integration.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    integration_tests.root_module.addImport("geode_client", geode_client_mod);
+    integration_tests.root_module.addImport("quic", quic_mod);
+
+    // Link system libraries required by QUIC
+    integration_tests.linkLibC();
+    if (target.result.os.tag != .windows) {
+        integration_tests.linkSystemLibrary("ssl");
+        integration_tests.linkSystemLibrary("crypto");
+    }
+    if (target.result.os.tag == .linux) {
+        integration_tests.linkSystemLibrary("dl");
+    }
+    if (target.result.os.tag == .windows) {
+        integration_tests.linkSystemLibrary("ws2_32");
+    }
+
+    const run_integration_tests = b.addRunArtifact(integration_tests);
+    integration_test_step.dependOn(&run_integration_tests.step);
+
+    // ========================================================================
+    // Benchmarks
+    // ========================================================================
+
+    const bench_exe = b.addExecutable(.{
+        .name = "bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("benchmarks/bench.zig"),
+            .target = target,
+            .optimize = .ReleaseFast, // Always use ReleaseFast for benchmarks
+        }),
+    });
+
+    // Add internal modules
+    bench_exe.root_module.addImport("types", types_mod);
+    bench_exe.root_module.addImport("query_builder", query_builder_mod);
+    bench_exe.root_module.addImport("config", cfg_mod);
+    bench_exe.root_module.addImport("pool", pool_mod);
+    bench_exe.root_module.addImport("validate", validate_mod);
+    bench_exe.root_module.addImport("error", error_mod);
+
+    b.installArtifact(bench_exe);
+
+    const run_bench = b.addRunArtifact(bench_exe);
+    run_bench.step.dependOn(b.getInstallStep());
+
+    const bench_step = b.step("bench", "Run performance benchmarks");
+    bench_step.dependOn(&run_bench.step);
+
+    // ========================================================================
+    // Property-Based / Fuzz Tests
+    // ========================================================================
+
+    const fuzz_step = b.step("test-fuzz", "Run property-based and fuzz tests");
+
+    // Fuzz DSN parsing
+    const fuzz_dsn = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("fuzz/fuzz_dsn.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    fuzz_dsn.root_module.addImport("config", cfg_mod);
+    const run_fuzz_dsn = b.addRunArtifact(fuzz_dsn);
+    fuzz_step.dependOn(&run_fuzz_dsn.step);
+
+    // Fuzz types/Value
+    const fuzz_types = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("fuzz/fuzz_types.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    fuzz_types.root_module.addImport("types", types_mod);
+    const run_fuzz_types = b.addRunArtifact(fuzz_types);
+    fuzz_step.dependOn(&run_fuzz_types.step);
+
+    // Fuzz query builder
+    const fuzz_qb = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("fuzz/fuzz_query_builder.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    fuzz_qb.root_module.addImport("query_builder", query_builder_mod);
+    const run_fuzz_qb = b.addRunArtifact(fuzz_qb);
+    fuzz_step.dependOn(&run_fuzz_qb.step);
+
+    // Fuzz validation
+    const fuzz_validate = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("fuzz/fuzz_validate.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    fuzz_validate.root_module.addImport("validate", validate_mod);
+    const run_fuzz_validate = b.addRunArtifact(fuzz_validate);
+    fuzz_step.dependOn(&run_fuzz_validate.step);
+
+    // Fuzz pool
+    const fuzz_pool = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("fuzz/fuzz_pool.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    fuzz_pool.root_module.addImport("pool", pool_mod);
+    fuzz_pool.root_module.addImport("config", cfg_mod);
+    const run_fuzz_pool = b.addRunArtifact(fuzz_pool);
+    fuzz_step.dependOn(&run_fuzz_pool.step);
 }
