@@ -32,9 +32,10 @@ stages:
 
 include:
   # Format check for all Zig source files
+  # Note: Component inputs require literal values, not CI variables
   - component: gitlab.com/devnw/ci-catalog/zig-format@latest
     inputs:
-      zig_version: $ZIG_VERSION
+      zig_version: "0.14.0"
       paths: "*.zig src/*.zig tests/*.zig benchmarks/*.zig fuzz/*.zig"
       stage: lint
       allow_failure: true  # Format may differ between Zig versions
@@ -42,7 +43,7 @@ include:
   # Build the library
   - component: gitlab.com/devnw/ci-catalog/zig-build@latest
     inputs:
-      zig_version: $ZIG_VERSION
+      zig_version: "0.14.0"
       stage: build
       extra_packages: "libssl-dev"
       artifact_paths: "zig-out/"
@@ -51,7 +52,7 @@ include:
   # Run unit tests with coverage
   - component: gitlab.com/devnw/ci-catalog/zig-test@latest
     inputs:
-      zig_version: $ZIG_VERSION
+      zig_version: "0.14.0"
       stage: test
       extra_packages: "libssl-dev bc"
       test_options: "--summary all"
@@ -60,7 +61,7 @@ include:
   # Run fuzz/property-based tests
   - component: gitlab.com/devnw/ci-catalog/zig-fuzz@latest
     inputs:
-      zig_version: $ZIG_VERSION
+      zig_version: "0.14.0"
       stage: test
       test_step: "test-fuzz"
       extra_packages: "libssl-dev"
