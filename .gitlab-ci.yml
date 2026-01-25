@@ -70,13 +70,13 @@ include:
     - zig version
     # Clone Zig dependencies to match local development structure
     # Project is at /builds/devnw/codepros/geode/geode-client-zig
-    # Dependencies expect ../../../zig/ = /builds/zig/
+    # Dependencies expect ../../../zig/ = /builds/devnw/zig/
     - |
       echo "Cloning Zig dependencies..."
-      mkdir -p /builds/zig
+      mkdir -p /builds/devnw/zig
       for dep in quic tls dns json config slog uri strings; do
         echo "  Cloning $dep..."
-        git clone --depth 1 "https://gitlab.com/devnw/zig/${dep}.git" "/builds/zig/${dep}" || {
+        git clone --depth 1 "https://gitlab.com/devnw/zig/${dep}.git" "/builds/devnw/zig/${dep}" || {
           echo "Failed to clone $dep"
           exit 1
         }
