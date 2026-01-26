@@ -21,11 +21,17 @@ variables:
   ZIG_VERSION: "0.15.1"
   GEODE_IMAGE: "registry.gitlab.com/devnw/geode/geode:latest"
 
+default:
+  tags:
+    - company
+    - linux
+
 stages:
   - lint
   - build
   - test
   - integration
+  - release
 
 # =============================================================================
 # Lint Stage - Format check using CI catalog component
@@ -38,6 +44,11 @@ include:
       paths: "*.zig src/*.zig tests/*.zig benchmarks/*.zig fuzz/*.zig"
       stage: lint
       allow_failure: true
+
+  # Release creation
+  - component: gitlab.com/devnw/ci-catalog/release-semantic@latest
+    inputs:
+      stage: release
 
 # =============================================================================
 # Common setup template for jobs that need dependencies
