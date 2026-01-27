@@ -31,6 +31,8 @@ stages:
   - build
   - test
   - integration
+  - security
+  - sbom
   - release
 
 # =============================================================================
@@ -43,6 +45,28 @@ include:
       zig_version: "0.15.1"
       paths: "*.zig src/*.zig tests/*.zig benchmarks/*.zig fuzz/*.zig"
       stage: lint
+      allow_failure: true
+
+  # Security scanning
+  - component: gitlab.com/devnw/ci-catalog/security-sast@latest
+    inputs:
+      stage: security
+
+  - component: gitlab.com/devnw/ci-catalog/security-dependency-scanning@latest
+    inputs:
+      stage: security
+
+  - component: gitlab.com/devnw/ci-catalog/security-secrets@latest
+    inputs:
+      stage: security
+
+  - component: gitlab.com/devnw/ci-catalog/security-gitleaks@latest
+
+  # SBOM generation and scanning
+  - component: gitlab.com/devnw/ci-catalog/sbom-generate@latest
+
+  - component: gitlab.com/devnw/ci-catalog/sbom-scan@latest
+    inputs:
       allow_failure: true
 
   # Release creation
