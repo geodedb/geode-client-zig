@@ -2,14 +2,16 @@
 # Geode Zig Client CI/CD Pipeline
 # =============================================================================
 #
-# This library requires Zig packages from devnw/zig that are cloned as part
-# of the build process to match the local development environment structure.
+# Dependencies are resolved via build.zig.zon git URLs (no manual cloning).
 #
 # Pipeline stages:
 #   1. lint     - Code formatting checks
 #   2. build    - Compile the library
 #   3. test     - Unit tests and fuzz tests
 #   4. integration - Integration tests with Geode server
+#   5. security - SAST, dependency scanning, secret detection, gitleaks
+#   6. sbom     - SBOM generation and scanning
+#   7. release  - Semantic release
 #
 # Environment variables:
 #   ZIG_VERSION     - Override Zig version (default: 0.15.1)
@@ -75,10 +77,10 @@ include:
       stage: release
 
 # =============================================================================
-# Common setup template for jobs that need dependencies
+# Common setup template for Zig jobs
 # =============================================================================
 
-.setup-zig-with-deps:
+.setup-zig:
   image: "ubuntu:24.04"
   variables:
     ZIG_VERSION: "0.15.1"
@@ -103,27 +105,13 @@ include:
       fi
     - export PATH="$PWD/zig-${ZIG_VERSION}:$PATH"
     - zig version
-    # Clone Zig dependencies to match local development structure
-    # Project is at /builds/devnw/codepros/geode/geode-client-zig
-    # Dependencies expect ../../../zig/ = /builds/devnw/zig/
-    - |
-      echo "Cloning Zig dependencies..."
-      mkdir -p /builds/devnw/zig
-      for dep in quic tls dns json config slog uri strings; do
-        echo "  Cloning $dep..."
-        git clone --depth 1 "https://gitlab.com/devnw/zig/${dep}.git" "/builds/devnw/zig/${dep}" || {
-          echo "Failed to clone $dep"
-          exit 1
-        }
-      done
-      echo "Dependencies cloned successfully"
 
 # =============================================================================
 # Build Stage
 # =============================================================================
 
 build:
-  extends: .setup-zig-with-deps
+  extends: .setup-zig
   stage: build
   script:
     - export PATH="$PWD/zig-${ZIG_VERSION}:$PATH"
@@ -138,7 +126,7 @@ build:
 # =============================================================================
 
 test:
-  extends: .setup-zig-with-deps
+  extends: .setup-zig
   stage: test
   script:
     - export PATH="$PWD/zig-${ZIG_VERSION}:$PATH"
@@ -167,7 +155,7 @@ test:
     when: always
 
 test-fuzz:
-  extends: .setup-zig-with-deps
+  extends: .setup-zig
   stage: test
   timeout: 15m
   script:
@@ -184,7 +172,7 @@ test-fuzz:
 # =============================================================================
 
 integration-tests:
-  extends: .setup-zig-with-deps
+  extends: .setup-zig
   stage: integration
   # Allow failure since Geode server image may not be accessible
   allow_failure: true
@@ -236,7 +224,7 @@ integration-tests:
 # =============================================================================
 
 release-build:
-  extends: .setup-zig-with-deps
+  extends: .setup-zig
   stage: build
   script:
     - export PATH="$PWD/zig-${ZIG_VERSION}:$PATH"
