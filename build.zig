@@ -536,6 +536,46 @@ pub fn build(b: *std.Build) void {
     bench_step.dependOn(&run_bench.step);
 
     // ========================================================================
+    // Native Client Benchmark (for server throughput testing)
+    // ========================================================================
+
+    const benchmark_exe = b.addExecutable(.{
+        .name = "benchmark",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("benchmark.zig"),
+            .target = target,
+            .optimize = .ReleaseFast, // Always use ReleaseFast for benchmarks
+        }),
+    });
+
+    benchmark_exe.root_module.addImport("geode_client", geode_client_mod);
+    benchmark_exe.root_module.addImport("quic", quic_mod);
+
+    // Link system libraries required by QUIC
+    benchmark_exe.linkLibC();
+    if (target.result.os.tag != .windows) {
+        benchmark_exe.linkSystemLibrary("ssl");
+        benchmark_exe.linkSystemLibrary("crypto");
+    }
+    if (target.result.os.tag == .linux) {
+        benchmark_exe.linkSystemLibrary("dl");
+    }
+    if (target.result.os.tag == .windows) {
+        benchmark_exe.linkSystemLibrary("ws2_32");
+    }
+
+    b.installArtifact(benchmark_exe);
+
+    const run_benchmark = b.addRunArtifact(benchmark_exe);
+    run_benchmark.step.dependOn(b.getInstallStep());
+    if (b.args) |args_slice| {
+        run_benchmark.addArgs(args_slice);
+    }
+
+    const benchmark_step = b.step("benchmark", "Run native client benchmark");
+    benchmark_step.dependOn(&run_benchmark.step);
+
+    // ========================================================================
     // Property-Based / Fuzz Tests
     // ========================================================================
 
