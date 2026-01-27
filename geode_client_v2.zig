@@ -196,6 +196,27 @@ pub const GeodeClient = struct {
         return error.ReceiveTimeout;
     }
 
+    /// Attempt to read a complete buffered message without waiting for more data.
+    /// Returns null when no full line is buffered yet.
+    pub fn tryReceiveBufferedMessage(self: *GeodeClient) !?[]u8 {
+        if (std.mem.indexOfScalar(u8, self.recv_buffer.items, '\n')) |idx| {
+            const msg_len = idx;
+            const msg = try self.allocator.alloc(u8, msg_len);
+            @memcpy(msg, self.recv_buffer.items[0..msg_len]);
+
+            const remaining = self.recv_buffer.items.len - (msg_len + 1);
+            if (remaining > 0) {
+                std.mem.copyForwards(u8, self.recv_buffer.items[0..remaining], self.recv_buffer.items[msg_len + 1 ..]);
+                self.recv_buffer.items = self.recv_buffer.items[0..remaining];
+            } else {
+                self.recv_buffer.items = self.recv_buffer.items[0..0];
+            }
+
+            return msg;
+        }
+        return null;
+    }
+
     pub fn sendHello(self: *GeodeClient, client_name: []const u8, client_version: []const u8) !void {
         const msg = try std.fmt.allocPrint(
             self.allocator,
@@ -269,6 +290,17 @@ pub fn executeQuery(
     try client.sendRunGql(request_id, query, params);
     const schema_response = try client.receiveMessage(3000);
     defer allocator.free(schema_response);
+
+    // Inline RUN+PULL: check for buffered bindings before sending PULL.
+    if (try client.tryReceiveBufferedMessage()) |inline_response| {
+        defer allocator.free(inline_response);
+        return try std.json.parseFromSlice(
+            std.json.Value,
+            allocator,
+            inline_response,
+            .{},
+        );
+    }
 
     // Pull results
     try client.sendPull(request_id, 1000);

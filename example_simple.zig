@@ -1,5 +1,5 @@
 const std = @import("std");
-const client = @import("client.zig");
+const GeodeClient = @import("geode_client").GeodeClient;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -8,37 +8,43 @@ pub fn main() !void {
 
     std.debug.print("=== Geode Zig Client - Simple Example ===\n\n", .{});
 
-    // Create client with configuration
-    const config = client.Config{
-        .host = "127.0.0.1",
-        .port = 7567,
-        .use_quic = true,
-        .use_tls = true,
-        .client_name = "geode-zig-example",
-        .client_version = "1.0.0",
-    };
+    const host = "127.0.0.1";
+    const port: u16 = 3141;
 
-    var geode_client = client.Client.init(allocator, config);
-    defer geode_client.deinit();
+    var client = GeodeClient.init(allocator, host, port, true);
+    defer client.deinit();
 
-    // Connect to server
-    std.debug.print("Connecting to Geode server at {s}:{}...\n", .{ config.host, config.port });
-    try geode_client.connect();
-    defer geode_client.disconnect();
+    std.debug.print("Connecting to Geode server at {s}:{}...\n", .{ host, port });
+    try client.connect();
+    try client.openStream();
     std.debug.print("✓ Connected successfully\n", .{});
 
+    // Handshake
+    try client.sendHello("geode-zig-example", "1.0.0");
+    const hello_response = try client.receiveMessage();
+    defer allocator.free(hello_response);
+
     // Execute a simple query
-    std.debug.print("\nExecuting query: RETURN 1 AS x ORDER BY x LIMIT 1\n", .{});
-    var result = try geode_client.execute("RETURN 1 AS x ORDER BY x LIMIT 1");
-    defer result.deinit();
+    const query = "RETURN 1 AS x ORDER BY x LIMIT 1";
+    std.debug.print("\nExecuting query: {s}\n", .{query});
+    const request_id = "req_1";
+    try client.sendRunGql(request_id, query, null);
+    const schema_response = try client.receiveMessage();
+    defer allocator.free(schema_response);
+
+    var bindings_response: []u8 = undefined;
+    if (try client.tryReceiveBufferedMessage()) |inline_response| {
+        bindings_response = inline_response;
+    } else {
+        try client.sendPull(request_id, 1000);
+        bindings_response = try client.receiveMessage();
+    }
+    defer allocator.free(bindings_response);
 
     // Process results
     std.debug.print("✓ Query executed successfully\n", .{});
-    std.debug.print("Schema: {} columns\n", .{result.schema.columns.len});
-
-    for (result.schema.columns) |col| {
-        std.debug.print("  - Column: {s} (type: {s})\n", .{ col.name, col.type_name });
-    }
+    std.debug.print("Schema response: {s}\n", .{schema_response});
+    std.debug.print("Bindings response: {s}\n", .{bindings_response});
 
     std.debug.print("\n=== Example completed successfully ===\n", .{});
 }

@@ -84,18 +84,22 @@ fn runWorker(
         };
         allocator.free(schema_response);
 
-        // Pull results
-        client.sendPull(req_id, 100) catch {
-            result.failed += 1;
-            continue;
-        };
+        if (client.tryReceiveBufferedMessage() catch null) |inline_response| {
+            allocator.free(inline_response);
+        } else {
+            // Pull results
+            client.sendPull(req_id, 100) catch {
+                result.failed += 1;
+                continue;
+            };
 
-        // Receive bindings response
-        const bindings_response = client.receiveMessage(30000) catch {
-            result.failed += 1;
-            continue;
-        };
-        allocator.free(bindings_response);
+            // Receive bindings response
+            const bindings_response = client.receiveMessage(30000) catch {
+                result.failed += 1;
+                continue;
+            };
+            allocator.free(bindings_response);
+        }
 
         const end = std.time.nanoTimestamp();
         const latency_ms = @as(f64, @floatFromInt(end - start)) / 1_000_000.0;

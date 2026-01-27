@@ -138,6 +138,16 @@ const TestContext = struct {
         const schema_response = try self.client.receiveMessage(self.config.timeout_ms);
         self.allocator.free(schema_response);
 
+        if (try self.client.tryReceiveBufferedMessage()) |inline_response| {
+            defer self.allocator.free(inline_response);
+            return std.json.parseFromSlice(
+                std.json.Value,
+                self.allocator,
+                inline_response,
+                .{},
+            );
+        }
+
         // Send PULL
         try self.client.sendPull(req_id, 1000);
 

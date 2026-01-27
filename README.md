@@ -476,6 +476,30 @@ The client is optimized for high performance:
 
 Run benchmarks with `make bench` for detailed performance metrics.
 
+### System-Level QUIC Optimizations
+
+For optimal QUIC throughput on high-bandwidth connections, configure UDP buffer sizes at the OS level.
+
+**Linux:**
+```bash
+# Increase UDP buffer sizes to 7MB
+sudo sysctl -w net.core.rmem_max=7340032
+sudo sysctl -w net.core.wmem_max=7340032
+
+# Persist across reboots
+echo "net.core.rmem_max=7340032" | sudo tee -a /etc/sysctl.d/99-geode-quic.conf
+echo "net.core.wmem_max=7340032" | sudo tee -a /etc/sysctl.d/99-geode-quic.conf
+```
+
+**BSD/macOS:**
+```bash
+sudo sysctl -w kern.ipc.maxsockbuf=8441037
+```
+
+**GSO (Generic Segmentation Offload)**: Available on Linux 4.18+, batches UDP packets to reduce syscall overhead. Enabled automatically by the QUIC implementation.
+
+**Path MTU Discovery (DPLPMTUD)**: Enabled by default, probes for optimal packet sizes to reduce per-packet overhead.
+
 ## Wire Protocol
 
 The client uses JSON line protocol over QUIC:

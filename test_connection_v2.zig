@@ -91,14 +91,19 @@ pub fn main() !void {
     defer allocator.free(schema_response);
     std.debug.print("✓ SCHEMA response: {s}\n", .{schema_response});
 
-    std.debug.print("Sending PULL...\n", .{});
-    try client.sendPull(1, 1000);
-    std.debug.print("✓ PULL sent!\n", .{});
+    if (try client.tryReceiveBufferedMessage()) |inline_response| {
+        defer allocator.free(inline_response);
+        std.debug.print("✓ Inline BINDINGS response: {s}\n", .{inline_response});
+    } else {
+        std.debug.print("Sending PULL...\n", .{});
+        try client.sendPull(1, 1000);
+        std.debug.print("✓ PULL sent!\n", .{});
 
-    std.debug.print("Receiving BINDINGS response...\n", .{});
-    const bindings_response = try client.receiveMessage(3000);
-    defer allocator.free(bindings_response);
-    std.debug.print("✓ BINDINGS response: {s}\n", .{bindings_response});
+        std.debug.print("Receiving BINDINGS response...\n", .{});
+        const bindings_response = try client.receiveMessage(3000);
+        defer allocator.free(bindings_response);
+        std.debug.print("✓ BINDINGS response: {s}\n", .{bindings_response});
+    }
 
     std.debug.print("\n✅ All tests passed!\n", .{});
 }
