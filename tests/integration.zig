@@ -190,8 +190,32 @@ const TestContext = struct {
         self.allocator.free(response);
     }
 
+    /// Validate that a label contains only safe identifier characters.
+    /// Labels in GQL are identifiers and cannot be parameterized with $param syntax,
+    /// so we must validate them to prevent injection.
+    fn isValidLabel(label: []const u8) bool {
+        if (label.len == 0) return false;
+        // First character must be letter or underscore
+        const first = label[0];
+        if (!((first >= 'a' and first <= 'z') or (first >= 'A' and first <= 'Z') or first == '_')) {
+            return false;
+        }
+        // Subsequent characters must be alphanumeric or underscore
+        for (label[1..]) |c| {
+            if (!((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_')) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /// Get the count of nodes matching a pattern
     fn countNodes(self: *TestContext, label: []const u8) !i64 {
+        // Validate label to prevent GQL injection
+        if (!isValidLabel(label)) {
+            return error.InvalidLabel;
+        }
+
         const q = try std.fmt.allocPrint(self.allocator, "MATCH (n:{s}) RETURN count(n) AS cnt", .{label});
         defer self.allocator.free(q);
 
@@ -208,6 +232,11 @@ const TestContext = struct {
 
     /// Clean up test nodes with a specific label
     fn cleanup(self: *TestContext, label: []const u8) !void {
+        // Validate label to prevent GQL injection
+        if (!isValidLabel(label)) {
+            return error.InvalidLabel;
+        }
+
         const q = try std.fmt.allocPrint(self.allocator, "MATCH (n:{s}) DETACH DELETE n", .{label});
         defer self.allocator.free(q);
         self.exec(q) catch {};
@@ -923,4 +952,319 @@ test "integration: WITH for chained queries" {
 
     const first = getRowValue(rows.array.items[0], "v") orelse return error.InvalidResponse;
     try std.testing.expectEqual(@as(i64, 2), first.integer);
+}
+
+// =============================================================================
+// Unit Tests for Label Validation (isValidLabel)
+// =============================================================================
+
+test "isValidLabel: valid simple labels" {
+    try std.testing.expect(TestContext.isValidLabel("Person"));
+    try std.testing.expect(TestContext.isValidLabel("User"));
+    try std.testing.expect(TestContext.isValidLabel("Node"));
+    try std.testing.expect(TestContext.isValidLabel("a"));
+    try std.testing.expect(TestContext.isValidLabel("Z"));
+}
+
+test "isValidLabel: valid labels with numbers" {
+    try std.testing.expect(TestContext.isValidLabel("User1"));
+    try std.testing.expect(TestContext.isValidLabel("Node123"));
+    try std.testing.expect(TestContext.isValidLabel("A1B2C3"));
+}
+
+test "isValidLabel: valid labels with underscores" {
+    try std.testing.expect(TestContext.isValidLabel("_private"));
+    try std.testing.expect(TestContext.isValidLabel("User_Profile"));
+    try std.testing.expect(TestContext.isValidLabel("my_node_type"));
+    try std.testing.expect(TestContext.isValidLabel("__double_underscore"));
+    try std.testing.expect(TestContext.isValidLabel("_"));
+}
+
+test "isValidLabel: valid labels with mixed characters" {
+    try std.testing.expect(TestContext.isValidLabel("User_Profile_123"));
+    try std.testing.expect(TestContext.isValidLabel("_MyNode1"));
+    try std.testing.expect(TestContext.isValidLabel("Node_1_2_3"));
+}
+
+test "isValidLabel: invalid empty string" {
+    try std.testing.expect(!TestContext.isValidLabel(""));
+}
+
+test "isValidLabel: invalid starting with number" {
+    try std.testing.expect(!TestContext.isValidLabel("1User"));
+    try std.testing.expect(!TestContext.isValidLabel("123"));
+    try std.testing.expect(!TestContext.isValidLabel("0Node"));
+}
+
+test "isValidLabel: invalid with special characters" {
+    try std.testing.expect(!TestContext.isValidLabel("User-Profile"));
+    try std.testing.expect(!TestContext.isValidLabel("User.Profile"));
+    try std.testing.expect(!TestContext.isValidLabel("User@Profile"));
+    try std.testing.expect(!TestContext.isValidLabel("User#Profile"));
+    try std.testing.expect(!TestContext.isValidLabel("User$Profile"));
+    try std.testing.expect(!TestContext.isValidLabel("User%Profile"));
+}
+
+test "isValidLabel: invalid with spaces" {
+    try std.testing.expect(!TestContext.isValidLabel("User Profile"));
+    try std.testing.expect(!TestContext.isValidLabel(" User"));
+    try std.testing.expect(!TestContext.isValidLabel("User "));
+}
+
+test "isValidLabel: invalid injection attempts" {
+    // These are all potential GQL injection attempts
+    try std.testing.expect(!TestContext.isValidLabel("Person}) DETACH DELETE n"));
+    try std.testing.expect(!TestContext.isValidLabel("Person:Admin"));
+    try std.testing.expect(!TestContext.isValidLabel("Person {"));
+    try std.testing.expect(!TestContext.isValidLabel("Person) RETURN"));
+    try std.testing.expect(!TestContext.isValidLabel("Person]->("));
+}
+
+test "isValidLabel: invalid with quotes" {
+    try std.testing.expect(!TestContext.isValidLabel("User\""));
+    try std.testing.expect(!TestContext.isValidLabel("User'"));
+    try std.testing.expect(!TestContext.isValidLabel("\"User"));
+    try std.testing.expect(!TestContext.isValidLabel("'User"));
+}
+
+test "isValidLabel: invalid with brackets and parentheses" {
+    try std.testing.expect(!TestContext.isValidLabel("User("));
+    try std.testing.expect(!TestContext.isValidLabel("User)"));
+    try std.testing.expect(!TestContext.isValidLabel("User["));
+    try std.testing.expect(!TestContext.isValidLabel("User]"));
+    try std.testing.expect(!TestContext.isValidLabel("User{"));
+    try std.testing.expect(!TestContext.isValidLabel("User}"));
+}
+
+test "isValidLabel: invalid with backslash" {
+    try std.testing.expect(!TestContext.isValidLabel("User\\n"));
+    try std.testing.expect(!TestContext.isValidLabel("User\\"));
+}
+
+test "isValidLabel: invalid with newline and control characters" {
+    try std.testing.expect(!TestContext.isValidLabel("User\n"));
+    try std.testing.expect(!TestContext.isValidLabel("User\r"));
+    try std.testing.expect(!TestContext.isValidLabel("User\t"));
+    try std.testing.expect(!TestContext.isValidLabel("User\x00"));
+}
+
+// =============================================================================
+// Integration Tests for Parameterized Queries
+// =============================================================================
+
+test "integration: parameterized query with string parameter" {
+    var ctx = try TestContext.init(std.testing.allocator);
+    defer ctx.deinit();
+    defer ctx.cleanup("ParamTest") catch {};
+
+    try ctx.exec("CREATE (n:ParamTest {name: 'Alice'})");
+
+    // Build params object
+    var params_obj = std.json.ObjectMap.init(std.testing.allocator);
+    defer params_obj.deinit();
+    try params_obj.put("searchName", std.json.Value{ .string = "Alice" });
+
+    const params = std.json.Value{ .object = params_obj };
+
+    var result = try ctx.queryWithParams("MATCH (n:ParamTest) WHERE n.name = $searchName RETURN n.name AS name", params);
+    defer result.deinit();
+
+    try std.testing.expect(!hasError(result.value));
+    const rows = getRows(result.value) orelse return error.InvalidResponse;
+    try std.testing.expect(rows.array.items.len >= 1);
+
+    const name = getRowValue(rows.array.items[0], "name") orelse return error.InvalidResponse;
+    try std.testing.expectEqualStrings("Alice", name.string);
+}
+
+test "integration: parameterized query with integer parameter" {
+    var ctx = try TestContext.init(std.testing.allocator);
+    defer ctx.deinit();
+    defer ctx.cleanup("ParamIntTest") catch {};
+
+    try ctx.exec("CREATE (a:ParamIntTest {age: 25}), (b:ParamIntTest {age: 30}), (c:ParamIntTest {age: 35})");
+
+    var params_obj = std.json.ObjectMap.init(std.testing.allocator);
+    defer params_obj.deinit();
+    try params_obj.put("minAge", std.json.Value{ .integer = 28 });
+
+    const params = std.json.Value{ .object = params_obj };
+
+    var result = try ctx.queryWithParams("MATCH (n:ParamIntTest) WHERE n.age > $minAge RETURN n.age AS age ORDER BY n.age", params);
+    defer result.deinit();
+
+    try std.testing.expect(!hasError(result.value));
+    const rows = getRows(result.value) orelse return error.InvalidResponse;
+    try std.testing.expectEqual(@as(usize, 2), rows.array.items.len);
+}
+
+test "integration: parameterized query with multiple parameters" {
+    var ctx = try TestContext.init(std.testing.allocator);
+    defer ctx.deinit();
+    defer ctx.cleanup("MultiParamTest") catch {};
+
+    try ctx.exec("CREATE (a:MultiParamTest {name: 'Alice', age: 30}), (b:MultiParamTest {name: 'Bob', age: 25})");
+
+    var params_obj = std.json.ObjectMap.init(std.testing.allocator);
+    defer params_obj.deinit();
+    try params_obj.put("searchName", std.json.Value{ .string = "Alice" });
+    try params_obj.put("minAge", std.json.Value{ .integer = 25 });
+
+    const params = std.json.Value{ .object = params_obj };
+
+    var result = try ctx.queryWithParams(
+        "MATCH (n:MultiParamTest) WHERE n.name = $searchName AND n.age >= $minAge RETURN n.name AS name, n.age AS age",
+        params,
+    );
+    defer result.deinit();
+
+    try std.testing.expect(!hasError(result.value));
+    const rows = getRows(result.value) orelse return error.InvalidResponse;
+    try std.testing.expect(rows.array.items.len >= 1);
+}
+
+// =============================================================================
+// Integration Tests for Queries with Special Characters
+// =============================================================================
+
+test "integration: query with double quotes in string literal" {
+    var ctx = try TestContext.init(std.testing.allocator);
+    defer ctx.deinit();
+
+    // Test that queries with double quotes work correctly
+    var result = try ctx.query("RETURN 'say \"hello\"' AS greeting");
+    defer result.deinit();
+
+    try std.testing.expect(!hasError(result.value));
+    const rows = getRows(result.value) orelse return error.InvalidResponse;
+    const greeting = getRowValue(rows.array.items[0], "greeting") orelse return error.InvalidResponse;
+    try std.testing.expectEqualStrings("say \"hello\"", greeting.string);
+}
+
+test "integration: query with backslash in string" {
+    var ctx = try TestContext.init(std.testing.allocator);
+    defer ctx.deinit();
+
+    // Test backslash handling
+    var result = try ctx.query("RETURN 'path\\\\to\\\\file' AS path");
+    defer result.deinit();
+
+    try std.testing.expect(!hasError(result.value));
+    const rows = getRows(result.value) orelse return error.InvalidResponse;
+    const path = getRowValue(rows.array.items[0], "path") orelse return error.InvalidResponse;
+    try std.testing.expectEqualStrings("path\\to\\file", path.string);
+}
+
+test "integration: query with special characters in property value" {
+    var ctx = try TestContext.init(std.testing.allocator);
+    defer ctx.deinit();
+    defer ctx.cleanup("SpecialCharTest") catch {};
+
+    // Create node with special characters in property
+    try ctx.exec("CREATE (n:SpecialCharTest {description: 'Line1\\nLine2\\tTabbed'})");
+
+    var result = try ctx.query("MATCH (n:SpecialCharTest) RETURN n.description AS desc");
+    defer result.deinit();
+
+    try std.testing.expect(!hasError(result.value));
+    const rows = getRows(result.value) orelse return error.InvalidResponse;
+    try std.testing.expect(rows.array.items.len >= 1);
+}
+
+test "integration: parameterized query with special characters in parameter" {
+    var ctx = try TestContext.init(std.testing.allocator);
+    defer ctx.deinit();
+    defer ctx.cleanup("SpecialParamTest") catch {};
+
+    try ctx.exec("CREATE (n:SpecialParamTest {text: 'Hello \"World\"'})");
+
+    var params_obj = std.json.ObjectMap.init(std.testing.allocator);
+    defer params_obj.deinit();
+    // Parameter value contains double quotes
+    try params_obj.put("searchText", std.json.Value{ .string = "Hello \"World\"" });
+
+    const params = std.json.Value{ .object = params_obj };
+
+    var result = try ctx.queryWithParams("MATCH (n:SpecialParamTest) WHERE n.text = $searchText RETURN n.text AS text", params);
+    defer result.deinit();
+
+    try std.testing.expect(!hasError(result.value));
+    const rows = getRows(result.value) orelse return error.InvalidResponse;
+    try std.testing.expect(rows.array.items.len >= 1);
+
+    const text = getRowValue(rows.array.items[0], "text") orelse return error.InvalidResponse;
+    try std.testing.expectEqualStrings("Hello \"World\"", text.string);
+}
+
+test "integration: query with unicode characters" {
+    var ctx = try TestContext.init(std.testing.allocator);
+    defer ctx.deinit();
+    defer ctx.cleanup("UnicodeTest") catch {};
+
+    // Create node with unicode characters
+    try ctx.exec("CREATE (n:UnicodeTest {name: 'José García'})");
+
+    var result = try ctx.query("MATCH (n:UnicodeTest) RETURN n.name AS name");
+    defer result.deinit();
+
+    try std.testing.expect(!hasError(result.value));
+    const rows = getRows(result.value) orelse return error.InvalidResponse;
+    try std.testing.expect(rows.array.items.len >= 1);
+
+    const name = getRowValue(rows.array.items[0], "name") orelse return error.InvalidResponse;
+    try std.testing.expectEqualStrings("José García", name.string);
+}
+
+test "integration: query with emoji characters" {
+    var ctx = try TestContext.init(std.testing.allocator);
+    defer ctx.deinit();
+    defer ctx.cleanup("EmojiTest") catch {};
+
+    // Create node with emoji
+    try ctx.exec("CREATE (n:EmojiTest {mood: 'Happy 😀'})");
+
+    var result = try ctx.query("MATCH (n:EmojiTest) RETURN n.mood AS mood");
+    defer result.deinit();
+
+    try std.testing.expect(!hasError(result.value));
+    const rows = getRows(result.value) orelse return error.InvalidResponse;
+    try std.testing.expect(rows.array.items.len >= 1);
+}
+
+// =============================================================================
+// Integration Tests for Label Validation in Context Methods
+// =============================================================================
+
+test "integration: countNodes rejects invalid label with injection attempt" {
+    var ctx = try TestContext.init(std.testing.allocator);
+    defer ctx.deinit();
+
+    // This should fail validation, not execute the injection
+    const result = ctx.countNodes("Person}) DETACH DELETE n MATCH (n:");
+    try std.testing.expectError(error.InvalidLabel, result);
+}
+
+test "integration: cleanup rejects invalid label with special characters" {
+    var ctx = try TestContext.init(std.testing.allocator);
+    defer ctx.deinit();
+
+    // This should fail validation
+    const result = ctx.cleanup("Test-Label");
+    try std.testing.expectError(error.InvalidLabel, result);
+}
+
+test "integration: countNodes rejects label starting with number" {
+    var ctx = try TestContext.init(std.testing.allocator);
+    defer ctx.deinit();
+
+    const result = ctx.countNodes("123Label");
+    try std.testing.expectError(error.InvalidLabel, result);
+}
+
+test "integration: cleanup rejects empty label" {
+    var ctx = try TestContext.init(std.testing.allocator);
+    defer ctx.deinit();
+
+    const result = ctx.cleanup("");
+    try std.testing.expectError(error.InvalidLabel, result);
 }

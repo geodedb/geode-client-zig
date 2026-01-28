@@ -1,0 +1,65 @@
+# Commitizen configuration for Conventional Commits
+# https://www.conventionalcommits.org/
+
+commitizen:
+  name: cz_conventional_commits
+  tag_format: v$version
+  version_scheme: semver
+  version_provider: scm
+  update_changelog_on_bump: true
+  bump_message: 'bump: version $current_version -> $new_version'
+  changelog_incremental: true
+  changelog_start_rev:
+
+  # Allowed commit types
+  allowed_prefixes:
+  - feat
+  - fix
+  - docs
+  - style
+  - refactor
+  - perf
+  - test
+  - build
+  - ci
+  - chore
+  - revert
+
+  # Commit message schema for validation
+  schema: '<type>(<scope>): <subject>'
+  schema_pattern: ^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?:\s.+
+
+  # Bump settings
+  bump_pattern: ^(feat|fix|perf|refactor)
+  bump_map:
+    feat: MINOR
+    fix: PATCH
+    perf: PATCH
+    refactor: PATCH
+
+  # Changelog settings
+  change_type_map:
+    feat: Features
+    fix: Bug Fixes
+    docs: Documentation
+    style: Style
+    refactor: Code Refactoring
+    perf: Performance Improvements
+    test: Tests
+    build: Build System
+    ci: CI/CD
+    chore: Chores
+    revert: Reverts
+
+  change_type_order:
+  - BREAKING CHANGE
+  - feat
+  - fix
+  - refactor
+  - perf
+  - docs
+  - style
+  - test
+  - build
+  - ci
+  - chore

@@ -481,6 +481,7 @@ Run benchmarks with `make bench` for detailed performance metrics.
 For optimal QUIC throughput on high-bandwidth connections, configure UDP buffer sizes at the OS level.
 
 **Linux:**
+
 ```bash
 # Increase UDP buffer sizes to 7MB
 sudo sysctl -w net.core.rmem_max=7340032
@@ -492,6 +493,7 @@ echo "net.core.wmem_max=7340032" | sudo tee -a /etc/sysctl.d/99-geode-quic.conf
 ```
 
 **BSD/macOS:**
+
 ```bash
 sudo sysctl -w kern.ipc.maxsockbuf=8441037
 ```
@@ -505,6 +507,7 @@ sudo sysctl -w kern.ipc.maxsockbuf=8441037
 The client uses JSON line protocol over QUIC:
 
 **Client Messages:**
+
 - `HELLO` - Connection handshake
 - `RUN_GQL` - Execute GQL query
 - `PULL` - Fetch results
@@ -512,6 +515,7 @@ The client uses JSON line protocol over QUIC:
 - `PING` - Keep-alive
 
 **Server Responses:**
+
 - `HELLO_ACK` - Handshake acknowledgment
 - `SCHEMA` - Query schema
 - `BINDINGS` - Result rows

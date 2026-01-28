@@ -34,9 +34,9 @@ address it promptly.
 Please include:
 
 1. Information about the vulnerability
-1. Associated CVEs (if any)
-1. Affected release(s)
-1. Affected package(s)
+2. Associated CVEs (if any)
+3. Affected release(s)
+4. Affected package(s)
 
 ### Feature Requests
 
@@ -77,23 +77,23 @@ are more sensitive, emailed to <security@devnw.com>.
      issue that you are planning to work on that bug or feature so that it can
      be assigned to you.
 
-  1. Follow the normal process of [forking][] the project, and setup a new
+  2. Follow the normal process of [forking][] the project, and setup a new
      branch to work in. It's important that each group of changes be done in
      separate branches in order to ensure that a merge request only includes the
      commits related to that bug or feature.
 
-  1. Before committing, ensure your code is properly formatted by running
+  3. Before committing, ensure your code is properly formatted by running
      `zig fmt src/`. This ensures consistency throughout the project.
 
-  1. Any significant changes should almost always be accompanied by tests. The
+  4. Any significant changes should almost always be accompanied by tests. The
      project already has good test coverage, so look at some of the existing
      tests if you're unsure how to go about it.
 
-  1. Do your best to have [well-formed commit messages][] for each change.
+  5. Do your best to have [well-formed commit messages][] for each change.
      This provides consistency throughout the project, and ensures that commit
      messages are able to be formatted properly by various git tools.
 
-  1. Finally, push the commits to your fork and submit a [merge request][].
+  6. Finally, push the commits to your fork and submit a [merge request][].
      **NOTE:** It is recommended that you [squash][] your commits into a single
        commit before submitting a merge request.
 

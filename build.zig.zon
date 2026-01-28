@@ -14,8 +14,8 @@
     .dependencies = .{
         // QUIC transport protocol (RFC 9000) - handles secure UDP connections
         .quic = .{
-            .url = "git+https://gitlab.com/devnw/zig/quic.git#v0.1.6",
-            .hash = "quic-0.1.6-gBIqUSb9OQAfY07dHIRbbzYeCl5EV1Try2jut3Q8i1BN",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git#v0.1.7",
+            .hash = "quic-0.1.6-gBIqUUj9OQAmLo1o3dSO-QlcAzjxqrlFrPjmqaV6m_II",
         },
         // TLS 1.3 cryptographic implementation (transitive dependency of quic)
         .tls = .{

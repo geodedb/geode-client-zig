@@ -109,6 +109,7 @@ const category = err.statusCategory(); // .connection, .syntax_error, etc.
 ```
 
 **Status Categories**:
+
 - `00xxx`: Success
 - `08xxx`: Connection exception
 - `22xxx`: Data exception
@@ -172,6 +173,7 @@ _ = cfg.withTimeout(60000);
 ```
 
 **Supported Query Parameters**:
+
 - `insecure`, `insecure_skip_verify`: Allow unverified TLS
 - `page_size`, `pageSize`: Result pagination size
 - `timeout`, `timeout_ms`: Connection timeout
@@ -320,6 +322,7 @@ if (response.isSuccess()) { ... }
 ```
 
 **Message Types**:
+
 - `HELLO`: Connection handshake
 - `RUN_GQL`: Execute GQL query
 - `PULL`: Fetch more results
@@ -328,6 +331,7 @@ if (response.isSuccess()) { ... }
 - `EXPLAIN`/`PROFILE`: Query analysis
 
 **Response Types**:
+
 - `HELLO_ACK`: Handshake acknowledgment
 - `SCHEMA`: Query schema info
 - `BINDINGS`: Result rows
@@ -336,6 +340,7 @@ if (response.isSuccess()) { ... }
 - `PONG`: Ping response
 
 **Protocol Constants**:
+
 - `protocol.DEFAULT_CLIENT_NAME`: "geode-zig"
 - `protocol.CONFORMANCE_MINIMUM`: "minimum"
 - `protocol.DEFAULT_PAGE_SIZE`: 1000
@@ -489,6 +494,7 @@ client.clearAuthentication();
 ```
 
 **RLS Policy Types**:
+
 - `.select`: Filter on SELECT queries
 - `.insert`: Filter on INSERT operations
 - `.update`: Filter on UPDATE operations
@@ -522,6 +528,7 @@ client.clearAuthentication();
 The integration test suite (`tests/integration.zig`) provides comprehensive testing against a running Geode server:
 
 **Test Categories**:
+
 - Basic operations (ping, query, version)
 - Node CRUD (create, read, update, delete)
 - Relationship operations
@@ -541,6 +548,7 @@ make test-integration-docker
 ```
 
 **Environment Variables**:
+
 - `GEODE_SERVER`: Server address (default: 127.0.0.1:3141)
 - `GEODE_INSECURE`: Set to "1" to skip TLS verification
 
@@ -549,6 +557,7 @@ make test-integration-docker
 The benchmark suite (`benchmarks/bench.zig`) measures performance across all client components:
 
 **Benchmark Categories (59 total)**:
+
 - Value type creation and accessors (16 benchmarks)
 - JSON conversion (10 benchmarks)
 - Date/Time formatting (3 benchmarks)
@@ -573,6 +582,7 @@ Benchmarks are compiled with `ReleaseFast` optimization for accurate performance
 The fuzz test suite (`fuzz/`) provides property-based testing for robustness:
 
 **Fuzz Test Categories (93 total)**:
+
 - DSN parsing fuzz tests (11 tests) - valid/invalid hosts, ports, URLs, query params
 - Value type system tests (18 tests) - roundtrip, accessors, type checking, JSON conversion
 - Query builder tests (20 tests) - clauses, mutations, patterns, predicates
@@ -587,6 +597,7 @@ zig build test-fuzz     # Alternative: build and run via zig
 ```
 
 The tests use property-based testing patterns to validate:
+
 - Input validation rejects all invalid input
 - Roundtrip conversions preserve data
 - State machines maintain valid states
@@ -603,6 +614,7 @@ The tests use property-based testing patterns to validate:
 The client uses JSON line protocol over QUIC:
 
 **Client Messages**:
+
 - `HELLO`: Connection handshake
 - `RUN_GQL`: Execute GQL query
 - `PULL`: Fetch results
@@ -610,6 +622,7 @@ The client uses JSON line protocol over QUIC:
 - `PING`: Keep-alive
 
 **Server Responses**:
+
 - `SCHEMA`: Query schema information
 - `BINDINGS`: Result rows
 - `ERROR`: Error details with ISO codes

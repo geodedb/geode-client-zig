@@ -17,7 +17,8 @@ GEODE_PORT ?= 3141
         test-connection test-connection-v2 test-all test-fuzz bench \
         fmt fmt-check lint clean check ci ci-quick ci-full help \
         docker-start docker-stop docker-logs docker-status docker-pull docker-wait \
-        run run-v2 deps watch deps-tree build-verbose
+        run run-v2 deps watch deps-tree build-verbose \
+        pre-commit pre-commit-install pre-commit-update pre-commit-all setup-dev
 
 # Default target
 all: build fmt-check test
@@ -73,7 +74,14 @@ help:
 	@echo "  make ci-quick       - Run quick CI (no integration tests)"
 	@echo "  make ci-full        - Run full CI with Docker integration tests"
 	@echo ""
-	@echo "Environment variables:"
+	@echo "Pre-commit targets:"
+	@echo "  make pre-commit-install - Install pre-commit hooks"
+	@echo "  make pre-commit         - Run pre-commit on all files"
+	@echo "  make pre-commit-update  - Update hooks to latest versions"
+	@echo "  make pre-commit-all     - Run all hooks (commit + push stages)"
+	@echo "  make setup-dev          - Full development environment setup"
+	@echo ""
+	@echo "Environment variables:
 	@echo "  ZIG_FLAGS           - Additional flags for zig commands"
 	@echo "  GEODE_HOST          - Geode server host (default: 127.0.0.1)"
 	@echo "  GEODE_PORT          - Geode server port (default: 3141)"
@@ -315,3 +323,67 @@ deps-tree:
 build-verbose:
 	@echo "Building with verbose output..."
 	$(ZIG) build --verbose $(ZIG_FLAGS)
+
+# =============================================================================
+# Pre-commit Targets
+# =============================================================================
+
+# Run pre-commit on all files
+pre-commit:
+	@if command -v pre-commit >/dev/null 2>&1; then \
+		pre-commit run --all-files; \
+	else \
+		echo "pre-commit not installed. Run 'make pre-commit-install' first."; \
+		exit 1; \
+	fi
+
+# Install pre-commit hooks
+pre-commit-install:
+	@if ! command -v pre-commit >/dev/null 2>&1; then \
+		echo "Installing pre-commit..."; \
+		pip3 install --user pre-commit || pip install --user pre-commit; \
+	fi
+	@echo "Installing pre-commit hooks..."
+	pre-commit install
+	pre-commit install --hook-type commit-msg
+	pre-commit install --hook-type pre-push
+	@echo "✓ Pre-commit hooks installed"
+
+# Update pre-commit hooks to latest versions
+pre-commit-update:
+	@if command -v pre-commit >/dev/null 2>&1; then \
+		pre-commit autoupdate; \
+	else \
+		echo "pre-commit not installed. Run 'make pre-commit-install' first."; \
+		exit 1; \
+	fi
+
+# Run all pre-commit checks (including push hooks)
+pre-commit-all:
+	@if command -v pre-commit >/dev/null 2>&1; then \
+		echo "Running pre-commit hooks..."; \
+		pre-commit run --all-files --hook-stage pre-commit; \
+		echo ""; \
+		echo "Running pre-push hooks..."; \
+		pre-commit run --all-files --hook-stage pre-push; \
+	else \
+		echo "pre-commit not installed. Run 'make pre-commit-install' first."; \
+		exit 1; \
+	fi
+
+# Full development environment setup
+setup-dev: deps pre-commit-install
+	@echo ""
+	@echo "==== Development Environment Setup Complete ===="
+	@echo "✓ Dependencies fetched"
+	@echo "✓ Pre-commit hooks installed"
+	@echo ""
+	@echo "You can now:"
+	@echo "  - Run 'make build' to build the project"
+	@echo "  - Run 'make test' to run tests"
+	@echo "  - Run 'make pre-commit' to check all files"
+	@echo ""
+	@echo "Pre-commit hooks will run automatically on:"
+	@echo "  - git commit (format, build checks)"
+	@echo "  - git push (tests, additional checks)"
+	@echo ""

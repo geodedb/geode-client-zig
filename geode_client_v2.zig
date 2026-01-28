@@ -1,5 +1,6 @@
 const std = @import("std");
 const quic = @import("quic");
+const protocol = @import("protocol");
 
 // CANARY: REQ=REQ-ZIG-CLIENT-002; FEATURE="Zig Client v2"; ASPECT=QuicPackageClient; STATUS=IMPL; OWNER=clients; UPDATED=2026-01-24
 // Zig client uses the quic package from zig package manager for full compatibility with the server.
@@ -218,10 +219,14 @@ pub const GeodeClient = struct {
     }
 
     pub fn sendHello(self: *GeodeClient, client_name: []const u8, client_version: []const u8) !void {
-        const msg = try std.fmt.allocPrint(
+        const msg = try protocol.buildHello(
             self.allocator,
-            "{{\"type\":\"HELLO\",\"client_name\":\"{s}\",\"client_ver\":\"{s}\",\"wanted_conformance\":\"min\"}}",
-            .{ client_name, client_version },
+            client_name,
+            client_version,
+            protocol.CONFORMANCE_MINIMUM,
+            protocol.DEFAULT_PAGE_SIZE,
+            null,
+            null,
         );
         defer self.allocator.free(msg);
         try self.sendMessage(msg);
@@ -234,13 +239,23 @@ pub const GeodeClient = struct {
             try self.allocator.dupe(u8, "{}");
         defer self.allocator.free(params_json);
 
-        const msg = try std.fmt.allocPrint(
-            self.allocator,
-            "{{\"type\":\"RUN_GQL\",\"request_id\":{d},\"text\":\"{s}\",\"params\":{s}}}",
-            .{ request_id, query, params_json },
-        );
-        defer self.allocator.free(msg);
-        try self.sendMessage(msg);
+        // Build JSON message with proper escaping for query string
+        var msg: std.ArrayListUnmanaged(u8) = .{};
+        errdefer msg.deinit(self.allocator);
+
+        try msg.appendSlice(self.allocator, "{\"type\":\"RUN_GQL\",\"request_id\":");
+        var req_id_buf: [24]u8 = undefined;
+        const req_id_str = std.fmt.bufPrint(&req_id_buf, "{d}", .{request_id}) catch unreachable;
+        try msg.appendSlice(self.allocator, req_id_str);
+        try msg.appendSlice(self.allocator, ",\"text\":\"");
+        try appendEscapedJsonString(self.allocator, &msg, query);
+        try msg.appendSlice(self.allocator, "\",\"params\":");
+        try msg.appendSlice(self.allocator, params_json);
+        try msg.appendSlice(self.allocator, "}");
+
+        const final_msg = try msg.toOwnedSlice(self.allocator);
+        defer self.allocator.free(final_msg);
+        try self.sendMessage(final_msg);
     }
 
     pub fn sendPull(self: *GeodeClient, request_id: u64, page_size: usize) !void {
@@ -265,6 +280,30 @@ pub const GeodeClient = struct {
         try self.sendMessage("{\"type\":\"ROLLBACK\"}");
     }
 };
+
+/// Append a JSON-escaped string to a buffer.
+/// Properly escapes quotes, backslashes, and control characters.
+fn appendEscapedJsonString(allocator: std.mem.Allocator, buf: *std.ArrayListUnmanaged(u8), s: []const u8) !void {
+    for (s) |c| {
+        switch (c) {
+            '"' => try buf.appendSlice(allocator, "\\\""),
+            '\\' => try buf.appendSlice(allocator, "\\\\"),
+            '\n' => try buf.appendSlice(allocator, "\\n"),
+            '\r' => try buf.appendSlice(allocator, "\\r"),
+            '\t' => try buf.appendSlice(allocator, "\\t"),
+            else => {
+                if (c < 0x20) {
+                    // Control characters as \uXXXX
+                    var escape_buf: [6]u8 = undefined;
+                    _ = std.fmt.bufPrint(&escape_buf, "\\u{x:0>4}", .{c}) catch unreachable;
+                    try buf.appendSlice(allocator, &escape_buf);
+                } else {
+                    try buf.append(allocator, c);
+                }
+            },
+        }
+    }
+}
 
 /// Helper function to execute a query
 pub fn executeQuery(
@@ -313,4 +352,281 @@ pub fn executeQuery(
         bindings_response,
         .{},
     );
+}
+
+// =============================================================================
+// Unit Tests for JSON Escaping
+// =============================================================================
+
+test "appendEscapedJsonString: plain ASCII string unchanged" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    try appendEscapedJsonString(std.testing.allocator, &buf, "hello world");
+    try std.testing.expectEqualStrings("hello world", buf.items);
+}
+
+test "appendEscapedJsonString: empty string" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    try appendEscapedJsonString(std.testing.allocator, &buf, "");
+    try std.testing.expectEqual(@as(usize, 0), buf.items.len);
+}
+
+test "appendEscapedJsonString: escapes double quotes" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    try appendEscapedJsonString(std.testing.allocator, &buf, "say \"hello\"");
+    try std.testing.expectEqualStrings("say \\\"hello\\\"", buf.items);
+}
+
+test "appendEscapedJsonString: escapes backslashes" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    try appendEscapedJsonString(std.testing.allocator, &buf, "path\\to\\file");
+    try std.testing.expectEqualStrings("path\\\\to\\\\file", buf.items);
+}
+
+test "appendEscapedJsonString: escapes newlines" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    try appendEscapedJsonString(std.testing.allocator, &buf, "line1\nline2");
+    try std.testing.expectEqualStrings("line1\\nline2", buf.items);
+}
+
+test "appendEscapedJsonString: escapes carriage returns" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    try appendEscapedJsonString(std.testing.allocator, &buf, "line1\rline2");
+    try std.testing.expectEqualStrings("line1\\rline2", buf.items);
+}
+
+test "appendEscapedJsonString: escapes tabs" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    try appendEscapedJsonString(std.testing.allocator, &buf, "col1\tcol2");
+    try std.testing.expectEqualStrings("col1\\tcol2", buf.items);
+}
+
+test "appendEscapedJsonString: escapes mixed special characters" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    try appendEscapedJsonString(std.testing.allocator, &buf, "\"quoted\"\n\ttabbed\\slashed");
+    try std.testing.expectEqualStrings("\\\"quoted\\\"\\n\\ttabbed\\\\slashed", buf.items);
+}
+
+test "appendEscapedJsonString: escapes control characters as unicode" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    // ASCII control character 0x01 (SOH)
+    try appendEscapedJsonString(std.testing.allocator, &buf, "before\x01after");
+    try std.testing.expectEqualStrings("before\\u0001after", buf.items);
+}
+
+test "appendEscapedJsonString: escapes null character" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    try appendEscapedJsonString(std.testing.allocator, &buf, "hello\x00world");
+    try std.testing.expectEqualStrings("hello\\u0000world", buf.items);
+}
+
+test "appendEscapedJsonString: escapes form feed" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    // Form feed is 0x0C
+    try appendEscapedJsonString(std.testing.allocator, &buf, "page\x0cbreak");
+    try std.testing.expectEqualStrings("page\\u000cbreak", buf.items);
+}
+
+test "appendEscapedJsonString: preserves high ASCII and UTF-8" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    // UTF-8 encoded "café" - bytes above 0x1F should not be escaped
+    try appendEscapedJsonString(std.testing.allocator, &buf, "café");
+    try std.testing.expectEqualStrings("café", buf.items);
+}
+
+test "appendEscapedJsonString: handles GQL query with quotes" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    try appendEscapedJsonString(std.testing.allocator, &buf, "RETURN \"hello\" AS greeting");
+    try std.testing.expectEqualStrings("RETURN \\\"hello\\\" AS greeting", buf.items);
+}
+
+test "appendEscapedJsonString: handles GQL query with single quotes" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    // Single quotes should NOT be escaped in JSON
+    try appendEscapedJsonString(std.testing.allocator, &buf, "RETURN 'hello' AS greeting");
+    try std.testing.expectEqualStrings("RETURN 'hello' AS greeting", buf.items);
+}
+
+test "appendEscapedJsonString: handles complex GQL query" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    const query = "MATCH (n:Person) WHERE n.name = \"Alice\\Bob\" RETURN n";
+    try appendEscapedJsonString(std.testing.allocator, &buf, query);
+    try std.testing.expectEqualStrings("MATCH (n:Person) WHERE n.name = \\\"Alice\\\\Bob\\\" RETURN n", buf.items);
+}
+
+test "appendEscapedJsonString: multiple calls append correctly" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    try appendEscapedJsonString(std.testing.allocator, &buf, "first");
+    try appendEscapedJsonString(std.testing.allocator, &buf, " ");
+    try appendEscapedJsonString(std.testing.allocator, &buf, "second");
+    try std.testing.expectEqualStrings("first second", buf.items);
+}
+
+test "appendEscapedJsonString: injection attempt with quotes" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    // Attempt to break out of JSON string and inject new field
+    const malicious = "value\",\"injected\":\"attack";
+    try appendEscapedJsonString(std.testing.allocator, &buf, malicious);
+    // The quotes should be escaped, preventing injection
+    try std.testing.expectEqualStrings("value\\\",\\\"injected\\\":\\\"attack", buf.items);
+}
+
+test "appendEscapedJsonString: injection attempt with backslash-quote" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    // Attempt to escape the escape character
+    const malicious = "value\\\"injected";
+    try appendEscapedJsonString(std.testing.allocator, &buf, malicious);
+    // Both backslash and quote should be escaped
+    try std.testing.expectEqualStrings("value\\\\\\\"injected", buf.items);
+}
+
+test "appendEscapedJsonString: all control characters 0x00-0x1F" {
+    // Test all control characters are properly escaped
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    // Test specific known control character escapes
+    const test_cases = [_]struct { input: []const u8, expected: []const u8 }{
+        .{ .input = "\x00", .expected = "\\u0000" }, // NUL
+        .{ .input = "\x01", .expected = "\\u0001" }, // SOH
+        .{ .input = "\x02", .expected = "\\u0002" }, // STX
+        .{ .input = "\x07", .expected = "\\u0007" }, // BEL
+        .{ .input = "\x08", .expected = "\\u0008" }, // BS
+        .{ .input = "\x09", .expected = "\\t" }, // TAB (special case)
+        .{ .input = "\x0A", .expected = "\\n" }, // LF (special case)
+        .{ .input = "\x0B", .expected = "\\u000b" }, // VT
+        .{ .input = "\x0C", .expected = "\\u000c" }, // FF
+        .{ .input = "\x0D", .expected = "\\r" }, // CR (special case)
+        .{ .input = "\x0E", .expected = "\\u000e" }, // SO
+        .{ .input = "\x1F", .expected = "\\u001f" }, // Unit separator
+    };
+
+    for (test_cases) |tc| {
+        buf.clearRetainingCapacity();
+        try appendEscapedJsonString(std.testing.allocator, &buf, tc.input);
+        try std.testing.expectEqualStrings(tc.expected, buf.items);
+    }
+}
+
+// =============================================================================
+// Unit Tests for Message Building
+// =============================================================================
+
+test "buildRunGql message produces valid JSON with escaped query" {
+    // This test verifies that sendRunGql builds proper JSON
+    // We can't test sendRunGql directly without a connection, but we can
+    // verify the escaping produces valid JSON when used in the same pattern
+
+    const allocator = std.testing.allocator;
+    var msg: std.ArrayListUnmanaged(u8) = .{};
+    defer msg.deinit(allocator);
+
+    const query = "RETURN \"hello\" AS greeting";
+
+    try msg.appendSlice(allocator, "{\"type\":\"RUN_GQL\",\"request_id\":1,\"text\":\"");
+    try appendEscapedJsonString(allocator, &msg, query);
+    try msg.appendSlice(allocator, "\",\"params\":{}}");
+
+    const json_str = msg.items;
+
+    // Parse to verify it's valid JSON
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_str, .{});
+    defer parsed.deinit();
+
+    // Verify structure
+    try std.testing.expectEqualStrings("RUN_GQL", parsed.value.object.get("type").?.string);
+    try std.testing.expectEqual(@as(i64, 1), parsed.value.object.get("request_id").?.integer);
+    try std.testing.expectEqualStrings("RETURN \"hello\" AS greeting", parsed.value.object.get("text").?.string);
+}
+
+test "buildRunGql message with newlines in query" {
+    const allocator = std.testing.allocator;
+    var msg: std.ArrayListUnmanaged(u8) = .{};
+    defer msg.deinit(allocator);
+
+    const query = "MATCH (n)\nWHERE n.name = 'test'\nRETURN n";
+
+    try msg.appendSlice(allocator, "{\"type\":\"RUN_GQL\",\"text\":\"");
+    try appendEscapedJsonString(allocator, &msg, query);
+    try msg.appendSlice(allocator, "\"}");
+
+    // Parse to verify it's valid JSON
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, msg.items, .{});
+    defer parsed.deinit();
+
+    // Verify the query is preserved correctly after JSON parsing
+    try std.testing.expectEqualStrings(query, parsed.value.object.get("text").?.string);
+}
+
+test "buildRunGql message with backslashes in query" {
+    const allocator = std.testing.allocator;
+    var msg: std.ArrayListUnmanaged(u8) = .{};
+    defer msg.deinit(allocator);
+
+    const query = "RETURN 'C:\\Users\\test' AS path";
+
+    try msg.appendSlice(allocator, "{\"text\":\"");
+    try appendEscapedJsonString(allocator, &msg, query);
+    try msg.appendSlice(allocator, "\"}");
+
+    // Parse to verify it's valid JSON
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, msg.items, .{});
+    defer parsed.deinit();
+
+    // Verify the query is preserved correctly
+    try std.testing.expectEqualStrings(query, parsed.value.object.get("text").?.string);
+}
+
+test "buildRunGql message with mixed special characters" {
+    const allocator = std.testing.allocator;
+    var msg: std.ArrayListUnmanaged(u8) = .{};
+    defer msg.deinit(allocator);
+
+    const query = "RETURN \"line1\\nline2\\\"\ttab\" AS value";
+
+    try msg.appendSlice(allocator, "{\"query\":\"");
+    try appendEscapedJsonString(allocator, &msg, query);
+    try msg.appendSlice(allocator, "\"}");
+
+    // Parse to verify it's valid JSON
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, msg.items, .{});
+    defer parsed.deinit();
+
+    // Verify the query is preserved correctly
+    try std.testing.expectEqualStrings(query, parsed.value.object.get("query").?.string);
 }
