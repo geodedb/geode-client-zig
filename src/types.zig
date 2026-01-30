@@ -42,12 +42,25 @@ pub const Value = union(enum) {
     path: Path,
 
     /// Date type (year, month, day)
+    /// SECURITY: Use initChecked() for user-provided values to validate bounds (CWE-20).
     pub const Date = struct {
         year: i32,
         month: u8,
         day: u8,
 
+        /// Create a date without validation. Use initChecked() for user input.
         pub fn init(year: i32, month: u8, day: u8) Date {
+            return .{ .year = year, .month = month, .day = day };
+        }
+
+        /// Create a date with bounds validation.
+        /// SECURITY: Validates month (1-12) and day (1-31) to prevent invalid temporal data (CWE-20).
+        /// Returns error.InvalidMonth if month is not in range 1-12.
+        /// Returns error.InvalidDay if day is not in range 1-31.
+        /// Note: Does not validate day-of-month for specific months (e.g., Feb 30).
+        pub fn initChecked(year: i32, month: u8, day: u8) !Date {
+            if (month < 1 or month > 12) return error.InvalidMonth;
+            if (day < 1 or day > 31) return error.InvalidDay;
             return .{ .year = year, .month = month, .day = day };
         }
 
@@ -68,6 +81,7 @@ pub const Value = union(enum) {
     };
 
     /// Time type with optional timezone offset
+    /// SECURITY: Use initChecked() for user-provided values to validate bounds (CWE-20).
     pub const Time = struct {
         hour: u8,
         minute: u8,
@@ -75,11 +89,35 @@ pub const Value = union(enum) {
         nanosecond: u32 = 0,
         tz_offset_minutes: ?i16 = null,
 
+        /// Create a time without validation. Use initChecked() for user input.
         pub fn init(hour: u8, minute: u8, second: u8) Time {
             return .{ .hour = hour, .minute = minute, .second = second };
         }
 
+        /// Create a time with bounds validation.
+        /// SECURITY: Validates hour (0-23), minute (0-59), second (0-59) to prevent invalid temporal data (CWE-20).
+        /// Returns error.InvalidHour if hour is not in range 0-23.
+        /// Returns error.InvalidMinute if minute is not in range 0-59.
+        /// Returns error.InvalidSecond if second is not in range 0-59.
+        pub fn initChecked(hour: u8, minute: u8, second: u8) !Time {
+            if (hour > 23) return error.InvalidHour;
+            if (minute > 59) return error.InvalidMinute;
+            if (second > 59) return error.InvalidSecond;
+            return .{ .hour = hour, .minute = minute, .second = second };
+        }
+
+        /// Create a time with nanoseconds without validation. Use withNanosChecked() for user input.
         pub fn withNanos(hour: u8, minute: u8, second: u8, nanos: u32) Time {
+            return .{ .hour = hour, .minute = minute, .second = second, .nanosecond = nanos };
+        }
+
+        /// Create a time with nanoseconds with bounds validation.
+        /// SECURITY: Validates all components including nanosecond (0-999999999) (CWE-20).
+        pub fn withNanosChecked(hour: u8, minute: u8, second: u8, nanos: u32) !Time {
+            if (hour > 23) return error.InvalidHour;
+            if (minute > 59) return error.InvalidMinute;
+            if (second > 59) return error.InvalidSecond;
+            if (nanos > 999_999_999) return error.InvalidNanosecond;
             return .{ .hour = hour, .minute = minute, .second = second, .nanosecond = nanos };
         }
 
@@ -201,14 +239,26 @@ pub const Value = union(enum) {
         return .{ .array = arr };
     }
 
-    /// Create a date value
+    /// Create a date value without validation. Use initDateChecked() for user input.
     pub fn initDate(year: i32, month: u8, day: u8) Value {
         return .{ .date = Date.init(year, month, day) };
     }
 
-    /// Create a time value
+    /// Create a date value with bounds validation.
+    /// SECURITY: Validates month (1-12) and day (1-31) to prevent invalid temporal data (CWE-20).
+    pub fn initDateChecked(year: i32, month: u8, day: u8) !Value {
+        return .{ .date = try Date.initChecked(year, month, day) };
+    }
+
+    /// Create a time value without validation. Use initTimeChecked() for user input.
     pub fn initTime(hour: u8, minute: u8, second: u8) Value {
         return .{ .time = Time.init(hour, minute, second) };
+    }
+
+    /// Create a time value with bounds validation.
+    /// SECURITY: Validates hour (0-23), minute (0-59), second (0-59) (CWE-20).
+    pub fn initTimeChecked(hour: u8, minute: u8, second: u8) !Value {
+        return .{ .time = try Time.initChecked(hour, minute, second) };
     }
 
     /// Create a timestamp value
@@ -774,4 +824,109 @@ test "Duration.fromDays creates duration" {
 test "Duration.fromSeconds creates duration" {
     const d = Value.Duration.fromSeconds(3600);
     try std.testing.expectEqual(@as(i64, 3600), d.seconds);
+}
+
+// =============================================================================
+// Security Tests - Date/Time Bounds Validation (CWE-20)
+// =============================================================================
+
+test "Date.initChecked accepts valid dates" {
+    const d = try Value.Date.initChecked(2025, 1, 24);
+    try std.testing.expectEqual(@as(i32, 2025), d.year);
+    try std.testing.expectEqual(@as(u8, 1), d.month);
+    try std.testing.expectEqual(@as(u8, 24), d.day);
+}
+
+test "Date.initChecked rejects month=0" {
+    try std.testing.expectError(error.InvalidMonth, Value.Date.initChecked(2025, 0, 15));
+}
+
+test "Date.initChecked rejects month=13" {
+    try std.testing.expectError(error.InvalidMonth, Value.Date.initChecked(2025, 13, 15));
+}
+
+test "Date.initChecked rejects day=0" {
+    try std.testing.expectError(error.InvalidDay, Value.Date.initChecked(2025, 6, 0));
+}
+
+test "Date.initChecked rejects day=32" {
+    try std.testing.expectError(error.InvalidDay, Value.Date.initChecked(2025, 6, 32));
+}
+
+test "Date.initChecked accepts boundary values" {
+    // Month boundaries
+    _ = try Value.Date.initChecked(2025, 1, 15); // min month
+    _ = try Value.Date.initChecked(2025, 12, 15); // max month
+    // Day boundaries
+    _ = try Value.Date.initChecked(2025, 6, 1); // min day
+    _ = try Value.Date.initChecked(2025, 6, 31); // max day
+}
+
+test "Time.initChecked accepts valid times" {
+    const t = try Value.Time.initChecked(14, 30, 45);
+    try std.testing.expectEqual(@as(u8, 14), t.hour);
+    try std.testing.expectEqual(@as(u8, 30), t.minute);
+    try std.testing.expectEqual(@as(u8, 45), t.second);
+}
+
+test "Time.initChecked rejects hour=24" {
+    try std.testing.expectError(error.InvalidHour, Value.Time.initChecked(24, 0, 0));
+}
+
+test "Time.initChecked rejects minute=60" {
+    try std.testing.expectError(error.InvalidMinute, Value.Time.initChecked(12, 60, 0));
+}
+
+test "Time.initChecked rejects second=60" {
+    try std.testing.expectError(error.InvalidSecond, Value.Time.initChecked(12, 30, 60));
+}
+
+test "Time.initChecked accepts boundary values" {
+    // Hour boundaries
+    _ = try Value.Time.initChecked(0, 30, 30); // min hour
+    _ = try Value.Time.initChecked(23, 30, 30); // max hour
+    // Minute boundaries
+    _ = try Value.Time.initChecked(12, 0, 30); // min minute
+    _ = try Value.Time.initChecked(12, 59, 30); // max minute
+    // Second boundaries
+    _ = try Value.Time.initChecked(12, 30, 0); // min second
+    _ = try Value.Time.initChecked(12, 30, 59); // max second
+}
+
+test "Time.withNanosChecked accepts valid nanoseconds" {
+    const t = try Value.Time.withNanosChecked(14, 30, 45, 123456789);
+    try std.testing.expectEqual(@as(u32, 123456789), t.nanosecond);
+}
+
+test "Time.withNanosChecked rejects invalid nanoseconds" {
+    try std.testing.expectError(error.InvalidNanosecond, Value.Time.withNanosChecked(12, 30, 30, 1_000_000_000));
+}
+
+test "Time.withNanosChecked accepts max valid nanoseconds" {
+    _ = try Value.Time.withNanosChecked(12, 30, 30, 999_999_999);
+}
+
+test "Value.initDateChecked accepts valid dates" {
+    const v = try Value.initDateChecked(2025, 6, 15);
+    try std.testing.expect(v.isDate());
+    const d = try v.asDate();
+    try std.testing.expectEqual(@as(u8, 6), d.month);
+}
+
+test "Value.initDateChecked rejects invalid dates" {
+    try std.testing.expectError(error.InvalidMonth, Value.initDateChecked(2025, 13, 15));
+    try std.testing.expectError(error.InvalidDay, Value.initDateChecked(2025, 6, 32));
+}
+
+test "Value.initTimeChecked accepts valid times" {
+    const v = try Value.initTimeChecked(14, 30, 45);
+    try std.testing.expect(v.isTime());
+    const t = try v.asTime();
+    try std.testing.expectEqual(@as(u8, 14), t.hour);
+}
+
+test "Value.initTimeChecked rejects invalid times" {
+    try std.testing.expectError(error.InvalidHour, Value.initTimeChecked(24, 0, 0));
+    try std.testing.expectError(error.InvalidMinute, Value.initTimeChecked(12, 60, 0));
+    try std.testing.expectError(error.InvalidSecond, Value.initTimeChecked(12, 30, 60));
 }

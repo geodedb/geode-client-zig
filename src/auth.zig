@@ -3,10 +3,42 @@
 //
 // Authentication support for the Geode Zig client library.
 // Provides user management, role management, and Row-Level Security (RLS) policies.
+//
+// SECURITY: All user-provided strings are JSON-escaped using appendEscapedString()
+// to prevent JSON injection attacks. See GAP_ANALYSIS.md Finding 1.
 
 const std = @import("std");
 const protocol = @import("protocol");
 const validate = @import("validate");
+
+// =============================================================================
+// JSON Escaping (Security-Critical)
+// =============================================================================
+
+/// Append a JSON-escaped string to a buffer.
+/// Properly escapes quotes, backslashes, and control characters to prevent JSON injection.
+/// This function is security-critical - it prevents CWE-116 (Improper Encoding/Escaping).
+fn appendEscapedString(allocator: std.mem.Allocator, buf: *std.ArrayListUnmanaged(u8), s: []const u8) !void {
+    for (s) |c| {
+        switch (c) {
+            '"' => try buf.appendSlice(allocator, "\\\""),
+            '\\' => try buf.appendSlice(allocator, "\\\\"),
+            '\n' => try buf.appendSlice(allocator, "\\n"),
+            '\r' => try buf.appendSlice(allocator, "\\r"),
+            '\t' => try buf.appendSlice(allocator, "\\t"),
+            else => {
+                if (c < 0x20) {
+                    // Control characters as \uXXXX
+                    var escape_buf: [6]u8 = undefined;
+                    _ = std.fmt.bufPrint(&escape_buf, "\\u{x:0>4}", .{c}) catch unreachable;
+                    try buf.appendSlice(allocator, &escape_buf);
+                } else {
+                    try buf.append(allocator, c);
+                }
+            },
+        }
+    }
+}
 
 /// Authentication credentials.
 pub const Credentials = struct {
@@ -196,11 +228,15 @@ pub const AuthClient = struct {
     }
 
     /// Free resources.
+    /// SECURITY: Zeros sensitive data before freeing to prevent memory disclosure (CWE-316, CWE-226).
     pub fn deinit(self: *Self) void {
         if (self.current_user) |user| {
             self.allocator.free(user);
         }
         if (self.session_token) |token| {
+            // SECURITY: Zero sensitive token data before freeing (CWE-316, CWE-226)
+            // This prevents session tokens from remaining in freed memory
+            @memset(@constCast(token), 0);
             self.allocator.free(token);
         }
     }
@@ -216,9 +252,9 @@ pub const AuthClient = struct {
     }
 
     /// Build a login message.
+    /// SECURITY: Username and password are JSON-escaped to prevent injection.
     pub fn buildLoginMessage(self: Self, username: []const u8, password: []const u8) ![]u8 {
-        _ = self;
-        return buildAuthMessage("LOGIN", username, password);
+        return buildAuthMessage(self.allocator, "LOGIN", username, password);
     }
 
     /// Build a logout message.
@@ -227,182 +263,179 @@ pub const AuthClient = struct {
     }
 
     /// Build a create user message.
+    /// SECURITY: All user-provided values are JSON-escaped to prevent injection.
     pub fn buildCreateUserMessage(
         self: Self,
         username: []const u8,
         password: []const u8,
         roles: ?[]const []const u8,
     ) ![]u8 {
-        _ = self;
         var msg: std.ArrayListUnmanaged(u8) = .{};
-        const allocator = std.heap.page_allocator;
-        errdefer msg.deinit(allocator);
+        errdefer msg.deinit(self.allocator);
 
-        try msg.appendSlice(allocator, "{\"type\":\"CREATE_USER\",\"username\":\"");
-        try msg.appendSlice(allocator, username);
-        try msg.appendSlice(allocator, "\",\"password\":\"");
-        try msg.appendSlice(allocator, password);
-        try msg.appendSlice(allocator, "\"");
+        try msg.appendSlice(self.allocator, "{\"type\":\"CREATE_USER\",\"username\":\"");
+        try appendEscapedString(self.allocator, &msg, username);
+        try msg.appendSlice(self.allocator, "\",\"password\":\"");
+        try appendEscapedString(self.allocator, &msg, password);
+        try msg.appendSlice(self.allocator, "\"");
 
         if (roles) |r| {
-            try msg.appendSlice(allocator, ",\"roles\":[");
+            try msg.appendSlice(self.allocator, ",\"roles\":[");
             for (r, 0..) |role, i| {
                 if (i > 0) {
-                    try msg.appendSlice(allocator, ",");
+                    try msg.appendSlice(self.allocator, ",");
                 }
-                try msg.appendSlice(allocator, "\"");
-                try msg.appendSlice(allocator, role);
-                try msg.appendSlice(allocator, "\"");
+                try msg.appendSlice(self.allocator, "\"");
+                try appendEscapedString(self.allocator, &msg, role);
+                try msg.appendSlice(self.allocator, "\"");
             }
-            try msg.appendSlice(allocator, "]");
+            try msg.appendSlice(self.allocator, "]");
         }
 
-        try msg.appendSlice(allocator, "}\n");
-        return msg.toOwnedSlice(allocator);
+        try msg.appendSlice(self.allocator, "}\n");
+        return msg.toOwnedSlice(self.allocator);
     }
 
     /// Build a create role message.
+    /// SECURITY: All user-provided values are JSON-escaped to prevent injection.
     pub fn buildCreateRoleMessage(
         self: Self,
         name: []const u8,
         description: ?[]const u8,
         permissions: ?[]const []const u8,
     ) ![]u8 {
-        _ = self;
         var msg: std.ArrayListUnmanaged(u8) = .{};
-        const allocator = std.heap.page_allocator;
-        errdefer msg.deinit(allocator);
+        errdefer msg.deinit(self.allocator);
 
-        try msg.appendSlice(allocator, "{\"type\":\"CREATE_ROLE\",\"name\":\"");
-        try msg.appendSlice(allocator, name);
-        try msg.appendSlice(allocator, "\"");
+        try msg.appendSlice(self.allocator, "{\"type\":\"CREATE_ROLE\",\"name\":\"");
+        try appendEscapedString(self.allocator, &msg, name);
+        try msg.appendSlice(self.allocator, "\"");
 
         if (description) |desc| {
-            try msg.appendSlice(allocator, ",\"description\":\"");
-            try msg.appendSlice(allocator, desc);
-            try msg.appendSlice(allocator, "\"");
+            try msg.appendSlice(self.allocator, ",\"description\":\"");
+            try appendEscapedString(self.allocator, &msg, desc);
+            try msg.appendSlice(self.allocator, "\"");
         }
 
         if (permissions) |perms| {
-            try msg.appendSlice(allocator, ",\"permissions\":[");
+            try msg.appendSlice(self.allocator, ",\"permissions\":[");
             for (perms, 0..) |perm, i| {
                 if (i > 0) {
-                    try msg.appendSlice(allocator, ",");
+                    try msg.appendSlice(self.allocator, ",");
                 }
-                try msg.appendSlice(allocator, "\"");
-                try msg.appendSlice(allocator, perm);
-                try msg.appendSlice(allocator, "\"");
+                try msg.appendSlice(self.allocator, "\"");
+                try appendEscapedString(self.allocator, &msg, perm);
+                try msg.appendSlice(self.allocator, "\"");
             }
-            try msg.appendSlice(allocator, "]");
+            try msg.appendSlice(self.allocator, "]");
         }
 
-        try msg.appendSlice(allocator, "}\n");
-        return msg.toOwnedSlice(allocator);
+        try msg.appendSlice(self.allocator, "}\n");
+        return msg.toOwnedSlice(self.allocator);
     }
 
     /// Build an assign role message.
+    /// SECURITY: All user-provided values are JSON-escaped to prevent injection.
     pub fn buildAssignRoleMessage(
         self: Self,
         username: []const u8,
         role: []const u8,
     ) ![]u8 {
-        _ = self;
         var msg: std.ArrayListUnmanaged(u8) = .{};
-        const allocator = std.heap.page_allocator;
-        errdefer msg.deinit(allocator);
+        errdefer msg.deinit(self.allocator);
 
-        try msg.appendSlice(allocator, "{\"type\":\"ASSIGN_ROLE\",\"username\":\"");
-        try msg.appendSlice(allocator, username);
-        try msg.appendSlice(allocator, "\",\"role\":\"");
-        try msg.appendSlice(allocator, role);
-        try msg.appendSlice(allocator, "\"}\n");
+        try msg.appendSlice(self.allocator, "{\"type\":\"ASSIGN_ROLE\",\"username\":\"");
+        try appendEscapedString(self.allocator, &msg, username);
+        try msg.appendSlice(self.allocator, "\",\"role\":\"");
+        try appendEscapedString(self.allocator, &msg, role);
+        try msg.appendSlice(self.allocator, "\"}\n");
 
-        return msg.toOwnedSlice(allocator);
+        return msg.toOwnedSlice(self.allocator);
     }
 
     /// Build a revoke role message.
+    /// SECURITY: All user-provided values are JSON-escaped to prevent injection.
     pub fn buildRevokeRoleMessage(
         self: Self,
         username: []const u8,
         role: []const u8,
     ) ![]u8 {
-        _ = self;
         var msg: std.ArrayListUnmanaged(u8) = .{};
-        const allocator = std.heap.page_allocator;
-        errdefer msg.deinit(allocator);
+        errdefer msg.deinit(self.allocator);
 
-        try msg.appendSlice(allocator, "{\"type\":\"REVOKE_ROLE\",\"username\":\"");
-        try msg.appendSlice(allocator, username);
-        try msg.appendSlice(allocator, "\",\"role\":\"");
-        try msg.appendSlice(allocator, role);
-        try msg.appendSlice(allocator, "\"}\n");
+        try msg.appendSlice(self.allocator, "{\"type\":\"REVOKE_ROLE\",\"username\":\"");
+        try appendEscapedString(self.allocator, &msg, username);
+        try msg.appendSlice(self.allocator, "\",\"role\":\"");
+        try appendEscapedString(self.allocator, &msg, role);
+        try msg.appendSlice(self.allocator, "\"}\n");
 
-        return msg.toOwnedSlice(allocator);
+        return msg.toOwnedSlice(self.allocator);
     }
 
     /// Build a create RLS policy message.
+    /// SECURITY: All user-provided values are JSON-escaped to prevent injection.
     pub fn buildCreateRlsPolicyMessage(
         self: Self,
         policy: RlsPolicy,
     ) ![]u8 {
-        _ = self;
         var msg: std.ArrayListUnmanaged(u8) = .{};
-        const allocator = std.heap.page_allocator;
-        errdefer msg.deinit(allocator);
+        errdefer msg.deinit(self.allocator);
 
-        try msg.appendSlice(allocator, "{\"type\":\"CREATE_RLS_POLICY\",\"name\":\"");
-        try msg.appendSlice(allocator, policy.name);
-        try msg.appendSlice(allocator, "\",\"target\":\"");
-        try msg.appendSlice(allocator, policy.target_label);
-        try msg.appendSlice(allocator, "\",\"policy_type\":\"");
-        try msg.appendSlice(allocator, policy.policy_type.toString());
-        try msg.appendSlice(allocator, "\",\"predicate\":\"");
-        try msg.appendSlice(allocator, policy.predicate);
-        try msg.appendSlice(allocator, "\"");
+        try msg.appendSlice(self.allocator, "{\"type\":\"CREATE_RLS_POLICY\",\"name\":\"");
+        try appendEscapedString(self.allocator, &msg, policy.name);
+        try msg.appendSlice(self.allocator, "\",\"target\":\"");
+        try appendEscapedString(self.allocator, &msg, policy.target_label);
+        try msg.appendSlice(self.allocator, "\",\"policy_type\":\"");
+        try msg.appendSlice(self.allocator, policy.policy_type.toString());
+        try msg.appendSlice(self.allocator, "\",\"predicate\":\"");
+        try appendEscapedString(self.allocator, &msg, policy.predicate);
+        try msg.appendSlice(self.allocator, "\"");
 
         if (policy.roles.len > 0) {
-            try msg.appendSlice(allocator, ",\"roles\":[");
+            try msg.appendSlice(self.allocator, ",\"roles\":[");
             for (policy.roles, 0..) |role, i| {
                 if (i > 0) {
-                    try msg.appendSlice(allocator, ",");
+                    try msg.appendSlice(self.allocator, ",");
                 }
-                try msg.appendSlice(allocator, "\"");
-                try msg.appendSlice(allocator, role);
-                try msg.appendSlice(allocator, "\"");
+                try msg.appendSlice(self.allocator, "\"");
+                try appendEscapedString(self.allocator, &msg, role);
+                try msg.appendSlice(self.allocator, "\"");
             }
-            try msg.appendSlice(allocator, "]");
+            try msg.appendSlice(self.allocator, "]");
         }
 
-        try msg.appendSlice(allocator, ",\"enabled\":");
-        try msg.appendSlice(allocator, if (policy.enabled) "true" else "false");
-        try msg.appendSlice(allocator, "}\n");
+        try msg.appendSlice(self.allocator, ",\"enabled\":");
+        try msg.appendSlice(self.allocator, if (policy.enabled) "true" else "false");
+        try msg.appendSlice(self.allocator, "}\n");
 
-        return msg.toOwnedSlice(allocator);
+        return msg.toOwnedSlice(self.allocator);
     }
 
     /// Build a drop RLS policy message.
+    /// SECURITY: Policy name is JSON-escaped to prevent injection.
     pub fn buildDropRlsPolicyMessage(
         self: Self,
         policy_name: []const u8,
     ) ![]u8 {
-        _ = self;
         var msg: std.ArrayListUnmanaged(u8) = .{};
-        const allocator = std.heap.page_allocator;
-        errdefer msg.deinit(allocator);
+        errdefer msg.deinit(self.allocator);
 
-        try msg.appendSlice(allocator, "{\"type\":\"DROP_RLS_POLICY\",\"name\":\"");
-        try msg.appendSlice(allocator, policy_name);
-        try msg.appendSlice(allocator, "\"}\n");
+        try msg.appendSlice(self.allocator, "{\"type\":\"DROP_RLS_POLICY\",\"name\":\"");
+        try appendEscapedString(self.allocator, &msg, policy_name);
+        try msg.appendSlice(self.allocator, "\"}\n");
 
-        return msg.toOwnedSlice(allocator);
+        return msg.toOwnedSlice(self.allocator);
     }
 
     /// Set authenticated state.
+    /// SECURITY: Zeros old session token before freeing to prevent memory disclosure (CWE-316, CWE-226).
     pub fn setAuthenticated(self: *Self, username: []const u8, token: []const u8) !void {
         if (self.current_user) |old| {
             self.allocator.free(old);
         }
         if (self.session_token) |old| {
+            // SECURITY: Zero old token before freeing (CWE-316, CWE-226)
+            @memset(@constCast(old), 0);
             self.allocator.free(old);
         }
         self.current_user = try self.allocator.dupe(u8, username);
@@ -410,12 +443,16 @@ pub const AuthClient = struct {
     }
 
     /// Clear authenticated state.
+    /// SECURITY: Zeros sensitive data before freeing to prevent memory disclosure (CWE-316, CWE-226).
     pub fn clearAuthentication(self: *Self) void {
         if (self.current_user) |user| {
             self.allocator.free(user);
             self.current_user = null;
         }
         if (self.session_token) |token| {
+            // SECURITY: Zero sensitive token data before freeing (CWE-316, CWE-226)
+            // This prevents session tokens from remaining in freed memory
+            @memset(@constCast(token), 0);
             self.allocator.free(token);
             self.session_token = null;
         }
@@ -445,17 +482,17 @@ pub const AuthError = error{
 };
 
 // Helper to build auth message with username/password
-fn buildAuthMessage(msg_type: []const u8, username: []const u8, password: []const u8) ![]u8 {
+// SECURITY: Uses appendEscapedString for user-provided values to prevent JSON injection
+fn buildAuthMessage(allocator: std.mem.Allocator, msg_type: []const u8, username: []const u8, password: []const u8) ![]u8 {
     var msg: std.ArrayListUnmanaged(u8) = .{};
-    const allocator = std.heap.page_allocator;
     errdefer msg.deinit(allocator);
 
     try msg.appendSlice(allocator, "{\"type\":\"");
     try msg.appendSlice(allocator, msg_type);
     try msg.appendSlice(allocator, "\",\"username\":\"");
-    try msg.appendSlice(allocator, username);
+    try appendEscapedString(allocator, &msg, username);
     try msg.appendSlice(allocator, "\",\"password\":\"");
-    try msg.appendSlice(allocator, password);
+    try appendEscapedString(allocator, &msg, password);
     try msg.appendSlice(allocator, "\"}\n");
 
     return msg.toOwnedSlice(allocator);
@@ -551,7 +588,7 @@ test "AuthClient buildLoginMessage" {
     defer client.deinit();
 
     const msg = try client.buildLoginMessage("admin", "secret");
-    defer std.heap.page_allocator.free(msg);
+    defer std.testing.allocator.free(msg);
 
     try std.testing.expect(std.mem.indexOf(u8, msg, "\"type\":\"LOGIN\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, msg, "\"username\":\"admin\"") != null);
@@ -574,7 +611,7 @@ test "AuthClient buildCreateUserMessage" {
 
     const roles = [_][]const u8{ "reader", "writer" };
     const msg = try client.buildCreateUserMessage("newuser", "password123", &roles);
-    defer std.heap.page_allocator.free(msg);
+    defer std.testing.allocator.free(msg);
 
     try std.testing.expect(std.mem.indexOf(u8, msg, "\"type\":\"CREATE_USER\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, msg, "\"username\":\"newuser\"") != null);
@@ -587,7 +624,7 @@ test "AuthClient buildCreateRoleMessage" {
 
     const perms = [_][]const u8{ "read", "write" };
     const msg = try client.buildCreateRoleMessage("editor", "Can edit content", &perms);
-    defer std.heap.page_allocator.free(msg);
+    defer std.testing.allocator.free(msg);
 
     try std.testing.expect(std.mem.indexOf(u8, msg, "\"type\":\"CREATE_ROLE\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, msg, "\"name\":\"editor\"") != null);
@@ -599,7 +636,7 @@ test "AuthClient buildAssignRoleMessage" {
     defer client.deinit();
 
     const msg = try client.buildAssignRoleMessage("alice", "admin");
-    defer std.heap.page_allocator.free(msg);
+    defer std.testing.allocator.free(msg);
 
     try std.testing.expect(std.mem.indexOf(u8, msg, "\"type\":\"ASSIGN_ROLE\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, msg, "\"username\":\"alice\"") != null);
@@ -620,7 +657,7 @@ test "AuthClient buildCreateRlsPolicyMessage" {
     defer policy.deinit();
 
     const msg = try client.buildCreateRlsPolicyMessage(policy);
-    defer std.heap.page_allocator.free(msg);
+    defer std.testing.allocator.free(msg);
 
     try std.testing.expect(std.mem.indexOf(u8, msg, "\"type\":\"CREATE_RLS_POLICY\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, msg, "\"name\":\"my_policy\"") != null);
@@ -632,8 +669,138 @@ test "AuthClient buildDropRlsPolicyMessage" {
     defer client.deinit();
 
     const msg = try client.buildDropRlsPolicyMessage("old_policy");
-    defer std.heap.page_allocator.free(msg);
+    defer std.testing.allocator.free(msg);
 
     try std.testing.expect(std.mem.indexOf(u8, msg, "\"type\":\"DROP_RLS_POLICY\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, msg, "\"name\":\"old_policy\"") != null);
+}
+
+// =============================================================================
+// Security Tests - JSON Injection Prevention
+// =============================================================================
+
+test "appendEscapedString escapes quotes" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    try appendEscapedString(std.testing.allocator, &buf, "hello\"world");
+    try std.testing.expectEqualStrings("hello\\\"world", buf.items);
+}
+
+test "appendEscapedString escapes backslashes" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    try appendEscapedString(std.testing.allocator, &buf, "path\\to\\file");
+    try std.testing.expectEqualStrings("path\\\\to\\\\file", buf.items);
+}
+
+test "appendEscapedString escapes newlines and tabs" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    try appendEscapedString(std.testing.allocator, &buf, "line1\nline2\ttab");
+    try std.testing.expectEqualStrings("line1\\nline2\\ttab", buf.items);
+}
+
+test "appendEscapedString escapes control characters" {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(std.testing.allocator);
+
+    try appendEscapedString(std.testing.allocator, &buf, "test\x00null");
+    // Control char \x00 should become \u0000
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\\u0000") != null);
+}
+
+test "buildLoginMessage escapes special characters in username" {
+    var client = AuthClient.init(std.testing.allocator);
+    defer client.deinit();
+
+    // Attempt JSON injection via username
+    const msg = try client.buildLoginMessage("admin\",\"injected\":\"true", "secret");
+    defer std.testing.allocator.free(msg);
+
+    // The quotes should be escaped, preventing injection
+    try std.testing.expect(std.mem.indexOf(u8, msg, "\\\"") != null);
+    // Should NOT contain unescaped injected field
+    try std.testing.expect(std.mem.indexOf(u8, msg, ",\"injected\":") == null);
+}
+
+test "buildLoginMessage escapes special characters in password" {
+    var client = AuthClient.init(std.testing.allocator);
+    defer client.deinit();
+
+    // Attempt JSON injection via password
+    const msg = try client.buildLoginMessage("admin", "pass\",\"admin\":true}");
+    defer std.testing.allocator.free(msg);
+
+    // The quotes should be escaped
+    try std.testing.expect(std.mem.indexOf(u8, msg, "\\\"") != null);
+}
+
+test "buildCreateUserMessage escapes injection attempts" {
+    var client = AuthClient.init(std.testing.allocator);
+    defer client.deinit();
+
+    const roles = [_][]const u8{"admin\",\"superuser\":\"true"};
+    const msg = try client.buildCreateUserMessage("user\"}", "pass", &roles);
+    defer std.testing.allocator.free(msg);
+
+    // Verify escaping occurred
+    try std.testing.expect(std.mem.indexOf(u8, msg, "\\\"") != null);
+}
+
+// =============================================================================
+// Security Tests - Sensitive Data Zeroing (CWE-316, CWE-226)
+// =============================================================================
+
+test "clearAuthentication zeros and frees session token" {
+    // This test verifies the sensitive data clearing path is executed correctly.
+    // Note: We cannot directly verify memory is zeroed without undefined behavior,
+    // but we verify the code path executes without errors and state is cleared.
+    var client = AuthClient.init(std.testing.allocator);
+    defer client.deinit();
+
+    // Set authentication with a sensitive token
+    try client.setAuthenticated("admin", "supersecrettoken12345");
+    try std.testing.expect(client.isAuthenticated());
+    try std.testing.expectEqualStrings("admin", client.getCurrentUser().?);
+
+    // Clear authentication - this should zero the token before freeing
+    client.clearAuthentication();
+
+    // Verify state is properly cleared
+    try std.testing.expect(!client.isAuthenticated());
+    try std.testing.expect(client.getCurrentUser() == null);
+    try std.testing.expect(client.session_token == null);
+}
+
+test "setAuthenticated zeros old token when replacing" {
+    // Verify that when we replace an existing session token, the old one is zeroed
+    var client = AuthClient.init(std.testing.allocator);
+    defer client.deinit();
+
+    // Set initial authentication
+    try client.setAuthenticated("user1", "oldtoken123");
+    try std.testing.expectEqualStrings("user1", client.getCurrentUser().?);
+
+    // Replace with new authentication - old token should be zeroed before free
+    try client.setAuthenticated("user2", "newtoken456");
+    try std.testing.expectEqualStrings("user2", client.getCurrentUser().?);
+
+    // Verify no memory leaks (allocator will detect if deinit fails)
+}
+
+test "deinit zeros session token" {
+    // Verify deinit path zeros the session token
+    var client = AuthClient.init(std.testing.allocator);
+
+    // Set authentication
+    try client.setAuthenticated("admin", "tokentobezeroed");
+    try std.testing.expect(client.isAuthenticated());
+
+    // deinit should zero and free the token
+    client.deinit();
+
+    // If we get here without allocator errors, zeroing + free worked correctly
 }

@@ -16,6 +16,10 @@ pub const DEFAULT_PAGE_SIZE: u32 = 1000;
 /// Default connection timeout in milliseconds
 pub const DEFAULT_TIMEOUT_MS: u32 = 30000;
 
+/// Maximum length for URL-decoded strings.
+/// SECURITY: Prevents resource exhaustion attacks via extremely long DSN strings (CWE-400).
+pub const MAX_URL_DECODE_LENGTH: usize = 64 * 1024; // 64KB reasonable limit
+
 /// Client configuration parsed from DSN or set programmatically.
 pub const Config = struct {
     /// Server hostname or IP address
@@ -91,6 +95,23 @@ pub const Config = struct {
     pub fn toConnectionString(self: Config, allocator: std.mem.Allocator) ![]const u8 {
         return std.fmt.allocPrint(allocator, "{s}:{d}", .{ self.host, self.port });
     }
+
+    /// Free allocated credentials and zero sensitive data before freeing.
+    /// SECURITY: Zeros password before freeing to prevent memory disclosure (CWE-316, CWE-226).
+    /// Call this when done with a Config that was created via parseDSN.
+    pub fn deinit(self: *Config, allocator: std.mem.Allocator) void {
+        // SECURITY: Zero sensitive password data before freeing (CWE-316, CWE-226)
+        if (self.password) |pass| {
+            @memset(@constCast(pass), 0);
+            allocator.free(pass);
+            self.password = null;
+        }
+        // Free username (not sensitive, but still allocated)
+        if (self.username) |user| {
+            allocator.free(user);
+            self.username = null;
+        }
+    }
 };
 
 /// Parse a DSN (Data Source Name) string into a Config.
@@ -98,6 +119,9 @@ pub const Config = struct {
 /// - URL format: geode://[user:pass@]host[:port][?params]
 /// - Simple format: host:port[?params]
 /// - Host only: host
+///
+/// Note: Invalid numeric values (port, page_size, timeout) silently fall back to defaults.
+/// Use parseDSNStrict() for strict validation that returns errors on invalid values.
 pub fn parseDSN(allocator: std.mem.Allocator, dsn: []const u8) !Config {
     var config = Config.init();
 
@@ -107,15 +131,34 @@ pub fn parseDSN(allocator: std.mem.Allocator, dsn: []const u8) !Config {
 
     // Check for URL format (geode://)
     if (std.mem.startsWith(u8, dsn, "geode://")) {
-        return parseUrlFormat(allocator, dsn[8..], &config);
+        return parseUrlFormat(allocator, dsn[8..], &config, false);
     }
 
     // Simple format: host:port or host:port?params
-    return parseSimpleFormat(allocator, dsn, &config);
+    return parseSimpleFormat(allocator, dsn, &config, false);
+}
+
+/// Parse a DSN with strict validation.
+/// SECURITY: Returns errors for invalid values instead of silently using defaults (CWE-20).
+/// This is recommended for production use where misconfigurations should fail explicitly.
+pub fn parseDSNStrict(allocator: std.mem.Allocator, dsn: []const u8) !Config {
+    var config = Config.init();
+
+    if (dsn.len == 0) {
+        return config;
+    }
+
+    // Check for URL format (geode://)
+    if (std.mem.startsWith(u8, dsn, "geode://")) {
+        return parseUrlFormat(allocator, dsn[8..], &config, true);
+    }
+
+    // Simple format: host:port or host:port?params
+    return parseSimpleFormat(allocator, dsn, &config, true);
 }
 
 /// Parse URL format: [user:pass@]host[:port][?params]
-fn parseUrlFormat(allocator: std.mem.Allocator, url: []const u8, config: *Config) !Config {
+fn parseUrlFormat(allocator: std.mem.Allocator, url: []const u8, config: *Config, strict: bool) !Config {
     var remaining = url;
 
     // Check for credentials (user:pass@)
@@ -138,16 +181,16 @@ fn parseUrlFormat(allocator: std.mem.Allocator, url: []const u8, config: *Config
     }
 
     // Parse host[:port][?params]
-    return parseHostPortParams(allocator, remaining, config);
+    return parseHostPortParams(allocator, remaining, config, strict);
 }
 
 /// Parse simple format: host:port[?params] or host
-fn parseSimpleFormat(allocator: std.mem.Allocator, dsn: []const u8, config: *Config) !Config {
-    return parseHostPortParams(allocator, dsn, config);
+fn parseSimpleFormat(allocator: std.mem.Allocator, dsn: []const u8, config: *Config, strict: bool) !Config {
+    return parseHostPortParams(allocator, dsn, config, strict);
 }
 
 /// Parse host[:port][?params]
-fn parseHostPortParams(allocator: std.mem.Allocator, input: []const u8, config: *Config) !Config {
+fn parseHostPortParams(allocator: std.mem.Allocator, input: []const u8, config: *Config, strict: bool) !Config {
     var remaining = input;
 
     // Check for query parameters
@@ -163,7 +206,12 @@ fn parseHostPortParams(allocator: std.mem.Allocator, input: []const u8, config: 
             // IPv6 with port: [::1]:3141
             config.host = remaining[1..bracket_colon];
             const port_str = remaining[bracket_colon + 2 ..];
-            config.port = std.fmt.parseInt(u16, port_str, 10) catch DEFAULT_PORT;
+            if (strict) {
+                // SECURITY: Strict mode returns error for invalid port (CWE-20)
+                config.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
+            } else {
+                config.port = std.fmt.parseInt(u16, port_str, 10) catch DEFAULT_PORT;
+            }
         } else if (std.mem.indexOf(u8, remaining, "]")) |bracket| {
             // IPv6 without port: [::1]
             config.host = remaining[1..bracket];
@@ -175,7 +223,12 @@ fn parseHostPortParams(allocator: std.mem.Allocator, input: []const u8, config: 
         if (std.mem.lastIndexOf(u8, remaining, ":")) |colon_pos| {
             config.host = remaining[0..colon_pos];
             const port_str = remaining[colon_pos + 1 ..];
-            config.port = std.fmt.parseInt(u16, port_str, 10) catch DEFAULT_PORT;
+            if (strict) {
+                // SECURITY: Strict mode returns error for invalid port (CWE-20)
+                config.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
+            } else {
+                config.port = std.fmt.parseInt(u16, port_str, 10) catch DEFAULT_PORT;
+            }
         } else {
             config.host = remaining;
         }
@@ -183,14 +236,14 @@ fn parseHostPortParams(allocator: std.mem.Allocator, input: []const u8, config: 
 
     // Parse query parameters
     if (params_str) |params| {
-        try parseQueryParams(allocator, params, config);
+        try parseQueryParams(allocator, params, config, strict);
     }
 
     return config.*;
 }
 
 /// Parse query parameters (key=value&key=value)
-fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *Config) !void {
+fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *Config, strict: bool) !void {
     var iter = std.mem.splitScalar(u8, params, '&');
     while (iter.next()) |param| {
         if (std.mem.indexOf(u8, param, "=")) |eq_pos| {
@@ -200,9 +253,19 @@ fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *C
             if (std.mem.eql(u8, key, "insecure") or std.mem.eql(u8, key, "insecure_skip_verify")) {
                 config.insecure = std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1");
             } else if (std.mem.eql(u8, key, "page_size") or std.mem.eql(u8, key, "pageSize")) {
-                config.page_size = std.fmt.parseInt(u32, value, 10) catch DEFAULT_PAGE_SIZE;
+                if (strict) {
+                    // SECURITY: Strict mode returns error for invalid page_size (CWE-20)
+                    config.page_size = std.fmt.parseInt(u32, value, 10) catch return error.InvalidPageSize;
+                } else {
+                    config.page_size = std.fmt.parseInt(u32, value, 10) catch DEFAULT_PAGE_SIZE;
+                }
             } else if (std.mem.eql(u8, key, "timeout") or std.mem.eql(u8, key, "timeout_ms")) {
-                config.timeout_ms = std.fmt.parseInt(u32, value, 10) catch DEFAULT_TIMEOUT_MS;
+                if (strict) {
+                    // SECURITY: Strict mode returns error for invalid timeout (CWE-20)
+                    config.timeout_ms = std.fmt.parseInt(u32, value, 10) catch return error.InvalidTimeout;
+                } else {
+                    config.timeout_ms = std.fmt.parseInt(u32, value, 10) catch DEFAULT_TIMEOUT_MS;
+                }
             } else if (std.mem.eql(u8, key, "username") or std.mem.eql(u8, key, "user")) {
                 config.username = try urlDecode(allocator, value);
             } else if (std.mem.eql(u8, key, "password") or std.mem.eql(u8, key, "pass")) {
@@ -213,7 +276,13 @@ fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *C
 }
 
 /// URL decode a string (handles %XX encoding)
+/// SECURITY: Enforces MAX_URL_DECODE_LENGTH to prevent resource exhaustion (CWE-400).
 fn urlDecode(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
+    // SECURITY: Check input length to prevent resource exhaustion (CWE-400)
+    if (input.len > MAX_URL_DECODE_LENGTH) {
+        return error.InputTooLong;
+    }
+
     var result: std.ArrayListUnmanaged(u8) = .{};
     errdefer result.deinit(allocator);
 
@@ -437,4 +506,145 @@ test "Config.toConnectionString formats correctly" {
     const conn_str = try cfg.toConnectionString(std.testing.allocator);
     defer std.testing.allocator.free(conn_str);
     try std.testing.expectEqualStrings("localhost:8443", conn_str);
+}
+
+// =============================================================================
+// Security Tests - Config.deinit Password Zeroing (CWE-316, CWE-226)
+// =============================================================================
+
+test "Config.deinit zeros password before freeing" {
+    var cfg = try parseDSN(std.testing.allocator, "geode://admin:secret123@localhost:3141");
+
+    // Verify password was set
+    try std.testing.expect(cfg.password != null);
+    try std.testing.expectEqualStrings("secret123", cfg.password.?);
+
+    // Get pointer to password data before deinit
+    const pass_ptr = cfg.password.?.ptr;
+    const pass_len = cfg.password.?.len;
+
+    // Call deinit
+    cfg.deinit(std.testing.allocator);
+
+    // Verify fields are null
+    try std.testing.expect(cfg.password == null);
+    try std.testing.expect(cfg.username == null);
+
+    // Note: We can't easily verify the memory is zeroed after free in Zig
+    // since the allocator may reuse the memory. The important thing is that
+    // deinit() calls @memset before free, which we verify by code inspection.
+    _ = pass_ptr;
+    _ = pass_len;
+}
+
+test "Config.deinit handles config without credentials" {
+    var cfg = try parseDSN(std.testing.allocator, "localhost:3141");
+    try std.testing.expect(cfg.password == null);
+    try std.testing.expect(cfg.username == null);
+
+    // Should not crash
+    cfg.deinit(std.testing.allocator);
+}
+
+test "Config.deinit handles config with username only" {
+    var cfg = try parseDSN(std.testing.allocator, "geode://admin@localhost:3141");
+    defer cfg.deinit(std.testing.allocator);
+
+    try std.testing.expect(cfg.username != null);
+    try std.testing.expect(cfg.password == null);
+}
+
+// =============================================================================
+// Security Tests - urlDecode Length Limit (CWE-400)
+// =============================================================================
+
+test "urlDecode accepts input within limit" {
+    const input = "hello%20world";
+    const decoded = try urlDecode(std.testing.allocator, input);
+    defer std.testing.allocator.free(decoded);
+    try std.testing.expectEqualStrings("hello world", decoded);
+}
+
+test "urlDecode rejects input exceeding MAX_URL_DECODE_LENGTH" {
+    // Create input that exceeds the limit
+    const too_long = try std.testing.allocator.alloc(u8, MAX_URL_DECODE_LENGTH + 1);
+    defer std.testing.allocator.free(too_long);
+    @memset(too_long, 'a');
+
+    try std.testing.expectError(error.InputTooLong, urlDecode(std.testing.allocator, too_long));
+}
+
+test "urlDecode accepts input at exactly MAX_URL_DECODE_LENGTH" {
+    // Create input exactly at the limit
+    const at_limit = try std.testing.allocator.alloc(u8, MAX_URL_DECODE_LENGTH);
+    defer std.testing.allocator.free(at_limit);
+    @memset(at_limit, 'a');
+
+    const decoded = try urlDecode(std.testing.allocator, at_limit);
+    defer std.testing.allocator.free(decoded);
+    try std.testing.expectEqual(MAX_URL_DECODE_LENGTH, decoded.len);
+}
+
+test "MAX_URL_DECODE_LENGTH constant is reasonable" {
+    // Verify the constant exists and has a reasonable value
+    try std.testing.expect(MAX_URL_DECODE_LENGTH > 0);
+    try std.testing.expect(MAX_URL_DECODE_LENGTH >= 1024); // At least 1KB
+    try std.testing.expect(MAX_URL_DECODE_LENGTH <= 1024 * 1024); // At most 1MB
+    try std.testing.expectEqual(@as(usize, 64 * 1024), MAX_URL_DECODE_LENGTH); // Exactly 64KB
+}
+
+// =============================================================================
+// Security Tests - Strict DSN Parsing (CWE-20)
+// =============================================================================
+
+test "parseDSNStrict accepts valid DSN" {
+    const cfg = try parseDSNStrict(std.testing.allocator, "localhost:8443");
+    try std.testing.expectEqualStrings("localhost", cfg.host);
+    try std.testing.expectEqual(@as(u16, 8443), cfg.port);
+}
+
+test "parseDSNStrict rejects invalid port" {
+    try std.testing.expectError(error.InvalidPort, parseDSNStrict(std.testing.allocator, "localhost:invalid"));
+}
+
+test "parseDSNStrict rejects invalid port in IPv6" {
+    try std.testing.expectError(error.InvalidPort, parseDSNStrict(std.testing.allocator, "[::1]:abc"));
+}
+
+test "parseDSNStrict rejects invalid page_size" {
+    try std.testing.expectError(error.InvalidPageSize, parseDSNStrict(std.testing.allocator, "localhost:3141?page_size=invalid"));
+}
+
+test "parseDSNStrict rejects invalid timeout" {
+    try std.testing.expectError(error.InvalidTimeout, parseDSNStrict(std.testing.allocator, "localhost:3141?timeout=invalid"));
+}
+
+test "parseDSNStrict accepts valid query parameters" {
+    const cfg = try parseDSNStrict(std.testing.allocator, "localhost:3141?page_size=500&timeout=60000&insecure=true");
+    try std.testing.expectEqual(@as(u32, 500), cfg.page_size);
+    try std.testing.expectEqual(@as(u32, 60000), cfg.timeout_ms);
+    try std.testing.expect(cfg.insecure);
+}
+
+test "parseDSNStrict accepts valid URL format with credentials" {
+    var cfg = try parseDSNStrict(std.testing.allocator, "geode://admin:secret@localhost:3141");
+    defer cfg.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("localhost", cfg.host);
+    try std.testing.expectEqual(@as(u16, 3141), cfg.port);
+    try std.testing.expectEqualStrings("admin", cfg.username.?);
+}
+
+test "parseDSNStrict handles empty string" {
+    const cfg = try parseDSNStrict(std.testing.allocator, "");
+    try std.testing.expectEqualStrings("127.0.0.1", cfg.host);
+    try std.testing.expectEqual(@as(u16, 3141), cfg.port);
+}
+
+test "parseDSN vs parseDSNStrict behavior comparison" {
+    // parseDSN silently uses default for invalid port
+    const lenient_cfg = try parseDSN(std.testing.allocator, "localhost:invalid");
+    try std.testing.expectEqual(@as(u16, 3141), lenient_cfg.port);
+
+    // parseDSNStrict returns error for invalid port
+    try std.testing.expectError(error.InvalidPort, parseDSNStrict(std.testing.allocator, "localhost:invalid"));
 }

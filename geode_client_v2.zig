@@ -5,6 +5,11 @@ const protocol = @import("protocol");
 // CANARY: REQ=REQ-ZIG-CLIENT-002; FEATURE="Zig Client v2"; ASPECT=QuicPackageClient; STATUS=IMPL; OWNER=clients; UPDATED=2026-01-24
 // Zig client uses the quic package from zig package manager for full compatibility with the server.
 
+/// Maximum receive buffer size (16MB).
+/// SECURITY: Prevents resource exhaustion from malicious server responses (CWE-400).
+/// See GAP_ANALYSIS.md Finding 16.
+pub const MAX_RECV_BUFFER_SIZE: usize = 16 * 1024 * 1024;
+
 pub const GeodeClient = struct {
     allocator: std.mem.Allocator,
     host: []const u8,
@@ -170,6 +175,10 @@ pub const GeodeClient = struct {
             };
 
             if (n > 0) {
+                // SECURITY: Check buffer size limit to prevent resource exhaustion (CWE-400)
+                if (self.recv_buffer.items.len + n > MAX_RECV_BUFFER_SIZE) {
+                    return error.ResponseTooLarge;
+                }
                 try self.recv_buffer.appendSlice(self.allocator, temp_buf[0..n]);
             }
 
@@ -629,4 +638,21 @@ test "buildRunGql message with mixed special characters" {
 
     // Verify the query is preserved correctly
     try std.testing.expectEqualStrings(query, parsed.value.object.get("query").?.string);
+}
+
+// =============================================================================
+// Security Tests - Receive Buffer Size Limit (CWE-400)
+// =============================================================================
+
+test "MAX_RECV_BUFFER_SIZE constant is defined" {
+    // Verify the constant exists and has a reasonable value
+    try std.testing.expect(MAX_RECV_BUFFER_SIZE > 0);
+    try std.testing.expectEqual(@as(usize, 16 * 1024 * 1024), MAX_RECV_BUFFER_SIZE);
+}
+
+test "MAX_RECV_BUFFER_SIZE is 16MB" {
+    // Verify the specific limit matches documentation
+    const expected_mb: usize = 16;
+    const expected_bytes = expected_mb * 1024 * 1024;
+    try std.testing.expectEqual(expected_bytes, MAX_RECV_BUFFER_SIZE);
 }

@@ -103,6 +103,8 @@ _ = cfg.withTimeout(60000);
 | `page_size` | `u32` | `1000` | Result pagination size |
 | `timeout_ms` | `u32` | `30000` | Connection timeout (ms) |
 
+**SECURITY WARNING: The `insecure` option disables TLS certificate verification, making connections vulnerable to man-in-the-middle attacks. Only use this option for local development or testing with self-signed certificates. Never use in production environments. When `insecure=true`, the connection cannot verify server identity, and all data transmitted (including credentials) could be intercepted or modified by an attacker.**
+
 #### DSN Parsing
 
 Parse connection strings:
@@ -124,7 +126,7 @@ const cfg3 = try parseDSN(allocator, "db.example.com:3141?page_size=500&timeout=
 
 | Parameter | Aliases | Description |
 |-----------|---------|-------------|
-| `insecure` | `insecure_skip_verify` | Skip TLS verification |
+| `insecure` | `insecure_skip_verify` | Skip TLS verification (see security warning above) |
 | `page_size` | `pageSize` | Result page size |
 | `timeout` | `timeout_ms` | Connection timeout |
 | `username` | `user` | Authentication username |

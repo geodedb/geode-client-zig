@@ -3,11 +3,50 @@
 //
 // Query builder for the Geode Zig client library.
 // Provides fluent API for constructing GQL queries.
+//
+// =============================================================================
+// SECURITY WARNING: GQL Injection Prevention (CWE-89)
+// =============================================================================
+//
+// The QueryBuilder methods directly interpolate string arguments into GQL
+// clauses WITHOUT escaping or validation. This is by-design for flexibility,
+// but creates injection risk if untrusted input is passed directly.
+//
+// SAFE USAGE - Always use parameterized queries for user-provided values:
+//
+//     var qb = QueryBuilder.init(allocator);
+//     _ = try qb.match("(n:Person)");
+//     _ = try qb.where("n.name = $name AND n.age > $minAge");  // Parameters
+//     _ = try qb.param("name", Value.initString(user_input));  // Safe binding
+//     _ = try qb.param("minAge", Value.initInt(user_age));
+//     _ = try qb.ret("n");
+//
+// UNSAFE USAGE - Never pass untrusted input directly to clause methods:
+//
+//     // DANGEROUS: Direct string interpolation allows GQL injection!
+//     _ = try qb.where(user_input);  // INJECTION RISK!
+//     _ = try qb.match(user_pattern);  // INJECTION RISK!
+//
+// For label/type names from user input, validate with a strict allowlist:
+//
+//     fn isValidLabel(label: []const u8) bool {
+//         for (label) |c| {
+//             if (!std.ascii.isAlphanumeric(c) and c != '_') return false;
+//         }
+//         return label.len > 0 and label.len <= 64;
+//     }
+//
+// =============================================================================
 
 const std = @import("std");
 const Value = @import("types").Value;
+const validate = @import("validate");
 
 /// Builder for constructing GQL queries with a fluent API.
+///
+/// **SECURITY**: Clause methods (match, where, create, etc.) directly interpolate
+/// their string arguments without escaping. Always use the `param()` method to
+/// safely bind user-provided values. See module header for examples.
 pub const QueryBuilder = struct {
     allocator: std.mem.Allocator,
     clauses: std.ArrayListUnmanaged([]const u8),
@@ -31,7 +70,8 @@ pub const QueryBuilder = struct {
         self.params.deinit(self.allocator);
     }
 
-    /// Add a MATCH clause
+    /// Add a MATCH clause.
+    /// **SECURITY**: Pattern is interpolated directly. Use param() for user values.
     pub fn match(self: *QueryBuilder, pattern: []const u8) !*QueryBuilder {
         const clause = try std.fmt.allocPrint(self.allocator, "MATCH {s}", .{pattern});
         try self.clauses.append(self.allocator, clause);
@@ -45,14 +85,16 @@ pub const QueryBuilder = struct {
         return self.match(pattern_str);
     }
 
-    /// Add an OPTIONAL MATCH clause
+    /// Add an OPTIONAL MATCH clause.
+    /// **SECURITY**: Pattern is interpolated directly. Use param() for user values.
     pub fn optionalMatch(self: *QueryBuilder, pattern: []const u8) !*QueryBuilder {
         const clause = try std.fmt.allocPrint(self.allocator, "OPTIONAL MATCH {s}", .{pattern});
         try self.clauses.append(self.allocator, clause);
         return self;
     }
 
-    /// Add a WHERE clause
+    /// Add a WHERE clause.
+    /// **SECURITY**: Condition is interpolated directly. Use param() for user values.
     pub fn where(self: *QueryBuilder, condition: []const u8) !*QueryBuilder {
         const clause = try std.fmt.allocPrint(self.allocator, "WHERE {s}", .{condition});
         try self.clauses.append(self.allocator, clause);
@@ -108,57 +150,69 @@ pub const QueryBuilder = struct {
         return self;
     }
 
-    /// Add a CREATE clause
+    /// Add a CREATE clause.
+    /// **SECURITY**: Pattern is interpolated directly. Use param() for user values.
     pub fn create(self: *QueryBuilder, pattern: []const u8) !*QueryBuilder {
         const clause = try std.fmt.allocPrint(self.allocator, "CREATE {s}", .{pattern});
         try self.clauses.append(self.allocator, clause);
         return self;
     }
 
-    /// Add a MERGE clause
+    /// Add a MERGE clause.
+    /// **SECURITY**: Pattern is interpolated directly. Use param() for user values.
     pub fn merge(self: *QueryBuilder, pattern: []const u8) !*QueryBuilder {
         const clause = try std.fmt.allocPrint(self.allocator, "MERGE {s}", .{pattern});
         try self.clauses.append(self.allocator, clause);
         return self;
     }
 
-    /// Add a DELETE clause
+    /// Add a DELETE clause.
+    /// **SECURITY**: Variables are interpolated directly. Use param() for user values.
     pub fn delete(self: *QueryBuilder, variables: []const u8) !*QueryBuilder {
         const clause = try std.fmt.allocPrint(self.allocator, "DELETE {s}", .{variables});
         try self.clauses.append(self.allocator, clause);
         return self;
     }
 
-    /// Add a DETACH DELETE clause
+    /// Add a DETACH DELETE clause.
+    /// **SECURITY**: Variables are interpolated directly. Use param() for user values.
     pub fn detachDelete(self: *QueryBuilder, variables: []const u8) !*QueryBuilder {
         const clause = try std.fmt.allocPrint(self.allocator, "DETACH DELETE {s}", .{variables});
         try self.clauses.append(self.allocator, clause);
         return self;
     }
 
-    /// Add a SET clause
+    /// Add a SET clause.
+    /// **SECURITY**: Assignments are interpolated directly. Use param() for user values.
     pub fn set(self: *QueryBuilder, assignments: []const u8) !*QueryBuilder {
         const clause = try std.fmt.allocPrint(self.allocator, "SET {s}", .{assignments});
         try self.clauses.append(self.allocator, clause);
         return self;
     }
 
-    /// Add a REMOVE clause
+    /// Add a REMOVE clause.
+    /// **SECURITY**: Items are interpolated directly. Use param() for user values.
     pub fn remove(self: *QueryBuilder, items: []const u8) !*QueryBuilder {
         const clause = try std.fmt.allocPrint(self.allocator, "REMOVE {s}", .{items});
         try self.clauses.append(self.allocator, clause);
         return self;
     }
 
-    /// Add a raw clause (for advanced usage)
+    /// Add a raw clause (for advanced usage).
+    /// **SECURITY WARNING**: This method provides NO protection against injection.
+    /// Never pass untrusted user input to this method.
     pub fn raw(self: *QueryBuilder, clause: []const u8) !*QueryBuilder {
         const owned = try self.allocator.dupe(u8, clause);
         try self.clauses.append(self.allocator, owned);
         return self;
     }
 
-    /// Bind a parameter value
+    /// Bind a parameter value.
+    /// This is the SAFE way to include user-provided values in queries.
+    /// SECURITY: Validates parameter name to prevent invalid identifiers (CWE-20).
+    /// See GAP_ANALYSIS.md Finding 18.
     pub fn param(self: *QueryBuilder, name: []const u8, value: Value) !*QueryBuilder {
+        try validate.paramName(name);
         try self.params.put(self.allocator, name, value);
         return self;
     }
@@ -1016,4 +1070,49 @@ test "PredicateBuilder empty predicate error" {
     defer pb.deinit();
 
     try std.testing.expectError(error.EmptyPredicate, pb.build());
+}
+
+// =============================================================================
+// Security Tests - Parameter Name Validation (CWE-20)
+// =============================================================================
+
+test "QueryBuilder param rejects empty name" {
+    var qb = QueryBuilder.init(std.testing.allocator);
+    defer qb.deinit();
+
+    try std.testing.expectError(error.ParamNameEmpty, qb.param("", Value.initInt(42)));
+}
+
+test "QueryBuilder param rejects name starting with digit" {
+    var qb = QueryBuilder.init(std.testing.allocator);
+    defer qb.deinit();
+
+    try std.testing.expectError(error.ParamNameInvalid, qb.param("1invalid", Value.initInt(42)));
+    try std.testing.expectError(error.ParamNameInvalid, qb.param("123", Value.initInt(42)));
+}
+
+test "QueryBuilder param rejects name with invalid characters" {
+    var qb = QueryBuilder.init(std.testing.allocator);
+    defer qb.deinit();
+
+    try std.testing.expectError(error.ParamNameInvalid, qb.param("name-with-dash", Value.initInt(42)));
+    try std.testing.expectError(error.ParamNameInvalid, qb.param("name.with.dots", Value.initInt(42)));
+    try std.testing.expectError(error.ParamNameInvalid, qb.param("name with spaces", Value.initInt(42)));
+    try std.testing.expectError(error.ParamNameInvalid, qb.param("name@domain", Value.initInt(42)));
+}
+
+test "QueryBuilder param accepts valid names" {
+    var qb = QueryBuilder.init(std.testing.allocator);
+    defer qb.deinit();
+
+    _ = try qb.param("name", Value.initString("Alice"));
+    _ = try qb.param("_private", Value.initInt(42));
+    _ = try qb.param("param1", Value.initBool(true));
+    _ = try qb.param("my_param_123", Value.initFloat(3.14));
+
+    const params = qb.getParams();
+    try std.testing.expect(params.get("name") != null);
+    try std.testing.expect(params.get("_private") != null);
+    try std.testing.expect(params.get("param1") != null);
+    try std.testing.expect(params.get("my_param_123") != null);
 }

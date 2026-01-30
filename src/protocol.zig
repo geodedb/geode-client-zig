@@ -88,11 +88,14 @@ pub fn buildHello(
 
     try msg.appendSlice(allocator, "{\"type\":\"HELLO\"");
     try msg.appendSlice(allocator, ",\"hello_name\":\"");
-    try msg.appendSlice(allocator, client_name);
+    // SECURITY: Escape client_name to prevent JSON injection (CWE-116)
+    try appendEscapedString(allocator, &msg, client_name);
     try msg.appendSlice(allocator, "\",\"hello_ver\":\"");
-    try msg.appendSlice(allocator, client_version);
+    // SECURITY: Escape client_version to prevent JSON injection (CWE-116)
+    try appendEscapedString(allocator, &msg, client_version);
     try msg.appendSlice(allocator, "\",\"conformance\":\"");
-    try msg.appendSlice(allocator, conformance);
+    // SECURITY: Escape conformance to prevent JSON injection (CWE-116)
+    try appendEscapedString(allocator, &msg, conformance);
     try msg.appendSlice(allocator, "\",\"page_size\":");
     var buf: [16]u8 = undefined;
     const page_str = std.fmt.bufPrint(&buf, "{d}", .{page_size}) catch unreachable;
@@ -460,6 +463,52 @@ test "buildHello with credentials" {
 
     try std.testing.expect(std.mem.indexOf(u8, msg, "\"username\":\"admin\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, msg, "\"password\":\"secret\"") != null);
+}
+
+test "buildHello escapes metadata fields to prevent JSON injection" {
+    // Test that client_name, client_version, and conformance are properly escaped
+    // This prevents CWE-116 (Improper Encoding or Escaping of Output)
+    const msg = try buildHello(
+        std.testing.allocator,
+        "client\"with\"quotes", // Malicious client_name
+        "1.0\",\"injected\":\"true", // Malicious client_version with injection attempt
+        "min\\imal", // client_version with backslash
+        1000,
+        null,
+        null,
+    );
+    defer std.testing.allocator.free(msg);
+
+    // Verify quotes are escaped in client_name
+    try std.testing.expect(std.mem.indexOf(u8, msg, "client\\\"with\\\"quotes") != null);
+
+    // Verify injection attempt is neutralized (quotes escaped)
+    try std.testing.expect(std.mem.indexOf(u8, msg, "1.0\\\",\\\"injected\\\":\\\"true") != null);
+
+    // Verify backslash is escaped in conformance
+    try std.testing.expect(std.mem.indexOf(u8, msg, "min\\\\imal") != null);
+
+    // Verify no unescaped injection succeeded - the injected field should NOT appear
+    try std.testing.expect(std.mem.indexOf(u8, msg, "\"injected\":\"true\"") == null);
+}
+
+test "buildHello escapes control characters in metadata" {
+    // Test control character escaping (newlines, tabs)
+    const msg = try buildHello(
+        std.testing.allocator,
+        "client\nname", // Newline in client_name
+        "ver\tsion", // Tab in client_version
+        "conf\rormance", // Carriage return in conformance
+        1000,
+        null,
+        null,
+    );
+    defer std.testing.allocator.free(msg);
+
+    // Verify control characters are escaped
+    try std.testing.expect(std.mem.indexOf(u8, msg, "client\\nname") != null);
+    try std.testing.expect(std.mem.indexOf(u8, msg, "ver\\tsion") != null);
+    try std.testing.expect(std.mem.indexOf(u8, msg, "conf\\rormance") != null);
 }
 
 test "buildRunGql creates valid JSON" {

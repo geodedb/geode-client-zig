@@ -67,9 +67,10 @@ include:
   # SBOM generation and scanning
   - component: gitlab.com/devnw/ci-catalog/sbom-generate@latest
 
+  # SECURITY: SBOM scan should block pipeline on vulnerable dependencies
   - component: gitlab.com/devnw/ci-catalog/sbom-scan@latest
     inputs:
-      allow_failure: true
+      allow_failure: false
 
   # Release creation
   - component: gitlab.com/devnw/ci-catalog/release-semantic@latest
@@ -174,8 +175,6 @@ test-fuzz:
 integration-tests:
   extends: .setup-zig
   stage: integration
-  # Allow failure since Geode server image may not be accessible
-  allow_failure: true
   variables:
     SERVICE_PORT: "3141"
     STARTUP_TIMEOUT: "60"
@@ -213,11 +212,15 @@ integration-tests:
       - integration-test-output.txt
     expire_in: 1 week
     when: always
+  # SECURITY: Integration tests should block pipeline on main branch (CWE-1127)
+  # Allow failure on merge requests where service may not be accessible
   rules:
     - if: $SKIP_INTEGRATION == "true"
       when: never
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      allow_failure: false
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      allow_failure: true
 
 # =============================================================================
 # Optional: Manual Release Build

@@ -99,6 +99,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     query_builder_mod.addImport("types", types_mod);
+    query_builder_mod.addImport("validate", validate_mod);
 
     // Pool module
     const pool_mod = b.createModule(.{
@@ -352,6 +353,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     qb_tests.root_module.addImport("types", types_mod);
+    qb_tests.root_module.addImport("validate", validate_mod);
     const run_qb_tests = b.addRunArtifact(qb_tests);
     test_step.dependOn(&run_qb_tests.step);
 
@@ -614,6 +616,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     fuzz_qb.root_module.addImport("query_builder", query_builder_mod);
+    fuzz_qb.root_module.addImport("validate", validate_mod);
     const run_fuzz_qb = b.addRunArtifact(fuzz_qb);
     fuzz_step.dependOn(&run_fuzz_qb.step);
 

@@ -154,15 +154,36 @@ pub fn ipv4(addr: []const u8) bool {
     return parts == 3;
 }
 
-/// Check if string looks like an IPv6 address
+/// Check if string looks like an IPv6 address.
+/// SECURITY: Validates character set to prevent false positives (CWE-20).
+/// See GAP_ANALYSIS.md Finding 17.
 pub fn isIpv6(addr: []const u8) bool {
-    // Simple check: contains colons but not just one
+    if (addr.len == 0) return false;
+
     var colon_count: u8 = 0;
+    var in_zone: bool = false;
+
     for (addr) |c| {
-        if (c == ':') {
-            colon_count += 1;
+        // Zone ID separator (e.g., fe80::1%eth0)
+        if (c == '%') {
+            in_zone = true;
+            continue;
+        }
+
+        if (in_zone) {
+            // Zone ID: allow alphanumerics only
+            if (!isAlphanumeric(c)) return false;
+            continue;
+        }
+
+        // Valid IPv6 characters: hex digits, colons, dots (IPv4-mapped), brackets
+        switch (c) {
+            ':' => colon_count += 1,
+            '0'...'9', 'a'...'f', 'A'...'F', '.', '[', ']' => {},
+            else => return false,
         }
     }
+
     return colon_count >= 2;
 }
 
@@ -357,6 +378,42 @@ test "isIpv6 rejects non-IPv6" {
     try std.testing.expect(!isIpv6("127.0.0.1"));
     try std.testing.expect(!isIpv6("localhost"));
     try std.testing.expect(!isIpv6("example.com"));
+}
+
+// =============================================================================
+// Security Tests - Strengthened IPv6 Validation (CWE-20)
+// =============================================================================
+
+test "isIpv6 rejects invalid characters" {
+    // These were previously accepted due to weak colon-count-only check
+    // Note: 'a', 'b', 'c' are valid hex chars, so "a:b:c" could be valid shorthand
+    try std.testing.expect(!isIpv6("foo:bar:baz")); // 'o' and 'r' not in hex range
+    try std.testing.expect(!isIpv6("x:y:z")); // 'x', 'y', 'z' not in hex range
+    try std.testing.expect(!isIpv6("g:h:i")); // 'g', 'h', 'i' > 'f'
+    try std.testing.expect(!isIpv6("hello:world:test")); // Non-hex letters
+}
+
+test "isIpv6 rejects special characters" {
+    try std.testing.expect(!isIpv6("::1@localhost")); // @ not allowed
+    try std.testing.expect(!isIpv6("2001:db8::1/64")); // / not allowed
+    try std.testing.expect(!isIpv6("fe80::1 ")); // Space not allowed
+    try std.testing.expect(!isIpv6("::1#comment")); // # not allowed
+}
+
+test "isIpv6 rejects empty string" {
+    try std.testing.expect(!isIpv6(""));
+}
+
+test "isIpv6 accepts valid zone IDs" {
+    try std.testing.expect(isIpv6("fe80::1%eth0"));
+    try std.testing.expect(isIpv6("fe80::1%en0"));
+    try std.testing.expect(isIpv6("fe80::1%lo"));
+    try std.testing.expect(isIpv6("fe80::1%wlan0"));
+}
+
+test "isIpv6 rejects invalid zone ID characters" {
+    try std.testing.expect(!isIpv6("fe80::1%eth@0")); // @ in zone ID
+    try std.testing.expect(!isIpv6("fe80::1%eth 0")); // Space in zone ID
 }
 
 test "sanitize removes control characters" {
