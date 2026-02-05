@@ -52,5 +52,20 @@
             .url = "git+https://gitlab.com/devnw/zig/strings.git#635377eb637a84f5a956acec6c63d277c7a5d133",
             .hash = "strings-0.1.0-adMOtbd1HABrved9iMt4lKxtonWX5dKNIWrdaWc2B5mo",
         },
+        // Protocol Buffers - same as geode server
+        .protobuf = .{
+            .url = "git+https://gitlab.com/devnw/zig/protobuf.git#53ece58213b7c212d63ba95cf923ddaf1eb3cf4c",
+            .hash = "protobuf-3.0.0-0e82alVdKQAeG_KZQVDXKUNSeMH2vbT1c-ceP6Iz5g10",
+        },
+        // gRPC for Zig - same as geode server
+        .grpc_zig = .{
+            .url = "git+https://gitlab.com/devnw/zig/grpc-zig.git#366a4964ca713c61d7ba774eba29178f4be60ae1",
+            .hash = "grpc_zig-0.1.0-7FnvpF9cAQBqP23FSBWvs6Ts4iQRwzbWAxGkY6NmUr_i",
+        },
+        // Spice - Fork/join parallelism for recursive divide-and-conquer algorithms
+        .spice = .{
+            .url = "git+https://gitlab.com/devnw/zig/spice.git#4b1d366eacd0ff53a6859f6dabc9558b5aabedbf",
+            .hash = "spice-0.0.0-HnDb57y0AABlp7AaQKAkMShWpww-Tl_8QM7T-1Lx3auu",
+        },
     },
 }

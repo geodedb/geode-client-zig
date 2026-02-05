@@ -57,6 +57,27 @@ pub fn build(b: *std.Build) void {
     });
     const strings_mod = strings_dep.module("strings");
 
+    // Protocol Buffers - same as geode server
+    const protobuf_dep = b.dependency("protobuf", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const protobuf_mod = protobuf_dep.module("protobuf");
+
+    // gRPC for Zig - same as geode server
+    const grpc_zig_dep = b.dependency("grpc_zig", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const grpc_client_mod = grpc_zig_dep.module("grpc-client");
+
+    // Spice - Fork/join parallelism
+    const spice_dep = b.dependency("spice", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const spice_mod = spice_dep.module("spice");
+
     // ========================================================================
     // Internal Modules (src/)
     // ========================================================================
@@ -149,6 +170,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    proto_mod.addImport("protobuf", protobuf_mod);
 
     // gRPC transport module
     const grpc_mod = b.createModule(.{
@@ -157,6 +179,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     grpc_mod.addImport("proto", proto_mod);
+    grpc_mod.addImport("grpc_zig", grpc_client_mod);
 
     // ========================================================================
     // Geode Client Module
@@ -193,6 +216,9 @@ pub fn build(b: *std.Build) void {
     geode_client_mod.addImport("slog", slog_mod);
     geode_client_mod.addImport("uri", uri_mod);
     geode_client_mod.addImport("strings", strings_mod);
+    geode_client_mod.addImport("protobuf", protobuf_mod);
+    geode_client_mod.addImport("grpc_zig", grpc_client_mod);
+    geode_client_mod.addImport("spice", spice_mod);
 
     // Export geode_client module for dependents
     _ = b.addModule("geode_client", .{
@@ -217,6 +243,9 @@ pub fn build(b: *std.Build) void {
             .{ .name = "slog", .module = slog_mod },
             .{ .name = "uri", .module = uri_mod },
             .{ .name = "strings", .module = strings_mod },
+            .{ .name = "protobuf", .module = protobuf_mod },
+            .{ .name = "grpc_zig", .module = grpc_client_mod },
+            .{ .name = "spice", .module = spice_mod },
         },
     });
 
@@ -475,6 +504,9 @@ pub fn build(b: *std.Build) void {
     client_tests.root_module.addImport("slog", slog_mod);
     client_tests.root_module.addImport("uri", uri_mod);
     client_tests.root_module.addImport("strings", strings_mod);
+    client_tests.root_module.addImport("protobuf", protobuf_mod);
+    client_tests.root_module.addImport("grpc_zig", grpc_client_mod);
+    client_tests.root_module.addImport("spice", spice_mod);
 
     client_tests.linkLibC();
     if (target.result.os.tag != .windows) {
