@@ -160,8 +160,8 @@ const parseDSN = @import("config.zig").parseDSN;
 var cfg = Config.init();
 
 // Parse DSN strings
-// URL format: geode://user:pass@host:port?params
-const cfg = try parseDSN(allocator, "geode://admin:secret@localhost:3141?insecure=true");
+// URL format: quic://user:pass@host:port?params
+const cfg = try parseDSN(allocator, "quic://admin:secret@localhost:3141?insecure_tls_skip_verify=true");
 
 // Simple format: host:port
 const cfg = try parseDSN(allocator, "localhost:8443");

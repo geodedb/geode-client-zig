@@ -120,16 +120,13 @@ Parse connection strings with transport scheme selection:
 const parseDSN = @import("config").parseDSN;
 
 // QUIC transport (default, high-performance)
-const cfg1 = try parseDSN(allocator, "quic://admin:secret@localhost:3141?insecure=true");
+const cfg1 = try parseDSN(allocator, "quic://admin:secret@localhost:3141?insecure_tls_skip_verify=true");
 
 // gRPC transport (HTTP/2-based)
 const cfg2 = try parseDSN(allocator, "grpc://localhost:50051?tls=false");
 
-// Legacy format (uses QUIC, deprecated)
-const cfg3 = try parseDSN(allocator, "geode://admin:secret@localhost:3141");
-
 // Simple format (defaults to QUIC on port 3141)
-const cfg4 = try parseDSN(allocator, "localhost:3141");
+const cfg3 = try parseDSN(allocator, "localhost:3141");
 
 // With query parameters
 const cfg5 = try parseDSN(allocator, "quic://db.example.com:3141?page_size=500&timeout=60000");
@@ -141,13 +138,12 @@ const cfg5 = try parseDSN(allocator, "quic://db.example.com:3141?page_size=500&t
 |--------|-----------|--------------|-------------|
 | `quic://` | QUIC + TLS 1.3 | 3141 | High-performance UDP transport (recommended) |
 | `grpc://` | gRPC/HTTP/2 | 50051 | Standard gRPC protocol |
-| `geode://` | QUIC | 3141 | Legacy alias for `quic://` (deprecated) |
 
 **Supported Query Parameters:**
 
 | Parameter | Aliases | Description |
 |-----------|---------|-------------|
-| `insecure` | `insecure_skip_verify` | Skip TLS verification (see security warning above) |
+| `insecure_tls_skip_verify` | - | Skip TLS verification (see security warning above) |
 | `tls` | - | Enable/disable TLS (`true`/`false`, gRPC only) |
 | `page_size` | `pageSize` | Result page size |
 | `timeout` | `timeout_ms` | Connection timeout |
