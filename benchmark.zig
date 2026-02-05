@@ -33,6 +33,8 @@ fn runWorker(
     port: u16,
     queries: usize,
     insecure: bool,
+    username: []const u8,
+    password: []const u8,
 ) WorkerResult {
     var result = WorkerResult{
         .latencies = .{},
@@ -40,7 +42,7 @@ fn runWorker(
         .failed = 0,
     };
 
-    var client = geode.GeodeClient.init(allocator, host, port, insecure);
+    var client = geode.GeodeClient.init(allocator, host, port, insecure, username, password);
     defer client.deinit();
 
     client.connect() catch {
@@ -53,52 +55,26 @@ fn runWorker(
         return result;
     };
 
-    // Send HELLO
-    client.sendHello("geode-zig-benchmark", "1.0.0") catch {
+    // Send HELLO (now handles auth internally)
+    client.sendHello() catch {
         result.failed = @intCast(queries);
         return result;
     };
-
-    const hello_response = client.receiveMessage(30000) catch {
-        result.failed = @intCast(queries);
-        return result;
-    };
-    allocator.free(hello_response);
 
     // Run queries
-    for (0..queries) |i| {
+    for (0..queries) |_| {
         const start = std.time.nanoTimestamp();
 
-        const req_id: u64 = @intCast(i);
-
-        // Send query
-        client.sendRunGql(req_id, "RETURN 1", null) catch {
+        // Execute query using new protobuf-based API
+        var query_result = client.query("RETURN 1", null) catch {
             result.failed += 1;
             continue;
         };
+        defer query_result.deinit();
 
-        // Receive schema response
-        const schema_response = client.receiveMessage(30000) catch {
+        if (query_result.hasError()) {
             result.failed += 1;
             continue;
-        };
-        allocator.free(schema_response);
-
-        if (client.tryReceiveBufferedMessage() catch null) |inline_response| {
-            allocator.free(inline_response);
-        } else {
-            // Pull results
-            client.sendPull(req_id, 100) catch {
-                result.failed += 1;
-                continue;
-            };
-
-            // Receive bindings response
-            const bindings_response = client.receiveMessage(30000) catch {
-                result.failed += 1;
-                continue;
-            };
-            allocator.free(bindings_response);
         }
 
         const end = std.time.nanoTimestamp();
@@ -118,6 +94,8 @@ fn parseArgs(allocator: std.mem.Allocator) !struct {
     queries: usize,
     json: bool,
     insecure: bool,
+    username: []const u8,
+    password: []const u8,
 } {
     var host: []const u8 = "localhost";
     var port: u16 = 3141;
@@ -125,6 +103,8 @@ fn parseArgs(allocator: std.mem.Allocator) !struct {
     var queries: usize = 1000;
     var json: bool = false;
     var insecure: bool = true;
+    var username: []const u8 = "";
+    var password: []const u8 = "";
 
     var args = try std.process.argsWithAllocator(allocator);
     defer args.deinit();
@@ -153,6 +133,14 @@ fn parseArgs(allocator: std.mem.Allocator) !struct {
             json = true;
         } else if (std.mem.eql(u8, arg, "--insecure")) {
             insecure = true;
+        } else if (std.mem.eql(u8, arg, "--username")) {
+            if (args.next()) |val| {
+                username = val;
+            }
+        } else if (std.mem.eql(u8, arg, "--password")) {
+            if (args.next()) |val| {
+                password = val;
+            }
         }
     }
 
@@ -163,6 +151,8 @@ fn parseArgs(allocator: std.mem.Allocator) !struct {
         .queries = queries,
         .json = json,
         .insecure = insecure,
+        .username = username,
+        .password = password,
     };
 }
 
@@ -186,7 +176,7 @@ pub fn main() !void {
 
     // Run workers sequentially (parallel would require thread pool setup)
     for (0..args.workers) |_| {
-        var result = runWorker(allocator, args.host, args.port, args.queries, args.insecure);
+        var result = runWorker(allocator, args.host, args.port, args.queries, args.insecure, args.username, args.password);
         defer result.latencies.deinit(allocator);
 
         for (result.latencies.items) |lat| {

@@ -2,13 +2,17 @@
 // Copyright (c) 2024-2026 CodePros
 //
 // Configuration and DSN parsing for the Geode Zig client library.
-// Supports URL format (geode://...) and simple host:port format.
+// Supports URL formats: quic://..., grpc://..., and legacy geode://... (deprecated)
+// Wire format: protobuf (JSON protocol removed)
 
 const std = @import("std");
 const GeodeError = @import("error").GeodeError;
 
-/// Default Geode server port
+/// Default Geode server port for QUIC
 pub const DEFAULT_PORT: u16 = 3141;
+
+/// Default gRPC port
+pub const DEFAULT_GRPC_PORT: u16 = 50051;
 
 /// Default page size for result pagination
 pub const DEFAULT_PAGE_SIZE: u32 = 1000;
@@ -19,6 +23,35 @@ pub const DEFAULT_TIMEOUT_MS: u32 = 30000;
 /// Maximum length for URL-decoded strings.
 /// SECURITY: Prevents resource exhaustion attacks via extremely long DSN strings (CWE-400).
 pub const MAX_URL_DECODE_LENGTH: usize = 64 * 1024; // 64KB reasonable limit
+
+/// Transport protocol selection
+pub const Transport = enum {
+    /// QUIC transport with protobuf wire format (default)
+    quic,
+    /// gRPC transport over HTTP/2
+    grpc,
+
+    pub fn toString(self: Transport) []const u8 {
+        return switch (self) {
+            .quic => "quic",
+            .grpc => "grpc",
+        };
+    }
+
+    pub fn fromString(s: []const u8) ?Transport {
+        if (std.mem.eql(u8, s, "quic")) return .quic;
+        if (std.mem.eql(u8, s, "grpc")) return .grpc;
+        if (std.mem.eql(u8, s, "grcp")) return .grpc; // Deprecated typo alias
+        return null;
+    }
+
+    pub fn defaultPort(self: Transport) u16 {
+        return switch (self) {
+            .quic => DEFAULT_PORT,
+            .grpc => DEFAULT_GRPC_PORT,
+        };
+    }
+};
 
 /// Client configuration parsed from DSN or set programmatically.
 pub const Config = struct {
@@ -36,10 +69,14 @@ pub const Config = struct {
     page_size: u32,
     /// Connection timeout in milliseconds
     timeout_ms: u32,
-    /// ALPN protocol string
+    /// ALPN protocol string (QUIC only)
     alpn: []const u8,
+    /// Transport protocol (QUIC or gRPC)
+    transport: Transport,
+    /// TLS enabled (gRPC only, QUIC always uses TLS)
+    tls: bool,
 
-    /// Initialize with default values
+    /// Initialize with default values (QUIC transport)
     pub fn init() Config {
         return .{
             .host = "127.0.0.1",
@@ -50,6 +87,8 @@ pub const Config = struct {
             .page_size = DEFAULT_PAGE_SIZE,
             .timeout_ms = DEFAULT_TIMEOUT_MS,
             .alpn = "geode/1",
+            .transport = .quic,
+            .tls = true,
         };
     }
 
@@ -58,6 +97,15 @@ pub const Config = struct {
         var cfg = Config.init();
         cfg.host = host;
         cfg.port = port;
+        return cfg;
+    }
+
+    /// Initialize with host, port, and transport
+    pub fn initWithTransport(host: []const u8, port: u16, transport: Transport) Config {
+        var cfg = Config.init();
+        cfg.host = host;
+        cfg.port = port;
+        cfg.transport = transport;
         return cfg;
     }
 
@@ -86,6 +134,24 @@ pub const Config = struct {
         return self;
     }
 
+    /// Set transport
+    pub fn withTransport(self: *Config, transport: Transport) *Config {
+        self.transport = transport;
+        // Update port to transport default if it was using the previous transport's default
+        if (self.port == Transport.quic.defaultPort() and transport == .grpc) {
+            self.port = Transport.grpc.defaultPort();
+        } else if (self.port == Transport.grpc.defaultPort() and transport == .quic) {
+            self.port = Transport.quic.defaultPort();
+        }
+        return self;
+    }
+
+    /// Set TLS mode (gRPC only)
+    pub fn withTls(self: *Config, tls: bool) *Config {
+        self.tls = tls;
+        return self;
+    }
+
     /// Check if authentication is configured
     pub fn hasAuth(self: Config) bool {
         return self.username != null and self.password != null;
@@ -94,6 +160,15 @@ pub const Config = struct {
     /// Format as connection string (without credentials)
     pub fn toConnectionString(self: Config, allocator: std.mem.Allocator) ![]const u8 {
         return std.fmt.allocPrint(allocator, "{s}:{d}", .{ self.host, self.port });
+    }
+
+    /// Format as DSN string
+    pub fn toDSN(self: Config, allocator: std.mem.Allocator) ![]const u8 {
+        return std.fmt.allocPrint(allocator, "{s}://{s}:{d}", .{
+            self.transport.toString(),
+            self.host,
+            self.port,
+        });
     }
 
     /// Free allocated credentials and zero sensitive data before freeing.
@@ -116,9 +191,12 @@ pub const Config = struct {
 
 /// Parse a DSN (Data Source Name) string into a Config.
 /// Supports formats:
-/// - URL format: geode://[user:pass@]host[:port][?params]
-/// - Simple format: host:port[?params]
-/// - Host only: host
+/// - quic://[user:pass@]host[:port][?params] - QUIC transport (recommended)
+/// - grpc://[user:pass@]host[:port][?params] - gRPC transport
+/// - grcp://... - Deprecated alias for grpc:// (typo)
+/// - geode://... - Deprecated, treated as quic://
+/// - Simple format: host:port[?params] - defaults to QUIC
+/// - Host only: host - defaults to QUIC
 ///
 /// Note: Invalid numeric values (port, page_size, timeout) silently fall back to defaults.
 /// Use parseDSNStrict() for strict validation that returns errors on invalid values.
@@ -129,12 +207,30 @@ pub fn parseDSN(allocator: std.mem.Allocator, dsn: []const u8) !Config {
         return config;
     }
 
-    // Check for URL format (geode://)
-    if (std.mem.startsWith(u8, dsn, "geode://")) {
-        return parseUrlFormat(allocator, dsn[8..], &config, false);
+    // Check for URL format with scheme
+    if (std.mem.indexOf(u8, dsn, "://")) |scheme_end| {
+        const scheme = dsn[0..scheme_end];
+        const rest = dsn[scheme_end + 3 ..];
+
+        // Parse transport from scheme
+        if (std.mem.eql(u8, scheme, "quic")) {
+            config.transport = .quic;
+            config.port = DEFAULT_PORT;
+        } else if (std.mem.eql(u8, scheme, "grpc") or std.mem.eql(u8, scheme, "grcp")) {
+            config.transport = .grpc;
+            config.port = DEFAULT_GRPC_PORT;
+        } else if (std.mem.eql(u8, scheme, "geode")) {
+            // Legacy scheme, default to QUIC
+            config.transport = .quic;
+            config.port = DEFAULT_PORT;
+        } else {
+            return error.UnsupportedScheme;
+        }
+
+        return parseUrlFormat(allocator, rest, &config, false);
     }
 
-    // Simple format: host:port or host:port?params
+    // Simple format: host:port or host:port?params (defaults to QUIC)
     return parseSimpleFormat(allocator, dsn, &config, false);
 }
 
@@ -148,12 +244,30 @@ pub fn parseDSNStrict(allocator: std.mem.Allocator, dsn: []const u8) !Config {
         return config;
     }
 
-    // Check for URL format (geode://)
-    if (std.mem.startsWith(u8, dsn, "geode://")) {
-        return parseUrlFormat(allocator, dsn[8..], &config, true);
+    // Check for URL format with scheme
+    if (std.mem.indexOf(u8, dsn, "://")) |scheme_end| {
+        const scheme = dsn[0..scheme_end];
+        const rest = dsn[scheme_end + 3 ..];
+
+        // Parse transport from scheme
+        if (std.mem.eql(u8, scheme, "quic")) {
+            config.transport = .quic;
+            config.port = DEFAULT_PORT;
+        } else if (std.mem.eql(u8, scheme, "grpc") or std.mem.eql(u8, scheme, "grcp")) {
+            config.transport = .grpc;
+            config.port = DEFAULT_GRPC_PORT;
+        } else if (std.mem.eql(u8, scheme, "geode")) {
+            // Legacy scheme, default to QUIC
+            config.transport = .quic;
+            config.port = DEFAULT_PORT;
+        } else {
+            return error.UnsupportedScheme;
+        }
+
+        return parseUrlFormat(allocator, rest, &config, true);
     }
 
-    // Simple format: host:port or host:port?params
+    // Simple format: host:port or host:port?params (defaults to QUIC)
     return parseSimpleFormat(allocator, dsn, &config, true);
 }
 
@@ -252,6 +366,9 @@ fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *C
 
             if (std.mem.eql(u8, key, "insecure") or std.mem.eql(u8, key, "insecure_skip_verify")) {
                 config.insecure = std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1");
+            } else if (std.mem.eql(u8, key, "tls")) {
+                // TLS setting for gRPC transport (tls=0 or tls=false disables TLS)
+                config.tls = !(std.mem.eql(u8, value, "0") or std.mem.eql(u8, value, "false"));
             } else if (std.mem.eql(u8, key, "page_size") or std.mem.eql(u8, key, "pageSize")) {
                 if (strict) {
                     // SECURITY: Strict mode returns error for invalid page_size (CWE-20)
@@ -647,4 +764,185 @@ test "parseDSN vs parseDSNStrict behavior comparison" {
 
     // parseDSNStrict returns error for invalid port
     try std.testing.expectError(error.InvalidPort, parseDSNStrict(std.testing.allocator, "localhost:invalid"));
+}
+
+// =============================================================================
+// Transport and DSN Scheme Tests
+// =============================================================================
+
+test "Config.init defaults to QUIC transport" {
+    const cfg = Config.init();
+    try std.testing.expectEqual(Transport.quic, cfg.transport);
+    try std.testing.expectEqual(@as(u16, 3141), cfg.port);
+    try std.testing.expect(cfg.tls);
+}
+
+test "Transport.toString returns correct strings" {
+    try std.testing.expectEqualStrings("quic", Transport.quic.toString());
+    try std.testing.expectEqualStrings("grpc", Transport.grpc.toString());
+}
+
+test "Transport.fromString parses correctly" {
+    try std.testing.expectEqual(Transport.quic, Transport.fromString("quic").?);
+    try std.testing.expectEqual(Transport.grpc, Transport.fromString("grpc").?);
+    try std.testing.expectEqual(Transport.grpc, Transport.fromString("grcp").?); // Deprecated alias
+    try std.testing.expect(Transport.fromString("unknown") == null);
+}
+
+test "Transport.defaultPort returns correct ports" {
+    try std.testing.expectEqual(@as(u16, 3141), Transport.quic.defaultPort());
+    try std.testing.expectEqual(@as(u16, 50051), Transport.grpc.defaultPort());
+}
+
+test "parseDSN parses quic:// scheme" {
+    const cfg = try parseDSN(std.testing.allocator, "quic://localhost:1234");
+    try std.testing.expectEqual(Transport.quic, cfg.transport);
+    try std.testing.expectEqualStrings("localhost", cfg.host);
+    try std.testing.expectEqual(@as(u16, 1234), cfg.port);
+}
+
+test "parseDSN parses quic:// with default port" {
+    const cfg = try parseDSN(std.testing.allocator, "quic://localhost");
+    try std.testing.expectEqual(Transport.quic, cfg.transport);
+    try std.testing.expectEqualStrings("localhost", cfg.host);
+    try std.testing.expectEqual(@as(u16, 3141), cfg.port);
+}
+
+test "parseDSN parses grpc:// scheme" {
+    const cfg = try parseDSN(std.testing.allocator, "grpc://127.0.0.1:50051");
+    try std.testing.expectEqual(Transport.grpc, cfg.transport);
+    try std.testing.expectEqualStrings("127.0.0.1", cfg.host);
+    try std.testing.expectEqual(@as(u16, 50051), cfg.port);
+}
+
+test "parseDSN parses grpc:// with default port" {
+    const cfg = try parseDSN(std.testing.allocator, "grpc://localhost");
+    try std.testing.expectEqual(Transport.grpc, cfg.transport);
+    try std.testing.expectEqualStrings("localhost", cfg.host);
+    try std.testing.expectEqual(@as(u16, 50051), cfg.port);
+}
+
+test "parseDSN parses grpc:// with tls=0 parameter" {
+    const cfg = try parseDSN(std.testing.allocator, "grpc://127.0.0.1:50051?tls=0");
+    try std.testing.expectEqual(Transport.grpc, cfg.transport);
+    try std.testing.expectEqualStrings("127.0.0.1", cfg.host);
+    try std.testing.expectEqual(@as(u16, 50051), cfg.port);
+    try std.testing.expect(!cfg.tls);
+}
+
+test "parseDSN parses grpc:// with tls=false parameter" {
+    const cfg = try parseDSN(std.testing.allocator, "grpc://localhost:50051?tls=false");
+    try std.testing.expectEqual(Transport.grpc, cfg.transport);
+    try std.testing.expect(!cfg.tls);
+}
+
+test "parseDSN parses grcp:// deprecated alias" {
+    const cfg = try parseDSN(std.testing.allocator, "grcp://localhost:50051");
+    try std.testing.expectEqual(Transport.grpc, cfg.transport);
+    try std.testing.expectEqualStrings("localhost", cfg.host);
+    try std.testing.expectEqual(@as(u16, 50051), cfg.port);
+}
+
+test "parseDSN parses quic:// with IPv6" {
+    const cfg = try parseDSN(std.testing.allocator, "quic://[::1]:3141");
+    try std.testing.expectEqual(Transport.quic, cfg.transport);
+    try std.testing.expectEqualStrings("::1", cfg.host);
+    try std.testing.expectEqual(@as(u16, 3141), cfg.port);
+}
+
+test "parseDSN parses grpc:// with IPv6" {
+    const cfg = try parseDSN(std.testing.allocator, "grpc://[2001:db8::1]:50051");
+    try std.testing.expectEqual(Transport.grpc, cfg.transport);
+    try std.testing.expectEqualStrings("2001:db8::1", cfg.host);
+    try std.testing.expectEqual(@as(u16, 50051), cfg.port);
+}
+
+test "parseDSN parses quic:// with credentials" {
+    var cfg = try parseDSN(std.testing.allocator, "quic://admin:secret@localhost:3141");
+    defer cfg.deinit(std.testing.allocator);
+    try std.testing.expectEqual(Transport.quic, cfg.transport);
+    try std.testing.expectEqualStrings("localhost", cfg.host);
+    try std.testing.expectEqualStrings("admin", cfg.username.?);
+    try std.testing.expectEqualStrings("secret", cfg.password.?);
+}
+
+test "parseDSN parses grpc:// with credentials and query params" {
+    var cfg = try parseDSN(std.testing.allocator, "grpc://user:pass@localhost:50051?tls=0&timeout=60000");
+    defer cfg.deinit(std.testing.allocator);
+    try std.testing.expectEqual(Transport.grpc, cfg.transport);
+    try std.testing.expectEqualStrings("user", cfg.username.?);
+    try std.testing.expectEqualStrings("pass", cfg.password.?);
+    try std.testing.expect(!cfg.tls);
+    try std.testing.expectEqual(@as(u32, 60000), cfg.timeout_ms);
+}
+
+test "parseDSN rejects unsupported scheme" {
+    try std.testing.expectError(error.UnsupportedScheme, parseDSN(std.testing.allocator, "http://localhost:80"));
+}
+
+test "parseDSN rejects https:// scheme" {
+    try std.testing.expectError(error.UnsupportedScheme, parseDSN(std.testing.allocator, "https://localhost:443"));
+}
+
+test "parseDSNStrict rejects unsupported scheme" {
+    try std.testing.expectError(error.UnsupportedScheme, parseDSNStrict(std.testing.allocator, "http://localhost:1"));
+}
+
+test "parseDSNStrict parses quic:// correctly" {
+    const cfg = try parseDSNStrict(std.testing.allocator, "quic://localhost:3141");
+    try std.testing.expectEqual(Transport.quic, cfg.transport);
+    try std.testing.expectEqualStrings("localhost", cfg.host);
+    try std.testing.expectEqual(@as(u16, 3141), cfg.port);
+}
+
+test "parseDSNStrict parses grpc:// correctly" {
+    const cfg = try parseDSNStrict(std.testing.allocator, "grpc://localhost:50051");
+    try std.testing.expectEqual(Transport.grpc, cfg.transport);
+    try std.testing.expectEqualStrings("localhost", cfg.host);
+    try std.testing.expectEqual(@as(u16, 50051), cfg.port);
+}
+
+test "Config.withTransport updates transport and port" {
+    var cfg = Config.init();
+    try std.testing.expectEqual(Transport.quic, cfg.transport);
+    try std.testing.expectEqual(@as(u16, 3141), cfg.port);
+
+    _ = cfg.withTransport(.grpc);
+    try std.testing.expectEqual(Transport.grpc, cfg.transport);
+    try std.testing.expectEqual(@as(u16, 50051), cfg.port);
+
+    _ = cfg.withTransport(.quic);
+    try std.testing.expectEqual(Transport.quic, cfg.transport);
+    try std.testing.expectEqual(@as(u16, 3141), cfg.port);
+}
+
+test "Config.withTls sets TLS flag" {
+    var cfg = Config.init();
+    try std.testing.expect(cfg.tls);
+
+    _ = cfg.withTls(false);
+    try std.testing.expect(!cfg.tls);
+
+    _ = cfg.withTls(true);
+    try std.testing.expect(cfg.tls);
+}
+
+test "Config.toDSN formats correctly for QUIC" {
+    const cfg = Config.initWithHost("localhost", 3141);
+    const dsn = try cfg.toDSN(std.testing.allocator);
+    defer std.testing.allocator.free(dsn);
+    try std.testing.expectEqualStrings("quic://localhost:3141", dsn);
+}
+
+test "Config.toDSN formats correctly for gRPC" {
+    var cfg = Config.initWithHost("localhost", 50051);
+    _ = cfg.withTransport(.grpc);
+    const dsn = try cfg.toDSN(std.testing.allocator);
+    defer std.testing.allocator.free(dsn);
+    try std.testing.expectEqualStrings("grpc://localhost:50051", dsn);
+}
+
+test "simple host:port defaults to QUIC transport" {
+    const cfg = try parseDSN(std.testing.allocator, "localhost:3141");
+    try std.testing.expectEqual(Transport.quic, cfg.transport);
 }

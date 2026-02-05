@@ -110,14 +110,6 @@ pub fn build(b: *std.Build) void {
     pool_mod.addImport("config", cfg_mod);
     pool_mod.addImport("error", error_mod);
 
-    // Protocol module
-    const protocol_mod = b.createModule(.{
-        .root_source_file = b.path("src/protocol.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    protocol_mod.addImport("types", types_mod);
-
     // Prepared statement module
     const prepared_mod = b.createModule(.{
         .root_source_file = b.path("src/prepared.zig"),
@@ -126,7 +118,6 @@ pub fn build(b: *std.Build) void {
     });
     prepared_mod.addImport("types", types_mod);
     prepared_mod.addImport("validate", validate_mod);
-    prepared_mod.addImport("protocol", protocol_mod);
 
     // Explain/profile module
     const explain_mod = b.createModule(.{
@@ -134,7 +125,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    explain_mod.addImport("protocol", protocol_mod);
 
     // Batch module
     const batch_mod = b.createModule(.{
@@ -144,7 +134,6 @@ pub fn build(b: *std.Build) void {
     });
     batch_mod.addImport("types", types_mod);
     batch_mod.addImport("validate", validate_mod);
-    batch_mod.addImport("protocol", protocol_mod);
 
     // Auth module
     const auth_mod = b.createModule(.{
@@ -152,8 +141,22 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    auth_mod.addImport("protocol", protocol_mod);
     auth_mod.addImport("validate", validate_mod);
+
+    // Proto module (protobuf encoding/decoding)
+    const proto_mod = b.createModule(.{
+        .root_source_file = b.path("src/proto.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    // gRPC transport module
+    const grpc_mod = b.createModule(.{
+        .root_source_file = b.path("src/grpc.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    grpc_mod.addImport("proto", proto_mod);
 
     // ========================================================================
     // Geode Client Module
@@ -176,11 +179,12 @@ pub fn build(b: *std.Build) void {
     geode_client_mod.addImport("validate", validate_mod);
     geode_client_mod.addImport("query_builder", query_builder_mod);
     geode_client_mod.addImport("pool", pool_mod);
-    geode_client_mod.addImport("protocol", protocol_mod);
     geode_client_mod.addImport("prepared", prepared_mod);
     geode_client_mod.addImport("explain", explain_mod);
     geode_client_mod.addImport("batch", batch_mod);
     geode_client_mod.addImport("auth", auth_mod);
+    geode_client_mod.addImport("proto", proto_mod);
+    geode_client_mod.addImport("grpc", grpc_mod);
 
     // Add external utility dependencies
     geode_client_mod.addImport("json", json_mod);
@@ -201,11 +205,12 @@ pub fn build(b: *std.Build) void {
             .{ .name = "validate", .module = validate_mod },
             .{ .name = "query_builder", .module = query_builder_mod },
             .{ .name = "pool", .module = pool_mod },
-            .{ .name = "protocol", .module = protocol_mod },
             .{ .name = "prepared", .module = prepared_mod },
             .{ .name = "explain", .module = explain_mod },
             .{ .name = "batch", .module = batch_mod },
             .{ .name = "auth", .module = auth_mod },
+            .{ .name = "proto", .module = proto_mod },
+            .{ .name = "grpc", .module = grpc_mod },
             .{ .name = "json", .module = json_mod },
             .{ .name = "dns", .module = dns_mod },
             .{ .name = "ext_config", .module = config_mod },
@@ -370,18 +375,6 @@ pub fn build(b: *std.Build) void {
     const run_pool_tests = b.addRunArtifact(pool_tests);
     test_step.dependOn(&run_pool_tests.step);
 
-    // Test protocol module
-    const protocol_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/protocol.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    protocol_tests.root_module.addImport("types", types_mod);
-    const run_protocol_tests = b.addRunArtifact(protocol_tests);
-    test_step.dependOn(&run_protocol_tests.step);
-
     // Test prepared module
     const prepared_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -392,7 +385,6 @@ pub fn build(b: *std.Build) void {
     });
     prepared_tests.root_module.addImport("types", types_mod);
     prepared_tests.root_module.addImport("validate", validate_mod);
-    prepared_tests.root_module.addImport("protocol", protocol_mod);
     const run_prepared_tests = b.addRunArtifact(prepared_tests);
     test_step.dependOn(&run_prepared_tests.step);
 
@@ -404,7 +396,6 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    explain_tests.root_module.addImport("protocol", protocol_mod);
     const run_explain_tests = b.addRunArtifact(explain_tests);
     test_step.dependOn(&run_explain_tests.step);
 
@@ -418,7 +409,6 @@ pub fn build(b: *std.Build) void {
     });
     batch_tests.root_module.addImport("types", types_mod);
     batch_tests.root_module.addImport("validate", validate_mod);
-    batch_tests.root_module.addImport("protocol", protocol_mod);
     const run_batch_tests = b.addRunArtifact(batch_tests);
     test_step.dependOn(&run_batch_tests.step);
 
@@ -430,10 +420,32 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    auth_tests.root_module.addImport("protocol", protocol_mod);
     auth_tests.root_module.addImport("validate", validate_mod);
     const run_auth_tests = b.addRunArtifact(auth_tests);
     test_step.dependOn(&run_auth_tests.step);
+
+    // Test proto module
+    const proto_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/proto.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_proto_tests = b.addRunArtifact(proto_tests);
+    test_step.dependOn(&run_proto_tests.step);
+
+    // Test grpc module
+    const grpc_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/grpc.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    grpc_tests.root_module.addImport("proto", proto_mod);
+    const run_grpc_tests = b.addRunArtifact(grpc_tests);
+    test_step.dependOn(&run_grpc_tests.step);
 
     // Test geode_client module
     const client_tests = b.addTest(.{
@@ -451,11 +463,12 @@ pub fn build(b: *std.Build) void {
     client_tests.root_module.addImport("validate", validate_mod);
     client_tests.root_module.addImport("query_builder", query_builder_mod);
     client_tests.root_module.addImport("pool", pool_mod);
-    client_tests.root_module.addImport("protocol", protocol_mod);
     client_tests.root_module.addImport("prepared", prepared_mod);
     client_tests.root_module.addImport("explain", explain_mod);
     client_tests.root_module.addImport("batch", batch_mod);
     client_tests.root_module.addImport("auth", auth_mod);
+    client_tests.root_module.addImport("proto", proto_mod);
+    client_tests.root_module.addImport("grpc", grpc_mod);
     client_tests.root_module.addImport("json", json_mod);
     client_tests.root_module.addImport("dns", dns_mod);
     client_tests.root_module.addImport("ext_config", config_mod);

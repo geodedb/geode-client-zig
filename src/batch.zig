@@ -3,6 +3,8 @@
 //
 // Batch query support for the Geode Zig client library.
 // Provides efficient execution of multiple queries in a single round-trip.
+// Note: Batch execution is implemented client-side by executing queries sequentially
+// within a transaction when transactional mode is enabled.
 //
 // SECURITY: Batch size is limited to prevent resource exhaustion (CWE-400).
 // See GAP_ANALYSIS.md Finding 10.
@@ -11,7 +13,6 @@ const std = @import("std");
 const types = @import("types");
 const Value = types.Value;
 const validate = @import("validate");
-const protocol = @import("protocol");
 
 /// Maximum number of queries allowed in a single batch.
 /// This limit prevents resource exhaustion attacks (CWE-400).
@@ -160,26 +161,9 @@ pub const Batch = struct {
         self.queries.clearRetainingCapacity();
     }
 
-    /// Build the BATCH message for this batch.
-    pub fn buildMessage(self: Self) ![]u8 {
-        if (self.isEmpty()) {
-            return error.BatchEmpty;
-        }
-
-        // Build array of queries
-        var query_strings = std.ArrayListUnmanaged([]const u8){};
-        defer query_strings.deinit(self.allocator);
-
-        for (self.queries.items) |q| {
-            try query_strings.append(self.allocator, q.query);
-        }
-
-        return protocol.buildBatch(
-            self.allocator,
-            query_strings.items,
-            self.stop_on_error,
-            self.transactional,
-        );
+    /// Get the queries in this batch.
+    pub fn getQueries(self: Self) []const BatchQuery {
+        return self.queries.items;
     }
 };
 
@@ -223,11 +207,6 @@ pub const BatchBuilder = struct {
     pub fn transactional(self: *Self) *Self {
         _ = self.batch.withTransaction(true);
         return self;
-    }
-
-    /// Build the batch message.
-    pub fn build(self: Self) ![]u8 {
-        return self.batch.buildMessage();
     }
 
     /// Get the underlying batch.
@@ -299,26 +278,17 @@ test "Batch rejects empty queries" {
     try std.testing.expectError(error.QueryEmpty, batch.add(""));
 }
 
-test "Batch buildMessage fails when empty" {
-    var batch = Batch.init(std.testing.allocator);
-    defer batch.deinit();
-
-    try std.testing.expectError(error.BatchEmpty, batch.buildMessage());
-}
-
-test "Batch buildMessage creates valid JSON" {
+test "Batch getQueries returns queries" {
     var batch = Batch.init(std.testing.allocator);
     defer batch.deinit();
 
     _ = try batch.add("MATCH (n) RETURN n");
     _ = try batch.add("CREATE (m:Node)");
 
-    const msg = try batch.buildMessage();
-    defer std.testing.allocator.free(msg);
-
-    try std.testing.expect(std.mem.indexOf(u8, msg, "\"type\":\"BATCH\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "MATCH (n) RETURN n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "CREATE (m:Node)") != null);
+    const queries = batch.getQueries();
+    try std.testing.expectEqual(@as(usize, 2), queries.len);
+    try std.testing.expectEqualStrings("MATCH (n) RETURN n", queries[0].query);
+    try std.testing.expectEqualStrings("CREATE (m:Node)", queries[1].query);
 }
 
 test "BatchBuilder fluent API" {

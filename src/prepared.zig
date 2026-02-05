@@ -3,12 +3,12 @@
 //
 // Prepared statement support for the Geode Zig client library.
 // Provides parameter extraction, validation, and efficient repeated execution.
+// Uses protobuf wire format (JSON protocol removed).
 
 const std = @import("std");
 const types = @import("types");
 const Value = types.Value;
 const validate = @import("validate");
-const protocol = @import("protocol");
 
 /// A prepared statement for efficient repeated query execution.
 /// Parses the query once and validates parameters before each execution.
@@ -145,12 +145,6 @@ pub const PreparedStatement = struct {
         }
     }
 
-    /// Build the RUN_GQL message for this prepared statement with given parameters.
-    pub fn buildMessage(self: Self, params: ?std.StringHashMap(Value)) ![]u8 {
-        try self.validateParams(params);
-        return protocol.buildRunGql(self.allocator, self.query, params);
-    }
-
     /// Mark this statement as prepared on the server.
     pub fn markPrepared(self: *Self, statement_id: ?[]const u8) !void {
         self.is_prepared = true;
@@ -249,24 +243,6 @@ test "PreparedStatement getQuery returns original query" {
     defer @constCast(&stmt).deinit();
 
     try std.testing.expectEqualStrings(query, stmt.getQuery());
-}
-
-test "PreparedStatement buildMessage creates valid JSON" {
-    const stmt = try PreparedStatement.init(
-        std.testing.allocator,
-        "MATCH (n) WHERE n.id = $id RETURN n",
-    );
-    defer @constCast(&stmt).deinit();
-
-    var params = std.StringHashMap(Value).init(std.testing.allocator);
-    defer params.deinit();
-    try params.put("id", Value.initInt(42));
-
-    const msg = try stmt.buildMessage(params);
-    defer std.testing.allocator.free(msg);
-
-    try std.testing.expect(std.mem.indexOf(u8, msg, "\"type\":\"RUN_GQL\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "MATCH (n) WHERE n.id = $id RETURN n") != null);
 }
 
 test "PreparedStatement rejects invalid query" {

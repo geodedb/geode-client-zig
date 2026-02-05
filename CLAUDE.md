@@ -6,10 +6,11 @@ This file provides guidance to Claude Code when working with the geode-client-zi
 
 This is the **Zig client library** for **Geode**, an enterprise-ready graph database implementing the ISO/IEC 39075:2024 Graph Query Language (GQL) standard.
 
-**Status**: Production-ready (Phase 7 Complete)
+**Status**: Production-ready (Phase 8 Complete)
 **Zig Version**: 0.15.1+
-**Transport**: QUIC + TLS 1.3
-**Default Port**: 3141
+**Transport**: QUIC + TLS 1.3 (default), gRPC over HTTP/2 (optional)
+**Wire Format**: Protobuf (JSON protocol removed)
+**Default Ports**: 3141 (QUIC), 50051 (gRPC)
 
 ## Repository Structure
 
@@ -22,11 +23,12 @@ geode-client-zig/
 ├── src/                   # Core modules
 │   ├── error.zig          # Error types with ISO GQL status codes
 │   ├── types.zig          # Value type system (GQL types)
-│   ├── config.zig         # Configuration and DSN parsing
+│   ├── config.zig         # Configuration and DSN parsing (quic://, grpc://)
 │   ├── pool.zig           # Connection pooling
 │   ├── query_builder.zig  # Fluent query builder API
 │   ├── validate.zig       # Input validation
-│   ├── protocol.zig       # Wire protocol message handling
+│   ├── proto.zig          # Protobuf encoding/decoding (wire format)
+│   ├── grpc.zig           # gRPC transport module (HTTP/2)
 │   ├── prepared.zig       # Prepared statement support
 │   ├── explain.zig        # Query explain/profile support
 │   ├── batch.zig          # Batch query execution

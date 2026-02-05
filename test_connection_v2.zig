@@ -20,6 +20,8 @@ pub fn main() !void {
     }
 
     const insecure = std.posix.getenv("GEODE_INSECURE") != null;
+    const username = std.posix.getenv("GEODE_USER") orelse "";
+    const password = std.posix.getenv("GEODE_PASSWORD") orelse "";
 
     // Resolve hostname to IP address if needed (QUIC library requires numeric IP)
     var resolved_host: []const u8 = host;
@@ -62,7 +64,7 @@ pub fn main() !void {
 
     std.debug.print("Creating Geode client...\n", .{});
     std.debug.print("Connecting to {s}:{d} (insecure={})\n", .{ resolved_host, port, insecure });
-    var client = GeodeClient.init(allocator, resolved_host, port, insecure);
+    var client = GeodeClient.init(allocator, resolved_host, port, insecure, username, password);
     defer client.deinit();
 
     std.debug.print("Connecting to server...\n", .{});
@@ -74,36 +76,26 @@ pub fn main() !void {
     std.debug.print("✓ Stream opened successfully!\n", .{});
 
     std.debug.print("Sending HELLO...\n", .{});
-    try client.sendHello("test-client-v2", "2.0.0");
-    std.debug.print("✓ HELLO sent!\n", .{});
-
-    std.debug.print("Receiving HELLO response...\n", .{});
-    const hello_response = try client.receiveMessage(2000);
-    defer allocator.free(hello_response);
-    std.debug.print("✓ HELLO response: {s}\n", .{hello_response});
+    try client.sendHello();
+    std.debug.print("✓ HELLO handshake completed!\n", .{});
 
     std.debug.print("Sending test query...\n", .{});
-    try client.sendRunGql(1, "RETURN 1 AS x", null);
-    std.debug.print("✓ Query sent!\n", .{});
+    var result = try client.query("RETURN 1 AS x", null);
+    defer result.deinit();
 
-    std.debug.print("Receiving SCHEMA response...\n", .{});
-    const schema_response = try client.receiveMessage(3000);
-    defer allocator.free(schema_response);
-    std.debug.print("✓ SCHEMA response: {s}\n", .{schema_response});
-
-    if (try client.tryReceiveBufferedMessage()) |inline_response| {
-        defer allocator.free(inline_response);
-        std.debug.print("✓ Inline BINDINGS response: {s}\n", .{inline_response});
-    } else {
-        std.debug.print("Sending PULL...\n", .{});
-        try client.sendPull(1, 1000);
-        std.debug.print("✓ PULL sent!\n", .{});
-
-        std.debug.print("Receiving BINDINGS response...\n", .{});
-        const bindings_response = try client.receiveMessage(3000);
-        defer allocator.free(bindings_response);
-        std.debug.print("✓ BINDINGS response: {s}\n", .{bindings_response});
+    if (result.hasError()) {
+        std.debug.print("✗ Query error: {s}\n", .{result.errorMessage() orelse "unknown"});
+        return error.QueryFailed;
     }
+
+    std.debug.print("✓ Query result:\n", .{});
+    std.debug.print("  Columns: ", .{});
+    for (result.columns.items, 0..) |col, i| {
+        if (i > 0) std.debug.print(", ", .{});
+        std.debug.print("{s}", .{col});
+    }
+    std.debug.print("\n", .{});
+    std.debug.print("  Rows: {d}\n", .{result.rows.items.len});
 
     std.debug.print("\n✅ All tests passed!\n", .{});
 }

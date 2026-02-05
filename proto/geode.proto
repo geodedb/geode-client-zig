@@ -1,0 +1,155 @@
+syntax = "proto3";
+package geode;
+
+service GeodeService {
+  // Handshake and Authentication
+  rpc Handshake (HelloRequest) returns (HelloResponse);
+
+  // Core Query Execution
+  rpc Execute (ExecuteRequest) returns (stream ExecutionResponse);
+
+  // Utilities
+  rpc Ping (PingRequest) returns (PingResponse);
+
+  // CDC / Internal
+  rpc GetCdcDiagnostics (CdcDiagnosticsRequest) returns (CdcDiagnosticsResponse);
+  rpc ControlCdc (CdcControlRequest) returns (CdcControlResponse);
+}
+
+// ----------------------------------------------------------------------------
+// QUIC Transport Wrapper (Framing)
+// ----------------------------------------------------------------------------
+// Since QUIC stream is unstructured, we need a wrapper to distinguish message types.
+message QuicClientMessage {
+  oneof msg {
+    HelloRequest hello = 1;
+    ExecuteRequest execute = 2;
+    PingRequest ping = 3;
+    CdcDiagnosticsRequest cdc_diag = 4;
+    CdcControlRequest cdc_ctrl = 5;
+    BeginRequest begin = 6;
+    CommitRequest commit = 7;
+    RollbackRequest rollback = 8;
+  }
+}
+
+message QuicServerMessage {
+  oneof msg {
+    HelloResponse hello = 1;
+    ExecutionResponse execute = 2; // Streamed responses will be individual QuicServerMessage packets
+    PingResponse ping = 3;
+    CdcDiagnosticsResponse cdc_diag = 4;
+    CdcControlResponse cdc_ctrl = 5;
+    BeginResponse begin = 6;
+    CommitResponse commit = 7;
+    RollbackResponse rollback = 8;
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Authentication (HELLO)
+// ----------------------------------------------------------------------------
+message HelloRequest {
+  string username = 1;
+  string password = 2; // Supports plaintext password for now, parity with existing
+  optional string tenant_id = 3;
+}
+
+message HelloResponse {
+  bool success = 1;
+  string session_id = 2;
+  string error_message = 3;
+  repeated string capabilities = 4; // ["QUIC", "TLS1.3", "PROTOBUF"]
+}
+
+// ----------------------------------------------------------------------------
+// Query Execution (RUN_GQL)
+// ----------------------------------------------------------------------------
+message ExecuteRequest {
+  string session_id = 1;
+  string query = 2;
+  map<string, string> parameters = 3;
+}
+
+message ExecutionResponse {
+  oneof result {
+    SchemaDefinition schema = 1;
+    DataPage page = 2;
+    Error error = 3;
+    ExecutionMetrics metrics = 4;
+    Heartbeat heartbeat = 5;
+  }
+}
+
+message SchemaDefinition {
+  // JSON representation of the schema for parity, or structured
+  // For now, mirroring existing "columns" logic
+  repeated ColumnDefinition columns = 1;
+}
+
+message ColumnDefinition {
+  string name = 1;
+  string type = 2;
+}
+
+message DataPage {
+  // Pages of rows. Each row is a list of cells.
+  // Using generic Value for flexibility
+  repeated Row rows = 1;
+  bool last_page = 2;
+}
+
+message Row {
+  repeated Value values = 1;
+}
+
+message Value {
+  oneof kind {
+    string string_val = 1;
+    int64 int_val = 2;
+    double double_val = 3;
+    bool bool_val = 4;
+    // null is implicit in oneof missing, or explicit?
+    bool null_val = 5;
+    // Simplified, assuming major types.
+  }
+}
+
+message Error {
+  string code = 1; // e.g., "42000"
+  string message = 2;
+  string type = 3; // "ERROR"
+}
+
+message ExecutionMetrics {
+  // Parity with existing metrics profile
+  int64 parse_duration_ns = 1;
+  int64 plan_duration_ns = 2;
+  int64 execute_duration_ns = 3;
+  int64 total_duration_ns = 4;
+}
+
+message Heartbeat {}
+
+// ----------------------------------------------------------------------------
+// Utilities (PING)
+// ----------------------------------------------------------------------------
+message PingRequest {}
+message PingResponse {
+  bool ok = 1;
+}
+
+// ----------------------------------------------------------------------------
+// CDC
+// ----------------------------------------------------------------------------
+message CdcDiagnosticsRequest {}
+message CdcDiagnosticsResponse {
+  string json_payload = 1; // Existing code returns raw JSON
+}
+
+message CdcControlRequest {
+  string action = 1;
+}
+message CdcControlResponse {
+  bool success = 1;
+}

@@ -9,6 +9,8 @@ pub fn main() !void {
     std.debug.print("Creating Geode client...\n", .{});
     var host: []const u8 = "127.0.0.1";
     var port: u16 = 3141;
+    const username: []const u8 = std.posix.getenv("GEODE_USER") orelse "";
+    const password: []const u8 = std.posix.getenv("GEODE_PASSWORD") orelse "";
 
     if (std.process.getEnvVarOwned(allocator, "GEODE_SERVER")) |env_addr| {
         defer allocator.free(env_addr);
@@ -19,7 +21,7 @@ pub fn main() !void {
         }
     } else |_| {}
 
-    var client = GeodeClient.init(allocator, host, port, true);
+    var client = GeodeClient.init(allocator, host, port, true, username, password);
     defer client.deinit();
 
     std.debug.print("Attempting to connect...\n", .{});
@@ -39,19 +41,23 @@ pub fn main() !void {
     std.debug.print("✓ Stream opened successfully!\n", .{});
 
     std.debug.print("Sending HELLO...\n", .{});
-    client.sendHello("test-client", "1.0.0") catch |err| {
+    client.sendHello() catch |err| {
         std.debug.print("Send HELLO failed: {}\n", .{err});
         return err;
     };
 
-    std.debug.print("✓ HELLO sent!\n", .{});
+    std.debug.print("✓ HELLO handshake completed!\n", .{});
 
-    std.debug.print("Receiving response...\n", .{});
-    const response = client.receiveMessage(30000) catch |err| {
-        std.debug.print("Receive failed: {}\n", .{err});
+    std.debug.print("Executing test query...\n", .{});
+    var result = client.query("RETURN 1 AS x", null) catch |err| {
+        std.debug.print("Query failed: {}\n", .{err});
         return err;
     };
-    defer allocator.free(response);
+    defer result.deinit();
 
-    std.debug.print("✓ Received response: {s}\n", .{response});
+    if (result.hasError()) {
+        std.debug.print("Query returned error: {s}\n", .{result.errorMessage() orelse "unknown"});
+    } else {
+        std.debug.print("✓ Query succeeded with {d} rows\n", .{result.rows.items.len});
+    }
 }

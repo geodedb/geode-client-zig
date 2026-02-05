@@ -1,9 +1,16 @@
 const std = @import("std");
 const quic = @import("quic");
-const protocol = @import("protocol");
+pub const proto = @import("proto");
+pub const config = @import("config");
+pub const grpc = @import("grpc");
 
 // CANARY: REQ=REQ-ZIG-CLIENT-002; FEATURE="Zig Client v2"; ASPECT=QuicPackageClient; STATUS=IMPL; OWNER=clients; UPDATED=2026-01-24
 // Zig client uses the quic package from zig package manager for full compatibility with the server.
+// CANARY: REQ=REQ-ZIG-CLIENT-003; FEATURE="gRPC Transport"; ASPECT=TransportAbstraction; STATUS=IMPL; OWNER=clients; UPDATED=2026-02-05
+// Client now supports both QUIC and gRPC transports selectable via Config.transport.
+
+/// Transport type for client connections
+pub const Transport = config.Transport;
 
 /// Maximum receive buffer size (16MB).
 /// SECURITY: Prevents resource exhaustion from malicious server responses (CWE-400).
@@ -15,27 +22,60 @@ pub const GeodeClient = struct {
     host: []const u8,
     port: u16,
     insecure: bool,
+    username: []const u8,
+    password: []const u8,
+    transport: Transport,
 
+    // QUIC transport state
     endpoint: ?*quic.QuicEndpoint = null,
     conn: ?*quic.QuicConnection = null,
     stream_id: ?u64 = null,
     recv_buffer: std.ArrayList(u8),
+    session_id: []const u8 = "",
 
-    pub fn init(allocator: std.mem.Allocator, host: []const u8, port: u16, insecure: bool) GeodeClient {
+    // gRPC transport state
+    grpc_client: ?grpc.GrpcClient = null,
+
+    /// Initialize a QUIC client (backward compatible).
+    pub fn init(allocator: std.mem.Allocator, host: []const u8, port: u16, insecure: bool, username: []const u8, password: []const u8) GeodeClient {
+        return initWithTransport(allocator, host, port, insecure, username, password, .quic);
+    }
+
+    /// Initialize a client with explicit transport selection.
+    pub fn initWithTransport(allocator: std.mem.Allocator, host: []const u8, port: u16, insecure: bool, username: []const u8, password: []const u8, transport: Transport) GeodeClient {
         return .{
             .allocator = allocator,
             .host = host,
             .port = port,
             .insecure = insecure,
+            .username = username,
+            .password = password,
+            .transport = transport,
             .endpoint = null,
             .conn = null,
             .stream_id = null,
             .recv_buffer = std.ArrayList(u8).initCapacity(allocator, 0) catch unreachable,
+            .grpc_client = null,
         };
+    }
+
+    /// Initialize a client from a Config struct.
+    pub fn initFromConfig(allocator: std.mem.Allocator, cfg: config.Config) GeodeClient {
+        return initWithTransport(
+            allocator,
+            cfg.host,
+            cfg.port,
+            cfg.insecure,
+            cfg.username orelse "",
+            cfg.password orelse "",
+            cfg.transport,
+        );
     }
 
     pub fn deinit(self: *GeodeClient) void {
         self.recv_buffer.deinit(self.allocator);
+
+        // Clean up QUIC resources
         if (self.conn) |c| {
             quic.closeConnection(c, 0) catch {};
             if (self.endpoint) |ep| quic.destroy(ep, c);
@@ -44,6 +84,12 @@ pub const GeodeClient = struct {
         if (self.endpoint) |ep| {
             quic.endpointDeinit(ep);
             self.endpoint = null;
+        }
+
+        // Clean up gRPC resources
+        if (self.grpc_client) |*gc| {
+            gc.deinit();
+            self.grpc_client = null;
         }
     }
 
@@ -79,6 +125,14 @@ pub const GeodeClient = struct {
     }
 
     pub fn connect(self: *GeodeClient) !void {
+        switch (self.transport) {
+            .quic => try self.connectQuic(),
+            .grpc => try self.connectGrpc(),
+        }
+    }
+
+    /// Connect using QUIC transport.
+    fn connectQuic(self: *GeodeClient) !void {
         try self.ensureEndpoint();
         const ep = self.endpoint.?;
 
@@ -101,7 +155,22 @@ pub const GeodeClient = struct {
         return error.ConnectionTimeout;
     }
 
+    /// Connect using gRPC transport.
+    fn connectGrpc(self: *GeodeClient) !void {
+        var grpc_cfg = grpc.GrpcConfig.init();
+        _ = grpc_cfg.withHost(self.host);
+        _ = grpc_cfg.withPort(self.port);
+        _ = grpc_cfg.withInsecure(self.insecure);
+        _ = grpc_cfg.withTls(!self.insecure);
+
+        self.grpc_client = grpc.GrpcClient.init(self.allocator, grpc_cfg);
+        try self.grpc_client.?.connect();
+    }
+
     pub fn openStream(self: *GeodeClient) !void {
+        // gRPC doesn't need explicit stream opening
+        if (self.transport == .grpc) return;
+
         if (self.conn == null) return error.NotConnected;
         if (self.stream_id != null) return;
 
@@ -145,25 +214,56 @@ pub const GeodeClient = struct {
         if (attempts >= max_attempts and written < data.len) return error.WriteError;
     }
 
-    pub fn sendMessage(self: *GeodeClient, message: []const u8) !void {
-        if (self.stream_id == null) try self.openStream();
+    /// Send a protobuf message with 4-byte big-endian length prefix.
+    pub fn sendProto(self: *GeodeClient, msg: proto.QuicClientMessage) !void {
+        switch (self.transport) {
+            .quic => {
+                if (self.stream_id == null) try self.openStream();
 
-        const payload = try self.allocator.alloc(u8, message.len + 1);
-        defer self.allocator.free(payload);
-        @memcpy(payload[0..message.len], message);
-        payload[payload.len - 1] = '\n';
+                const payload = try proto.encodeWithLengthPrefix(self.allocator, msg);
+                defer self.allocator.free(payload);
 
-        try self.writeAll(payload, false);
+                try self.writeAll(payload, false);
+            },
+            .grpc => {
+                if (self.grpc_client) |*gc| {
+                    try gc.sendProto(msg);
+                } else {
+                    return error.NotConnected;
+                }
+            },
+        }
     }
 
-    pub fn receiveMessage(self: *GeodeClient, timeout_ms: u64) ![]u8 {
+    /// Receive a protobuf message with 4-byte big-endian length prefix.
+    pub fn receiveProto(self: *GeodeClient, timeout_ms: u64) !proto.QuicServerMessage {
+        switch (self.transport) {
+            .quic => return try self.receiveProtoQuic(timeout_ms),
+            .grpc => {
+                if (self.grpc_client) |*gc| {
+                    return try gc.receiveProto();
+                } else {
+                    return error.NotConnected;
+                }
+            },
+        }
+    }
+
+    /// Receive a protobuf message using QUIC transport.
+    fn receiveProtoQuic(self: *GeodeClient, timeout_ms: u64) !proto.QuicServerMessage {
         if (self.conn == null or self.stream_id == null) return error.NoStream;
 
         const timeout_ns: u64 = timeout_ms * std.time.ns_per_ms;
         const start = std.time.nanoTimestamp();
 
         var temp_buf: [4096]u8 = undefined;
-        while (std.time.nanoTimestamp() - start < timeout_ns) {
+
+        // Read until we have at least 4 bytes for length prefix
+        while (self.recv_buffer.items.len < 4) {
+            if (std.time.nanoTimestamp() - start >= timeout_ns) {
+                return error.ReceiveTimeout;
+            }
+
             const n = quic.readStream(self.conn.?, self.stream_id.?, temp_buf[0..]) catch |err| switch (err) {
                 error.WouldBlock => blk: {
                     self.poll(10);
@@ -175,469 +275,354 @@ pub const GeodeClient = struct {
             };
 
             if (n > 0) {
-                // SECURITY: Check buffer size limit to prevent resource exhaustion (CWE-400)
                 if (self.recv_buffer.items.len + n > MAX_RECV_BUFFER_SIZE) {
                     return error.ResponseTooLarge;
                 }
                 try self.recv_buffer.appendSlice(self.allocator, temp_buf[0..n]);
-            }
-
-            if (std.mem.indexOfScalar(u8, self.recv_buffer.items, '\n')) |idx| {
-                const msg_len = idx;
-                const msg = try self.allocator.alloc(u8, msg_len);
-                @memcpy(msg, self.recv_buffer.items[0..msg_len]);
-
-                // remove consumed data + newline
-                const remaining = self.recv_buffer.items.len - (msg_len + 1);
-                if (remaining > 0) {
-                    std.mem.copyForwards(u8, self.recv_buffer.items[0..remaining], self.recv_buffer.items[msg_len + 1 ..]);
-                    self.recv_buffer.items = self.recv_buffer.items[0..remaining];
-                } else {
-                    self.recv_buffer.items = self.recv_buffer.items[0..0];
-                }
-
-                return msg;
-            }
-
-            self.poll(10);
-            std.Thread.sleep(5 * std.time.ns_per_ms);
-        }
-
-        return error.ReceiveTimeout;
-    }
-
-    /// Attempt to read a complete buffered message without waiting for more data.
-    /// Returns null when no full line is buffered yet.
-    pub fn tryReceiveBufferedMessage(self: *GeodeClient) !?[]u8 {
-        if (std.mem.indexOfScalar(u8, self.recv_buffer.items, '\n')) |idx| {
-            const msg_len = idx;
-            const msg = try self.allocator.alloc(u8, msg_len);
-            @memcpy(msg, self.recv_buffer.items[0..msg_len]);
-
-            const remaining = self.recv_buffer.items.len - (msg_len + 1);
-            if (remaining > 0) {
-                std.mem.copyForwards(u8, self.recv_buffer.items[0..remaining], self.recv_buffer.items[msg_len + 1 ..]);
-                self.recv_buffer.items = self.recv_buffer.items[0..remaining];
             } else {
-                self.recv_buffer.items = self.recv_buffer.items[0..0];
+                self.poll(10);
+                std.Thread.sleep(5 * std.time.ns_per_ms);
+            }
+        }
+
+        // Decode length prefix (big-endian u32)
+        const msg_len = proto.decodeLengthPrefix(self.recv_buffer.items[0..4]) catch return error.InvalidMessage;
+
+        // SECURITY: Check message size
+        if (msg_len > MAX_RECV_BUFFER_SIZE - 4) {
+            return error.ResponseTooLarge;
+        }
+
+        const total_len: usize = 4 + @as(usize, msg_len);
+
+        // Read until we have the complete message
+        while (self.recv_buffer.items.len < total_len) {
+            if (std.time.nanoTimestamp() - start >= timeout_ns) {
+                return error.ReceiveTimeout;
             }
 
-            return msg;
+            const n = quic.readStream(self.conn.?, self.stream_id.?, temp_buf[0..]) catch |err| switch (err) {
+                error.WouldBlock => blk: {
+                    self.poll(10);
+                    std.Thread.sleep(5 * std.time.ns_per_ms);
+                    break :blk 0;
+                },
+                error.InvalidStream => return error.NoStream,
+                else => return err,
+            };
+
+            if (n > 0) {
+                if (self.recv_buffer.items.len + n > MAX_RECV_BUFFER_SIZE) {
+                    return error.ResponseTooLarge;
+                }
+                try self.recv_buffer.appendSlice(self.allocator, temp_buf[0..n]);
+            } else {
+                self.poll(10);
+                std.Thread.sleep(5 * std.time.ns_per_ms);
+            }
         }
-        return null;
+
+        // Decode the protobuf message
+        const msg_data = self.recv_buffer.items[4..total_len];
+        const msg = try proto.decodeQuicServerMessage(self.allocator, msg_data);
+
+        // Remove consumed data from buffer
+        const remaining = self.recv_buffer.items.len - total_len;
+        if (remaining > 0) {
+            std.mem.copyForwards(u8, self.recv_buffer.items[0..remaining], self.recv_buffer.items[total_len..]);
+            self.recv_buffer.items = self.recv_buffer.items[0..remaining];
+        } else {
+            self.recv_buffer.items = self.recv_buffer.items[0..0];
+        }
+
+        return msg;
     }
 
-    pub fn sendHello(self: *GeodeClient, client_name: []const u8, client_version: []const u8) !void {
-        const msg = try protocol.buildHello(
-            self.allocator,
-            client_name,
-            client_version,
-            protocol.CONFORMANCE_MINIMUM,
-            protocol.DEFAULT_PAGE_SIZE,
-            null,
-            null,
-        );
-        defer self.allocator.free(msg);
-        try self.sendMessage(msg);
+    /// Attempt to read a complete buffered protobuf message without waiting for more data.
+    /// Returns null when no full message is buffered yet.
+    pub fn tryReceiveBufferedProto(self: *GeodeClient) !?proto.QuicServerMessage {
+        if (self.recv_buffer.items.len < 4) return null;
+
+        const msg_len = proto.decodeLengthPrefix(self.recv_buffer.items[0..4]) catch return null;
+        const total_len: usize = 4 + @as(usize, msg_len);
+
+        if (self.recv_buffer.items.len < total_len) return null;
+
+        const msg_data = self.recv_buffer.items[4..total_len];
+        const msg = try proto.decodeQuicServerMessage(self.allocator, msg_data);
+
+        const remaining = self.recv_buffer.items.len - total_len;
+        if (remaining > 0) {
+            std.mem.copyForwards(u8, self.recv_buffer.items[0..remaining], self.recv_buffer.items[total_len..]);
+            self.recv_buffer.items = self.recv_buffer.items[0..remaining];
+        } else {
+            self.recv_buffer.items = self.recv_buffer.items[0..0];
+        }
+
+        return msg;
     }
 
-    pub fn sendRunGql(self: *GeodeClient, request_id: u64, query: []const u8, params: ?std.json.Value) !void {
-        const params_json = if (params) |p|
-            try std.json.Stringify.valueAlloc(self.allocator, p, .{})
-        else
-            try self.allocator.dupe(u8, "{}");
-        defer self.allocator.free(params_json);
+    /// Send HELLO and store session_id from response.
+    pub fn sendHello(self: *GeodeClient) !void {
+        const msg = proto.QuicClientMessage{
+            .hello = proto.HelloRequest{
+                .username = self.username,
+                .password = self.password,
+                .tenant_id = "",
+            },
+        };
+        try self.sendProto(msg);
 
-        // Build JSON message with proper escaping for query string
-        var msg: std.ArrayListUnmanaged(u8) = .{};
-        errdefer msg.deinit(self.allocator);
-
-        try msg.appendSlice(self.allocator, "{\"type\":\"RUN_GQL\",\"request_id\":");
-        var req_id_buf: [24]u8 = undefined;
-        const req_id_str = std.fmt.bufPrint(&req_id_buf, "{d}", .{request_id}) catch unreachable;
-        try msg.appendSlice(self.allocator, req_id_str);
-        try msg.appendSlice(self.allocator, ",\"text\":\"");
-        try appendEscapedJsonString(self.allocator, &msg, query);
-        try msg.appendSlice(self.allocator, "\",\"params\":");
-        try msg.appendSlice(self.allocator, params_json);
-        try msg.appendSlice(self.allocator, "}");
-
-        const final_msg = try msg.toOwnedSlice(self.allocator);
-        defer self.allocator.free(final_msg);
-        try self.sendMessage(final_msg);
+        // Wait for hello response
+        const response = try self.receiveProto(5000);
+        if (response.hello) |hello| {
+            if (hello.success) {
+                // Store session ID
+                if (hello.session_id.len > 0) {
+                    self.session_id = try self.allocator.dupe(u8, hello.session_id);
+                }
+            } else {
+                return error.AuthenticationFailed;
+            }
+        } else {
+            return error.InvalidResponse;
+        }
     }
 
-    pub fn sendPull(self: *GeodeClient, request_id: u64, page_size: usize) !void {
-        const msg = try std.fmt.allocPrint(
-            self.allocator,
-            "{{\"type\":\"PULL\",\"request_id\":{d},\"page_size\":{d}}}",
-            .{ request_id, page_size },
-        );
-        defer self.allocator.free(msg);
-        try self.sendMessage(msg);
+    /// Execute a GQL query and return the result.
+    pub fn query(self: *GeodeClient, gql: []const u8, params: ?std.StringHashMapUnmanaged([]const u8)) !QueryResult {
+        var execute = proto.ExecuteRequest{
+            .session_id = self.session_id,
+            .query = gql,
+        };
+
+        // Copy parameters if provided
+        if (params) |p| {
+            var iter = p.iterator();
+            while (iter.next()) |entry| {
+                // Convert string parameters to proto.Value
+                const value = proto.Value{ .string_val = entry.value_ptr.* };
+                try execute.addParam(self.allocator, entry.key_ptr.*, value);
+            }
+        }
+        defer execute.deinit(self.allocator);
+
+        const msg = proto.QuicClientMessage{
+            .execute = execute,
+        };
+        try self.sendProto(msg);
+
+        // Receive response
+        const response = try self.receiveProto(30000);
+        return try self.parseExecutionResponse(response);
     }
 
-    pub fn sendBegin(self: *GeodeClient) !void {
-        try self.sendMessage("{\"type\":\"BEGIN\"}");
+    fn parseExecutionResponse(self: *GeodeClient, response: proto.QuicServerMessage) !QueryResult {
+        if (response.execute) |exec| {
+            if (exec.err) |err| {
+                return QueryResult{
+                    .allocator = self.allocator,
+                    .columns = .{},
+                    .rows = .{},
+                    .err = err,
+                };
+            }
+
+            var result = QueryResult{
+                .allocator = self.allocator,
+                .columns = .{},
+                .rows = .{},
+                .err = null,
+            };
+
+            // Parse schema columns
+            if (exec.schema) |schema| {
+                for (schema.columns.items) |col| {
+                    try result.columns.append(self.allocator, col.name);
+                }
+            }
+
+            // Parse data page rows
+            if (exec.page) |page| {
+                for (page.rows.items) |row| {
+                    var row_values: std.ArrayListUnmanaged(proto.Value) = .{};
+                    for (row.values.items) |val| {
+                        try row_values.append(self.allocator, val);
+                    }
+                    try result.rows.append(self.allocator, row_values);
+                }
+            }
+
+            return result;
+        }
+
+        return error.InvalidResponse;
     }
 
-    pub fn sendCommit(self: *GeodeClient) !void {
-        try self.sendMessage("{\"type\":\"COMMIT\"}");
+    /// Begin a transaction.
+    pub fn begin(self: *GeodeClient) ![]const u8 {
+        const msg = proto.QuicClientMessage{
+            .begin = proto.BeginRequest{ .read_only = false },
+        };
+        try self.sendProto(msg);
+
+        const response = try self.receiveProto(5000);
+        if (response.begin) |begin_resp| {
+            if (begin_resp.tx_id.len > 0) {
+                return try self.allocator.dupe(u8, begin_resp.tx_id);
+            }
+        }
+        return error.InvalidResponse;
     }
 
-    pub fn sendRollback(self: *GeodeClient) !void {
-        try self.sendMessage("{\"type\":\"ROLLBACK\"}");
+    /// Commit the current transaction.
+    pub fn commit(self: *GeodeClient) !void {
+        const msg = proto.QuicClientMessage{
+            .commit = proto.CommitRequest{},
+        };
+        try self.sendProto(msg);
+
+        const response = try self.receiveProto(5000);
+        if (response.commit) |commit_resp| {
+            if (!commit_resp.success) {
+                return error.CommitFailed;
+            }
+        } else {
+            return error.InvalidResponse;
+        }
+    }
+
+    /// Rollback the current transaction.
+    pub fn rollback(self: *GeodeClient) !void {
+        const msg = proto.QuicClientMessage{
+            .rollback = proto.RollbackRequest{},
+        };
+        try self.sendProto(msg);
+
+        const response = try self.receiveProto(5000);
+        if (response.rollback) |rollback_resp| {
+            if (!rollback_resp.success) {
+                return error.RollbackFailed;
+            }
+        } else {
+            return error.InvalidResponse;
+        }
+    }
+
+    /// Ping the server.
+    pub fn ping(self: *GeodeClient) !bool {
+        const msg = proto.QuicClientMessage{
+            .ping = proto.PingRequest{},
+        };
+        try self.sendProto(msg);
+
+        const response = try self.receiveProto(5000);
+        if (response.ping) |ping_resp| {
+            return ping_resp.ok;
+        }
+        return false;
     }
 };
 
-/// Append a JSON-escaped string to a buffer.
-/// Properly escapes quotes, backslashes, and control characters.
-fn appendEscapedJsonString(allocator: std.mem.Allocator, buf: *std.ArrayListUnmanaged(u8), s: []const u8) !void {
-    for (s) |c| {
-        switch (c) {
-            '"' => try buf.appendSlice(allocator, "\\\""),
-            '\\' => try buf.appendSlice(allocator, "\\\\"),
-            '\n' => try buf.appendSlice(allocator, "\\n"),
-            '\r' => try buf.appendSlice(allocator, "\\r"),
-            '\t' => try buf.appendSlice(allocator, "\\t"),
-            else => {
-                if (c < 0x20) {
-                    // Control characters as \uXXXX
-                    var escape_buf: [6]u8 = undefined;
-                    _ = std.fmt.bufPrint(&escape_buf, "\\u{x:0>4}", .{c}) catch unreachable;
-                    try buf.appendSlice(allocator, &escape_buf);
-                } else {
-                    try buf.append(allocator, c);
-                }
-            },
-        }
-    }
-}
+/// Result of a query execution.
+pub const QueryResult = struct {
+    allocator: std.mem.Allocator,
+    columns: std.ArrayListUnmanaged([]const u8) = .{},
+    rows: std.ArrayListUnmanaged(std.ArrayListUnmanaged(proto.Value)) = .{},
+    err: ?proto.ProtoError,
 
-/// Helper function to execute a query
+    pub fn deinit(self: *QueryResult) void {
+        for (self.rows.items) |*row| {
+            row.deinit(self.allocator);
+        }
+        self.rows.deinit(self.allocator);
+        self.columns.deinit(self.allocator);
+    }
+
+    pub fn hasError(self: *const QueryResult) bool {
+        return self.err != null;
+    }
+
+    pub fn errorMessage(self: *const QueryResult) ?[]const u8 {
+        if (self.err) |e| {
+            return e.message;
+        }
+        return null;
+    }
+};
+
+/// Helper function to execute a query.
+/// Opens a connection, sends HELLO, executes the query, and returns the result.
 pub fn executeQuery(
     allocator: std.mem.Allocator,
     host: []const u8,
     port: u16,
-    query: []const u8,
-    params: ?std.json.Value,
+    gql: []const u8,
+    params: ?std.StringHashMapUnmanaged([]const u8),
     insecure: bool,
-) !std.json.Parsed(std.json.Value) {
-    var client = GeodeClient.init(allocator, host, port, insecure);
+    username: []const u8,
+    password: []const u8,
+) !QueryResult {
+    var client = GeodeClient.init(allocator, host, port, insecure, username, password);
     defer client.deinit();
 
     try client.connect();
+    try client.sendHello();
 
-    // Send HELLO
-    try client.sendHello("geode-zig-client", "2.0.0");
-    const hello_response = try client.receiveMessage(2000);
-    defer allocator.free(hello_response);
-
-    // Send query
-    const request_id: u64 = 1;
-    try client.sendRunGql(request_id, query, params);
-    const schema_response = try client.receiveMessage(3000);
-    defer allocator.free(schema_response);
-
-    // Inline RUN+PULL: check for buffered bindings before sending PULL.
-    if (try client.tryReceiveBufferedMessage()) |inline_response| {
-        defer allocator.free(inline_response);
-        return try std.json.parseFromSlice(
-            std.json.Value,
-            allocator,
-            inline_response,
-            .{},
-        );
-    }
-
-    // Pull results
-    try client.sendPull(request_id, 1000);
-    const bindings_response = try client.receiveMessage(3000);
-
-    // Parse and return
-    return try std.json.parseFromSlice(
-        std.json.Value,
-        allocator,
-        bindings_response,
-        .{},
-    );
+    return try client.query(gql, params);
 }
 
 // =============================================================================
-// Unit Tests for JSON Escaping
+// Unit Tests for Protobuf Encoding
 // =============================================================================
 
-test "appendEscapedJsonString: plain ASCII string unchanged" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(std.testing.allocator);
-
-    try appendEscapedJsonString(std.testing.allocator, &buf, "hello world");
-    try std.testing.expectEqualStrings("hello world", buf.items);
-}
-
-test "appendEscapedJsonString: empty string" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(std.testing.allocator);
-
-    try appendEscapedJsonString(std.testing.allocator, &buf, "");
-    try std.testing.expectEqual(@as(usize, 0), buf.items.len);
-}
-
-test "appendEscapedJsonString: escapes double quotes" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(std.testing.allocator);
-
-    try appendEscapedJsonString(std.testing.allocator, &buf, "say \"hello\"");
-    try std.testing.expectEqualStrings("say \\\"hello\\\"", buf.items);
-}
-
-test "appendEscapedJsonString: escapes backslashes" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(std.testing.allocator);
-
-    try appendEscapedJsonString(std.testing.allocator, &buf, "path\\to\\file");
-    try std.testing.expectEqualStrings("path\\\\to\\\\file", buf.items);
-}
-
-test "appendEscapedJsonString: escapes newlines" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(std.testing.allocator);
-
-    try appendEscapedJsonString(std.testing.allocator, &buf, "line1\nline2");
-    try std.testing.expectEqualStrings("line1\\nline2", buf.items);
-}
-
-test "appendEscapedJsonString: escapes carriage returns" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(std.testing.allocator);
-
-    try appendEscapedJsonString(std.testing.allocator, &buf, "line1\rline2");
-    try std.testing.expectEqualStrings("line1\\rline2", buf.items);
-}
-
-test "appendEscapedJsonString: escapes tabs" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(std.testing.allocator);
-
-    try appendEscapedJsonString(std.testing.allocator, &buf, "col1\tcol2");
-    try std.testing.expectEqualStrings("col1\\tcol2", buf.items);
-}
-
-test "appendEscapedJsonString: escapes mixed special characters" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(std.testing.allocator);
-
-    try appendEscapedJsonString(std.testing.allocator, &buf, "\"quoted\"\n\ttabbed\\slashed");
-    try std.testing.expectEqualStrings("\\\"quoted\\\"\\n\\ttabbed\\\\slashed", buf.items);
-}
-
-test "appendEscapedJsonString: escapes control characters as unicode" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(std.testing.allocator);
-
-    // ASCII control character 0x01 (SOH)
-    try appendEscapedJsonString(std.testing.allocator, &buf, "before\x01after");
-    try std.testing.expectEqualStrings("before\\u0001after", buf.items);
-}
-
-test "appendEscapedJsonString: escapes null character" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(std.testing.allocator);
-
-    try appendEscapedJsonString(std.testing.allocator, &buf, "hello\x00world");
-    try std.testing.expectEqualStrings("hello\\u0000world", buf.items);
-}
-
-test "appendEscapedJsonString: escapes form feed" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(std.testing.allocator);
-
-    // Form feed is 0x0C
-    try appendEscapedJsonString(std.testing.allocator, &buf, "page\x0cbreak");
-    try std.testing.expectEqualStrings("page\\u000cbreak", buf.items);
-}
-
-test "appendEscapedJsonString: preserves high ASCII and UTF-8" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(std.testing.allocator);
-
-    // UTF-8 encoded "café" - bytes above 0x1F should not be escaped
-    try appendEscapedJsonString(std.testing.allocator, &buf, "café");
-    try std.testing.expectEqualStrings("café", buf.items);
-}
-
-test "appendEscapedJsonString: handles GQL query with quotes" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(std.testing.allocator);
-
-    try appendEscapedJsonString(std.testing.allocator, &buf, "RETURN \"hello\" AS greeting");
-    try std.testing.expectEqualStrings("RETURN \\\"hello\\\" AS greeting", buf.items);
-}
-
-test "appendEscapedJsonString: handles GQL query with single quotes" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(std.testing.allocator);
-
-    // Single quotes should NOT be escaped in JSON
-    try appendEscapedJsonString(std.testing.allocator, &buf, "RETURN 'hello' AS greeting");
-    try std.testing.expectEqualStrings("RETURN 'hello' AS greeting", buf.items);
-}
-
-test "appendEscapedJsonString: handles complex GQL query" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(std.testing.allocator);
-
-    const query = "MATCH (n:Person) WHERE n.name = \"Alice\\Bob\" RETURN n";
-    try appendEscapedJsonString(std.testing.allocator, &buf, query);
-    try std.testing.expectEqualStrings("MATCH (n:Person) WHERE n.name = \\\"Alice\\\\Bob\\\" RETURN n", buf.items);
-}
-
-test "appendEscapedJsonString: multiple calls append correctly" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(std.testing.allocator);
-
-    try appendEscapedJsonString(std.testing.allocator, &buf, "first");
-    try appendEscapedJsonString(std.testing.allocator, &buf, " ");
-    try appendEscapedJsonString(std.testing.allocator, &buf, "second");
-    try std.testing.expectEqualStrings("first second", buf.items);
-}
-
-test "appendEscapedJsonString: injection attempt with quotes" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(std.testing.allocator);
-
-    // Attempt to break out of JSON string and inject new field
-    const malicious = "value\",\"injected\":\"attack";
-    try appendEscapedJsonString(std.testing.allocator, &buf, malicious);
-    // The quotes should be escaped, preventing injection
-    try std.testing.expectEqualStrings("value\\\",\\\"injected\\\":\\\"attack", buf.items);
-}
-
-test "appendEscapedJsonString: injection attempt with backslash-quote" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(std.testing.allocator);
-
-    // Attempt to escape the escape character
-    const malicious = "value\\\"injected";
-    try appendEscapedJsonString(std.testing.allocator, &buf, malicious);
-    // Both backslash and quote should be escaped
-    try std.testing.expectEqualStrings("value\\\\\\\"injected", buf.items);
-}
-
-test "appendEscapedJsonString: all control characters 0x00-0x1F" {
-    // Test all control characters are properly escaped
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(std.testing.allocator);
-
-    // Test specific known control character escapes
-    const test_cases = [_]struct { input: []const u8, expected: []const u8 }{
-        .{ .input = "\x00", .expected = "\\u0000" }, // NUL
-        .{ .input = "\x01", .expected = "\\u0001" }, // SOH
-        .{ .input = "\x02", .expected = "\\u0002" }, // STX
-        .{ .input = "\x07", .expected = "\\u0007" }, // BEL
-        .{ .input = "\x08", .expected = "\\u0008" }, // BS
-        .{ .input = "\x09", .expected = "\\t" }, // TAB (special case)
-        .{ .input = "\x0A", .expected = "\\n" }, // LF (special case)
-        .{ .input = "\x0B", .expected = "\\u000b" }, // VT
-        .{ .input = "\x0C", .expected = "\\u000c" }, // FF
-        .{ .input = "\x0D", .expected = "\\r" }, // CR (special case)
-        .{ .input = "\x0E", .expected = "\\u000e" }, // SO
-        .{ .input = "\x1F", .expected = "\\u001f" }, // Unit separator
+test "proto encoding: HelloRequest encodes correctly" {
+    const allocator = std.testing.allocator;
+    const msg = proto.QuicClientMessage{
+        .hello = proto.HelloRequest{
+            .username = "test_user",
+            .password = "test_pass",
+            .tenant_id = "",
+        },
     };
+    const encoded = try proto.encodeWithLengthPrefix(allocator, msg);
+    defer allocator.free(encoded);
 
-    for (test_cases) |tc| {
-        buf.clearRetainingCapacity();
-        try appendEscapedJsonString(std.testing.allocator, &buf, tc.input);
-        try std.testing.expectEqualStrings(tc.expected, buf.items);
-    }
+    // Verify length prefix is present (4 bytes)
+    try std.testing.expect(encoded.len >= 4);
+
+    // Verify length prefix is correct
+    const length = proto.decodeLengthPrefix(encoded[0..4]) catch unreachable;
+    try std.testing.expectEqual(encoded.len - 4, @as(usize, length));
 }
 
-// =============================================================================
-// Unit Tests for Message Building
-// =============================================================================
-
-test "buildRunGql message produces valid JSON with escaped query" {
-    // This test verifies that sendRunGql builds proper JSON
-    // We can't test sendRunGql directly without a connection, but we can
-    // verify the escaping produces valid JSON when used in the same pattern
-
+test "proto encoding: ExecuteRequest encodes query correctly" {
     const allocator = std.testing.allocator;
-    var msg: std.ArrayListUnmanaged(u8) = .{};
-    defer msg.deinit(allocator);
+    var execute = proto.ExecuteRequest.init(allocator);
+    defer execute.deinit(allocator);
+    execute.session_id = "session123";
+    execute.query = "RETURN 1 AS x";
 
-    const query = "RETURN \"hello\" AS greeting";
+    const msg = proto.QuicClientMessage{
+        .execute = execute,
+    };
+    const encoded = try proto.encodeWithLengthPrefix(allocator, msg);
+    defer allocator.free(encoded);
 
-    try msg.appendSlice(allocator, "{\"type\":\"RUN_GQL\",\"request_id\":1,\"text\":\"");
-    try appendEscapedJsonString(allocator, &msg, query);
-    try msg.appendSlice(allocator, "\",\"params\":{}}");
-
-    const json_str = msg.items;
-
-    // Parse to verify it's valid JSON
-    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_str, .{});
-    defer parsed.deinit();
-
-    // Verify structure
-    try std.testing.expectEqualStrings("RUN_GQL", parsed.value.object.get("type").?.string);
-    try std.testing.expectEqual(@as(i64, 1), parsed.value.object.get("request_id").?.integer);
-    try std.testing.expectEqualStrings("RETURN \"hello\" AS greeting", parsed.value.object.get("text").?.string);
+    try std.testing.expect(encoded.len >= 4);
 }
 
-test "buildRunGql message with newlines in query" {
-    const allocator = std.testing.allocator;
-    var msg: std.ArrayListUnmanaged(u8) = .{};
-    defer msg.deinit(allocator);
-
-    const query = "MATCH (n)\nWHERE n.name = 'test'\nRETURN n";
-
-    try msg.appendSlice(allocator, "{\"type\":\"RUN_GQL\",\"text\":\"");
-    try appendEscapedJsonString(allocator, &msg, query);
-    try msg.appendSlice(allocator, "\"}");
-
-    // Parse to verify it's valid JSON
-    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, msg.items, .{});
-    defer parsed.deinit();
-
-    // Verify the query is preserved correctly after JSON parsing
-    try std.testing.expectEqualStrings(query, parsed.value.object.get("text").?.string);
+test "proto decoding: length prefix decodes correctly" {
+    // Test big-endian encoding of length 256 (0x00000100)
+    const data = [_]u8{ 0x00, 0x00, 0x01, 0x00 };
+    const length = try proto.decodeLengthPrefix(&data);
+    try std.testing.expectEqual(@as(u32, 256), length);
 }
 
-test "buildRunGql message with backslashes in query" {
-    const allocator = std.testing.allocator;
-    var msg: std.ArrayListUnmanaged(u8) = .{};
-    defer msg.deinit(allocator);
-
-    const query = "RETURN 'C:\\Users\\test' AS path";
-
-    try msg.appendSlice(allocator, "{\"text\":\"");
-    try appendEscapedJsonString(allocator, &msg, query);
-    try msg.appendSlice(allocator, "\"}");
-
-    // Parse to verify it's valid JSON
-    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, msg.items, .{});
-    defer parsed.deinit();
-
-    // Verify the query is preserved correctly
-    try std.testing.expectEqualStrings(query, parsed.value.object.get("text").?.string);
-}
-
-test "buildRunGql message with mixed special characters" {
-    const allocator = std.testing.allocator;
-    var msg: std.ArrayListUnmanaged(u8) = .{};
-    defer msg.deinit(allocator);
-
-    const query = "RETURN \"line1\\nline2\\\"\ttab\" AS value";
-
-    try msg.appendSlice(allocator, "{\"query\":\"");
-    try appendEscapedJsonString(allocator, &msg, query);
-    try msg.appendSlice(allocator, "\"}");
-
-    // Parse to verify it's valid JSON
-    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, msg.items, .{});
-    defer parsed.deinit();
-
-    // Verify the query is preserved correctly
-    try std.testing.expectEqualStrings(query, parsed.value.object.get("query").?.string);
+test "proto decoding: length prefix insufficient data" {
+    const data = [_]u8{ 0x00, 0x00, 0x01 }; // Only 3 bytes
+    const result = proto.decodeLengthPrefix(&data);
+    try std.testing.expectError(error.InsufficientData, result);
 }
 
 // =============================================================================
@@ -655,4 +640,69 @@ test "MAX_RECV_BUFFER_SIZE is 16MB" {
     const expected_mb: usize = 16;
     const expected_bytes = expected_mb * 1024 * 1024;
     try std.testing.expectEqual(expected_bytes, MAX_RECV_BUFFER_SIZE);
+}
+
+// =============================================================================
+// Transport Abstraction Tests
+// =============================================================================
+
+test "GeodeClient.init creates QUIC transport by default" {
+    const allocator = std.testing.allocator;
+    var client = GeodeClient.init(allocator, "localhost", 3141, false, "", "");
+    defer client.deinit();
+
+    try std.testing.expectEqual(Transport.quic, client.transport);
+}
+
+test "GeodeClient.initWithTransport creates correct transport" {
+    const allocator = std.testing.allocator;
+
+    // QUIC transport
+    var quic_client = GeodeClient.initWithTransport(allocator, "localhost", 3141, false, "", "", .quic);
+    defer quic_client.deinit();
+    try std.testing.expectEqual(Transport.quic, quic_client.transport);
+
+    // gRPC transport
+    var grpc_client = GeodeClient.initWithTransport(allocator, "localhost", 50051, false, "", "", .grpc);
+    defer grpc_client.deinit();
+    try std.testing.expectEqual(Transport.grpc, grpc_client.transport);
+}
+
+test "GeodeClient.initFromConfig creates client from Config" {
+    const allocator = std.testing.allocator;
+
+    // QUIC config
+    var quic_cfg = config.Config.init();
+    quic_cfg.host = "db.example.com";
+    quic_cfg.port = 3141;
+    quic_cfg.transport = .quic;
+
+    var quic_client = GeodeClient.initFromConfig(allocator, quic_cfg);
+    defer quic_client.deinit();
+
+    try std.testing.expectEqualStrings("db.example.com", quic_client.host);
+    try std.testing.expectEqual(@as(u16, 3141), quic_client.port);
+    try std.testing.expectEqual(Transport.quic, quic_client.transport);
+
+    // gRPC config
+    var grpc_cfg = config.Config.init();
+    grpc_cfg.host = "grpc.example.com";
+    grpc_cfg.port = 50051;
+    grpc_cfg.transport = .grpc;
+    grpc_cfg.username = "admin";
+    grpc_cfg.password = "secret";
+
+    var grpc_client = GeodeClient.initFromConfig(allocator, grpc_cfg);
+    defer grpc_client.deinit();
+
+    try std.testing.expectEqualStrings("grpc.example.com", grpc_client.host);
+    try std.testing.expectEqual(@as(u16, 50051), grpc_client.port);
+    try std.testing.expectEqual(Transport.grpc, grpc_client.transport);
+    try std.testing.expectEqualStrings("admin", grpc_client.username);
+    try std.testing.expectEqualStrings("secret", grpc_client.password);
+}
+
+test "Transport enum values are correct" {
+    try std.testing.expectEqual(config.Transport.quic, Transport.quic);
+    try std.testing.expectEqual(config.Transport.grpc, Transport.grpc);
 }

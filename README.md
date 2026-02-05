@@ -4,12 +4,15 @@ A production-ready Zig client library for [Geode](https://gitlab.com/devnw/geode
 
 ## Features
 
-- **QUIC + TLS 1.3** transport for secure, high-performance connections
+- **Dual Transport Support**:
+  - **QUIC + TLS 1.3** (default) - secure, high-performance UDP-based connections
+  - **gRPC over HTTP/2** - standard gRPC protocol for compatibility
+- **Protobuf wire format** for efficient binary serialization
 - **Full GQL type system** with 15+ value types including temporal and graph types
 - **Fluent query builders** for type-safe query construction
 - **Connection pooling** with configurable limits and health checks
 - **ISO GQL status codes** for standardized error handling
-- **DSN parsing** for flexible connection configuration
+- **DSN parsing** with transport scheme selection (`quic://`, `grpc://`)
 - **Input validation** for robust security
 
 ## Requirements
@@ -97,6 +100,8 @@ _ = cfg.withTimeout(60000);
 |--------|------|---------|-------------|
 | `host` | `[]const u8` | `"localhost"` | Server hostname |
 | `port` | `u16` | `3141` | Server port |
+| `transport` | `Transport` | `.quic` | Transport protocol (`.quic` or `.grpc`) |
+| `tls` | `bool` | `true` | Enable TLS (gRPC only, QUIC always uses TLS) |
 | `username` | `?[]const u8` | `null` | Authentication username |
 | `password` | `?[]const u8` | `null` | Authentication password |
 | `insecure` | `bool` | `false` | Skip TLS verification |
@@ -107,26 +112,41 @@ _ = cfg.withTimeout(60000);
 
 #### DSN Parsing
 
-Parse connection strings:
+Parse connection strings with transport scheme selection:
 
 ```zig
 const parseDSN = @import("config").parseDSN;
 
-// URL format
-const cfg1 = try parseDSN(allocator, "geode://admin:secret@localhost:3141?insecure=true");
+// QUIC transport (default, high-performance)
+const cfg1 = try parseDSN(allocator, "quic://admin:secret@localhost:3141?insecure=true");
 
-// Simple format
-const cfg2 = try parseDSN(allocator, "localhost:8443");
+// gRPC transport (HTTP/2-based)
+const cfg2 = try parseDSN(allocator, "grpc://localhost:50051?tls=false");
+
+// Legacy format (uses QUIC, deprecated)
+const cfg3 = try parseDSN(allocator, "geode://admin:secret@localhost:3141");
+
+// Simple format (defaults to QUIC on port 3141)
+const cfg4 = try parseDSN(allocator, "localhost:3141");
 
 // With query parameters
-const cfg3 = try parseDSN(allocator, "db.example.com:3141?page_size=500&timeout=60000");
+const cfg5 = try parseDSN(allocator, "quic://db.example.com:3141?page_size=500&timeout=60000");
 ```
+
+**Supported URL Schemes:**
+
+| Scheme | Transport | Default Port | Description |
+|--------|-----------|--------------|-------------|
+| `quic://` | QUIC + TLS 1.3 | 3141 | High-performance UDP transport (recommended) |
+| `grpc://` | gRPC/HTTP/2 | 50051 | Standard gRPC protocol |
+| `geode://` | QUIC | 3141 | Legacy alias for `quic://` (deprecated) |
 
 **Supported Query Parameters:**
 
 | Parameter | Aliases | Description |
 |-----------|---------|-------------|
 | `insecure` | `insecure_skip_verify` | Skip TLS verification (see security warning above) |
+| `tls` | - | Enable/disable TLS (`true`/`false`, gRPC only) |
 | `page_size` | `pageSize` | Result page size |
 | `timeout` | `timeout_ms` | Connection timeout |
 | `username` | `user` | Authentication username |
@@ -506,23 +526,33 @@ sudo sysctl -w kern.ipc.maxsockbuf=8441037
 
 ## Wire Protocol
 
-The client uses JSON line protocol over QUIC:
+The client uses protobuf binary format with a 4-byte big-endian length prefix:
+
+```
+[4 bytes: message length (big-endian)] [protobuf message body]
+```
+
+**Transport Options:**
+
+| Transport | Protocol | Port | Description |
+|-----------|----------|------|-------------|
+| QUIC | UDP + TLS 1.3 | 3141 | Low-latency, multiplexed streams |
+| gRPC | HTTP/2 (+ TLS) | 50051 | Standard gRPC with 5-byte framing |
 
 **Client Messages:**
 
-- `HELLO` - Connection handshake
-- `RUN_GQL` - Execute GQL query
-- `PULL` - Fetch results
-- `BEGIN`/`COMMIT`/`ROLLBACK` - Transaction control
-- `PING` - Keep-alive
+- `HelloRequest` - Connection handshake with authentication
+- `ExecuteRequest` - Execute GQL query with parameters
+- `PullRequest` - Fetch paginated results
+- `BeginRequest`/`CommitRequest`/`RollbackRequest` - Transaction control
+- `PingRequest` - Keep-alive
 
 **Server Responses:**
 
-- `HELLO_ACK` - Handshake acknowledgment
-- `SCHEMA` - Query schema
-- `BINDINGS` - Result rows
-- `ERROR` - Error details
-- `SUCCESS` - Operation success
+- `HelloResponse` - Handshake acknowledgment with session ID
+- `ExecuteResponse` - Query result with schema and bindings
+- `ErrorResponse` - Error details with ISO GQL status code
+- `PongResponse` - Ping acknowledgment
 
 ## Contributing
 

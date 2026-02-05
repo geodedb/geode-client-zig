@@ -3,9 +3,9 @@
 //
 // Query explain and profile support for the Geode Zig client library.
 // Provides query plan analysis and execution profiling.
+// Note: EXPLAIN and PROFILE use the Execute message with special query prefixes.
 
 const std = @import("std");
-const protocol = @import("protocol");
 
 /// A single operation in a query execution plan.
 pub const PlanOperation = struct {
@@ -235,14 +235,16 @@ pub const QueryProfile = struct {
     }
 };
 
-/// Build an EXPLAIN message for query plan analysis.
-pub fn buildExplainMessage(allocator: std.mem.Allocator, query: []const u8) ![]u8 {
-    return protocol.buildExplain(allocator, query);
+/// Build an EXPLAIN query string.
+/// Returns the query with EXPLAIN prefix for use with Execute message.
+pub fn buildExplainQuery(allocator: std.mem.Allocator, query: []const u8) ![]u8 {
+    return std.fmt.allocPrint(allocator, "EXPLAIN {s}", .{query});
 }
 
-/// Build a PROFILE message for query execution profiling.
-pub fn buildProfileMessage(allocator: std.mem.Allocator, query: []const u8) ![]u8 {
-    return protocol.buildProfile(allocator, query);
+/// Build a PROFILE query string.
+/// Returns the query with PROFILE prefix for use with Execute message.
+pub fn buildProfileQuery(allocator: std.mem.Allocator, query: []const u8) ![]u8 {
+    return std.fmt.allocPrint(allocator, "PROFILE {s}", .{query});
 }
 
 // Helper function to format a plan operation with indentation
@@ -297,7 +299,7 @@ test "QueryPlan setRawPlan" {
     var plan = try QueryPlan.init(std.testing.allocator, "MATCH (n) RETURN n");
     defer plan.deinit();
 
-    try plan.setRawPlan("{\"type\":\"EXPLAIN\",\"plan\":{}}");
+    try plan.setRawPlan("plan data here");
     try std.testing.expect(plan.raw_plan != null);
 }
 
@@ -339,16 +341,16 @@ test "QueryProfile format" {
     try std.testing.expect(std.mem.indexOf(u8, output, "Rows Returned: 100") != null);
 }
 
-test "buildExplainMessage creates valid message" {
-    const msg = try buildExplainMessage(std.testing.allocator, "MATCH (n) RETURN n");
-    defer std.testing.allocator.free(msg);
+test "buildExplainQuery creates prefixed query" {
+    const query = try buildExplainQuery(std.testing.allocator, "MATCH (n) RETURN n");
+    defer std.testing.allocator.free(query);
 
-    try std.testing.expect(std.mem.indexOf(u8, msg, "\"type\":\"EXPLAIN\"") != null);
+    try std.testing.expectEqualStrings("EXPLAIN MATCH (n) RETURN n", query);
 }
 
-test "buildProfileMessage creates valid message" {
-    const msg = try buildProfileMessage(std.testing.allocator, "MATCH (n) RETURN n");
-    defer std.testing.allocator.free(msg);
+test "buildProfileQuery creates prefixed query" {
+    const query = try buildProfileQuery(std.testing.allocator, "MATCH (n) RETURN n");
+    defer std.testing.allocator.free(query);
 
-    try std.testing.expect(std.mem.indexOf(u8, msg, "\"type\":\"PROFILE\"") != null);
+    try std.testing.expectEqualStrings("PROFILE MATCH (n) RETURN n", query);
 }
