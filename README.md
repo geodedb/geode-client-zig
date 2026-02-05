@@ -112,6 +112,8 @@ _ = cfg.withTimeout(60000);
 
 #### DSN Parsing
 
+> **Note**: See [`geode/docs/DSN.md`](../geode/docs/DSN.md) for the complete DSN specification.
+
 Parse connection strings with transport scheme selection:
 
 ```zig
