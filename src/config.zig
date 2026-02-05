@@ -2,8 +2,10 @@
 // Copyright (c) 2024-2026 CodePros
 //
 // Configuration and DSN parsing for the Geode Zig client library.
-// Supports URL formats: quic://..., grpc://..., and legacy geode://... (deprecated)
+// Supports URL formats: quic://..., grpc://...
 // Wire format: protobuf (JSON protocol removed)
+//
+// See geode/docs/DSN.md for the complete DSN specification.
 
 const std = @import("std");
 const GeodeError = @import("error").GeodeError;
@@ -41,7 +43,6 @@ pub const Transport = enum {
     pub fn fromString(s: []const u8) ?Transport {
         if (std.mem.eql(u8, s, "quic")) return .quic;
         if (std.mem.eql(u8, s, "grpc")) return .grpc;
-        if (std.mem.eql(u8, s, "grcp")) return .grpc; // Deprecated typo alias
         return null;
     }
 
@@ -54,6 +55,7 @@ pub const Transport = enum {
 };
 
 /// Client configuration parsed from DSN or set programmatically.
+/// See geode/docs/DSN.md for the full specification.
 pub const Config = struct {
     /// Server hostname or IP address
     host: []const u8,
@@ -75,6 +77,20 @@ pub const Config = struct {
     transport: Transport,
     /// TLS enabled (gRPC only, QUIC always uses TLS)
     tls: bool,
+    /// Client name for HELLO handshake
+    hello_name: []const u8,
+    /// Client version for HELLO handshake
+    hello_ver: []const u8,
+    /// GQL conformance level
+    conformance: []const u8,
+    /// Path to CA certificate (optional)
+    ca_cert: ?[]const u8,
+    /// Path to client certificate for mTLS (optional)
+    client_cert: ?[]const u8,
+    /// Path to client key for mTLS (optional)
+    client_key: ?[]const u8,
+    /// SNI server name (optional)
+    server_name: ?[]const u8,
 
     /// Initialize with default values (QUIC transport)
     pub fn init() Config {
@@ -89,6 +105,13 @@ pub const Config = struct {
             .alpn = "geode/1",
             .transport = .quic,
             .tls = true,
+            .hello_name = "geode-zig",
+            .hello_ver = "0.1.0",
+            .conformance = "min",
+            .ca_cert = null,
+            .client_cert = null,
+            .client_key = null,
+            .server_name = null,
         };
     }
 
@@ -186,6 +209,25 @@ pub const Config = struct {
             allocator.free(user);
             self.username = null;
         }
+        // Free other allocated strings from DSN parsing
+        if (self.ca_cert) |v| {
+            allocator.free(v);
+            self.ca_cert = null;
+        }
+        if (self.client_cert) |v| {
+            allocator.free(v);
+            self.client_cert = null;
+        }
+        // SECURITY: Zero client key before freeing
+        if (self.client_key) |v| {
+            @memset(@constCast(v), 0);
+            allocator.free(v);
+            self.client_key = null;
+        }
+        if (self.server_name) |v| {
+            allocator.free(v);
+            self.server_name = null;
+        }
     }
 };
 
@@ -193,8 +235,6 @@ pub const Config = struct {
 /// Supports formats:
 /// - quic://[user:pass@]host[:port][?params] - QUIC transport (recommended)
 /// - grpc://[user:pass@]host[:port][?params] - gRPC transport
-/// - grcp://... - Deprecated alias for grpc:// (typo)
-/// - geode://... - Deprecated, treated as quic://
 /// - Simple format: host:port[?params] - defaults to QUIC
 /// - Host only: host - defaults to QUIC
 ///
@@ -216,13 +256,9 @@ pub fn parseDSN(allocator: std.mem.Allocator, dsn: []const u8) !Config {
         if (std.mem.eql(u8, scheme, "quic")) {
             config.transport = .quic;
             config.port = DEFAULT_PORT;
-        } else if (std.mem.eql(u8, scheme, "grpc") or std.mem.eql(u8, scheme, "grcp")) {
+        } else if (std.mem.eql(u8, scheme, "grpc")) {
             config.transport = .grpc;
             config.port = DEFAULT_GRPC_PORT;
-        } else if (std.mem.eql(u8, scheme, "geode")) {
-            // Legacy scheme, default to QUIC
-            config.transport = .quic;
-            config.port = DEFAULT_PORT;
         } else {
             return error.UnsupportedScheme;
         }
@@ -253,13 +289,9 @@ pub fn parseDSNStrict(allocator: std.mem.Allocator, dsn: []const u8) !Config {
         if (std.mem.eql(u8, scheme, "quic")) {
             config.transport = .quic;
             config.port = DEFAULT_PORT;
-        } else if (std.mem.eql(u8, scheme, "grpc") or std.mem.eql(u8, scheme, "grcp")) {
+        } else if (std.mem.eql(u8, scheme, "grpc")) {
             config.transport = .grpc;
             config.port = DEFAULT_GRPC_PORT;
-        } else if (std.mem.eql(u8, scheme, "geode")) {
-            // Legacy scheme, default to QUIC
-            config.transport = .quic;
-            config.port = DEFAULT_PORT;
         } else {
             return error.UnsupportedScheme;
         }
@@ -357,6 +389,7 @@ fn parseHostPortParams(allocator: std.mem.Allocator, input: []const u8, config: 
 }
 
 /// Parse query parameters (key=value&key=value)
+/// Supports all parameters defined in geode/docs/DSN.md
 fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *Config, strict: bool) !void {
     var iter = std.mem.splitScalar(u8, params, '&');
     while (iter.next()) |param| {
@@ -364,11 +397,12 @@ fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *C
             const key = param[0..eq_pos];
             const value = param[eq_pos + 1 ..];
 
-            if (std.mem.eql(u8, key, "insecure") or std.mem.eql(u8, key, "insecure_skip_verify")) {
-                config.insecure = std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1");
+            // Insecure TLS skip verify aliases (primary: insecure_tls_skip_verify)
+            if (std.mem.eql(u8, key, "insecure_tls_skip_verify") or std.mem.eql(u8, key, "insecure") or std.mem.eql(u8, key, "skip_verify")) {
+                config.insecure = std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1") or std.mem.eql(u8, value, "yes") or std.mem.eql(u8, value, "on");
             } else if (std.mem.eql(u8, key, "tls")) {
                 // TLS setting for gRPC transport (tls=0 or tls=false disables TLS)
-                config.tls = !(std.mem.eql(u8, value, "0") or std.mem.eql(u8, value, "false"));
+                config.tls = !(std.mem.eql(u8, value, "0") or std.mem.eql(u8, value, "false") or std.mem.eql(u8, value, "no") or std.mem.eql(u8, value, "off"));
             } else if (std.mem.eql(u8, key, "page_size") or std.mem.eql(u8, key, "pageSize")) {
                 if (strict) {
                     // SECURITY: Strict mode returns error for invalid page_size (CWE-20)
@@ -376,17 +410,41 @@ fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *C
                 } else {
                     config.page_size = std.fmt.parseInt(u32, value, 10) catch DEFAULT_PAGE_SIZE;
                 }
-            } else if (std.mem.eql(u8, key, "timeout") or std.mem.eql(u8, key, "timeout_ms")) {
-                if (strict) {
-                    // SECURITY: Strict mode returns error for invalid timeout (CWE-20)
-                    config.timeout_ms = std.fmt.parseInt(u32, value, 10) catch return error.InvalidTimeout;
+            } else if (std.mem.eql(u8, key, "timeout") or std.mem.eql(u8, key, "timeout_ms") or std.mem.eql(u8, key, "connect_timeout")) {
+                // connect_timeout is in seconds, timeout_ms is in milliseconds
+                if (std.mem.eql(u8, key, "connect_timeout")) {
+                    // Convert seconds to milliseconds
+                    const secs = std.fmt.parseInt(u32, value, 10) catch {
+                        if (strict) return error.InvalidTimeout;
+                        continue;
+                    };
+                    config.timeout_ms = secs * 1000;
                 } else {
-                    config.timeout_ms = std.fmt.parseInt(u32, value, 10) catch DEFAULT_TIMEOUT_MS;
+                    if (strict) {
+                        // SECURITY: Strict mode returns error for invalid timeout (CWE-20)
+                        config.timeout_ms = std.fmt.parseInt(u32, value, 10) catch return error.InvalidTimeout;
+                    } else {
+                        config.timeout_ms = std.fmt.parseInt(u32, value, 10) catch DEFAULT_TIMEOUT_MS;
+                    }
                 }
             } else if (std.mem.eql(u8, key, "username") or std.mem.eql(u8, key, "user")) {
                 config.username = try urlDecode(allocator, value);
             } else if (std.mem.eql(u8, key, "password") or std.mem.eql(u8, key, "pass")) {
                 config.password = try urlDecode(allocator, value);
+            } else if (std.mem.eql(u8, key, "hello_name")) {
+                config.hello_name = try urlDecode(allocator, value);
+            } else if (std.mem.eql(u8, key, "hello_ver")) {
+                config.hello_ver = try urlDecode(allocator, value);
+            } else if (std.mem.eql(u8, key, "conformance")) {
+                config.conformance = try urlDecode(allocator, value);
+            } else if (std.mem.eql(u8, key, "ca") or std.mem.eql(u8, key, "ca_cert")) {
+                config.ca_cert = try urlDecode(allocator, value);
+            } else if (std.mem.eql(u8, key, "cert") or std.mem.eql(u8, key, "client_cert")) {
+                config.client_cert = try urlDecode(allocator, value);
+            } else if (std.mem.eql(u8, key, "key") or std.mem.eql(u8, key, "client_key")) {
+                config.client_key = try urlDecode(allocator, value);
+            } else if (std.mem.eql(u8, key, "server_name")) {
+                config.server_name = try urlDecode(allocator, value);
             }
         }
     }
@@ -496,13 +554,13 @@ test "parseDSN parses host only" {
 }
 
 test "parseDSN parses URL format basic" {
-    const cfg = try parseDSN(std.testing.allocator, "geode://localhost:3141");
+    const cfg = try parseDSN(std.testing.allocator, "quic://localhost:3141");
     try std.testing.expectEqualStrings("localhost", cfg.host);
     try std.testing.expectEqual(@as(u16, 3141), cfg.port);
 }
 
 test "parseDSN parses URL format with credentials" {
-    const cfg = try parseDSN(std.testing.allocator, "geode://admin:secret@localhost:3141");
+    const cfg = try parseDSN(std.testing.allocator, "quic://admin:secret@localhost:3141");
     defer {
         if (cfg.username) |u| std.testing.allocator.free(u);
         if (cfg.password) |p| std.testing.allocator.free(p);
@@ -514,7 +572,7 @@ test "parseDSN parses URL format with credentials" {
 }
 
 test "parseDSN parses URL with encoded credentials" {
-    const cfg = try parseDSN(std.testing.allocator, "geode://user%40domain:pass%3Dword@localhost:3141");
+    const cfg = try parseDSN(std.testing.allocator, "quic://user%40domain:pass%3Dword@localhost:3141");
     defer {
         if (cfg.username) |u| std.testing.allocator.free(u);
         if (cfg.password) |p| std.testing.allocator.free(p);
@@ -530,7 +588,7 @@ test "parseDSN parses query parameters" {
 }
 
 test "parseDSN parses all query parameters" {
-    const cfg = try parseDSN(std.testing.allocator, "geode://localhost:3141?insecure=1&page_size=200&timeout=60000");
+    const cfg = try parseDSN(std.testing.allocator, "quic://localhost:3141?insecure=1&page_size=200&timeout=60000");
     try std.testing.expect(cfg.insecure);
     try std.testing.expectEqual(@as(u32, 200), cfg.page_size);
     try std.testing.expectEqual(@as(u32, 60000), cfg.timeout_ms);
@@ -547,7 +605,7 @@ test "parseDSN parses username in query params" {
 }
 
 test "parseDSN parses alternative param names" {
-    const cfg = try parseDSN(std.testing.allocator, "localhost:3141?user=admin&pass=secret&pageSize=100&insecure_skip_verify=true");
+    const cfg = try parseDSN(std.testing.allocator, "localhost:3141?user=admin&pass=secret&pageSize=100&skip_verify=true");
     defer {
         if (cfg.username) |u| std.testing.allocator.free(u);
         if (cfg.password) |p| std.testing.allocator.free(p);
@@ -571,7 +629,7 @@ test "parseDSN handles IPv6 without port" {
 }
 
 test "parseDSN handles IPv6 in URL format" {
-    const cfg = try parseDSN(std.testing.allocator, "geode://[2001:db8::1]:8443");
+    const cfg = try parseDSN(std.testing.allocator, "quic://[2001:db8::1]:8443");
     try std.testing.expectEqualStrings("2001:db8::1", cfg.host);
     try std.testing.expectEqual(@as(u16, 8443), cfg.port);
 }
@@ -630,7 +688,7 @@ test "Config.toConnectionString formats correctly" {
 // =============================================================================
 
 test "Config.deinit zeros password before freeing" {
-    var cfg = try parseDSN(std.testing.allocator, "geode://admin:secret123@localhost:3141");
+    var cfg = try parseDSN(std.testing.allocator, "quic://admin:secret123@localhost:3141");
 
     // Verify password was set
     try std.testing.expect(cfg.password != null);
@@ -664,7 +722,7 @@ test "Config.deinit handles config without credentials" {
 }
 
 test "Config.deinit handles config with username only" {
-    var cfg = try parseDSN(std.testing.allocator, "geode://admin@localhost:3141");
+    var cfg = try parseDSN(std.testing.allocator, "quic://admin@localhost:3141");
     defer cfg.deinit(std.testing.allocator);
 
     try std.testing.expect(cfg.username != null);
@@ -744,7 +802,7 @@ test "parseDSNStrict accepts valid query parameters" {
 }
 
 test "parseDSNStrict accepts valid URL format with credentials" {
-    var cfg = try parseDSNStrict(std.testing.allocator, "geode://admin:secret@localhost:3141");
+    var cfg = try parseDSNStrict(std.testing.allocator, "quic://admin:secret@localhost:3141");
     defer cfg.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings("localhost", cfg.host);
     try std.testing.expectEqual(@as(u16, 3141), cfg.port);
@@ -785,7 +843,7 @@ test "Transport.toString returns correct strings" {
 test "Transport.fromString parses correctly" {
     try std.testing.expectEqual(Transport.quic, Transport.fromString("quic").?);
     try std.testing.expectEqual(Transport.grpc, Transport.fromString("grpc").?);
-    try std.testing.expectEqual(Transport.grpc, Transport.fromString("grcp").?); // Deprecated alias
+    try std.testing.expect(Transport.fromString("grcp") == null); // No longer supported
     try std.testing.expect(Transport.fromString("unknown") == null);
 }
 
@@ -836,11 +894,12 @@ test "parseDSN parses grpc:// with tls=false parameter" {
     try std.testing.expect(!cfg.tls);
 }
 
-test "parseDSN parses grcp:// deprecated alias" {
-    const cfg = try parseDSN(std.testing.allocator, "grcp://localhost:50051");
-    try std.testing.expectEqual(Transport.grpc, cfg.transport);
-    try std.testing.expectEqualStrings("localhost", cfg.host);
-    try std.testing.expectEqual(@as(u16, 50051), cfg.port);
+test "parseDSN rejects grcp:// scheme" {
+    try std.testing.expectError(error.UnsupportedScheme, parseDSN(std.testing.allocator, "grcp://localhost:50051"));
+}
+
+test "parseDSN rejects geode:// scheme" {
+    try std.testing.expectError(error.UnsupportedScheme, parseDSN(std.testing.allocator, "geode://localhost:3141"));
 }
 
 test "parseDSN parses quic:// with IPv6" {
@@ -945,4 +1004,64 @@ test "Config.toDSN formats correctly for gRPC" {
 test "simple host:port defaults to QUIC transport" {
     const cfg = try parseDSN(std.testing.allocator, "localhost:3141");
     try std.testing.expectEqual(Transport.quic, cfg.transport);
+}
+
+// =============================================================================
+// insecure_tls_skip_verify Parameter Tests (Unified DSN)
+// =============================================================================
+
+test "parseDSN parses insecure_tls_skip_verify=true" {
+    const cfg = try parseDSN(std.testing.allocator, "quic://localhost:3141?insecure_tls_skip_verify=true");
+    try std.testing.expect(cfg.insecure);
+}
+
+test "parseDSN parses insecure_tls_skip_verify=1" {
+    const cfg = try parseDSN(std.testing.allocator, "quic://localhost:3141?insecure_tls_skip_verify=1");
+    try std.testing.expect(cfg.insecure);
+}
+
+test "parseDSN parses insecure_tls_skip_verify=yes" {
+    const cfg = try parseDSN(std.testing.allocator, "quic://localhost:3141?insecure_tls_skip_verify=yes");
+    try std.testing.expect(cfg.insecure);
+}
+
+test "parseDSN parses insecure_tls_skip_verify=on" {
+    const cfg = try parseDSN(std.testing.allocator, "quic://localhost:3141?insecure_tls_skip_verify=on");
+    try std.testing.expect(cfg.insecure);
+}
+
+test "parseDSN parses insecure_tls_skip_verify=false" {
+    const cfg = try parseDSN(std.testing.allocator, "quic://localhost:3141?insecure_tls_skip_verify=false");
+    try std.testing.expect(!cfg.insecure);
+}
+
+test "parseDSN parses insecure=true alias" {
+    const cfg = try parseDSN(std.testing.allocator, "quic://localhost:3141?insecure=true");
+    try std.testing.expect(cfg.insecure);
+}
+
+test "parseDSN parses insecure=1 alias" {
+    const cfg = try parseDSN(std.testing.allocator, "grpc://localhost:50051?insecure=1");
+    try std.testing.expect(cfg.insecure);
+}
+
+test "parseDSN parses skip_verify=true alias" {
+    const cfg = try parseDSN(std.testing.allocator, "quic://localhost:3141?skip_verify=true");
+    try std.testing.expect(cfg.insecure);
+}
+
+test "parseDSN parses skip_verify=yes alias" {
+    const cfg = try parseDSN(std.testing.allocator, "quic://localhost:3141?skip_verify=yes");
+    try std.testing.expect(cfg.insecure);
+}
+
+test "parseDSN skip_verify defaults to false" {
+    const cfg = try parseDSN(std.testing.allocator, "quic://localhost:3141");
+    try std.testing.expect(!cfg.insecure);
+}
+
+test "parseDSN insecure_tls_skip_verify with grpc" {
+    const cfg = try parseDSN(std.testing.allocator, "grpc://localhost:50051?insecure_tls_skip_verify=true");
+    try std.testing.expectEqual(Transport.grpc, cfg.transport);
+    try std.testing.expect(cfg.insecure);
 }

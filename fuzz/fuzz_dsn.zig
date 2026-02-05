@@ -75,9 +75,9 @@ test "property: valid host:port always parses" {
 
 test "property: URL format preserves host and port" {
     const test_cases = [_]struct { dsn: []const u8, expected_port: u16 }{
-        .{ .dsn = "geode://localhost:3141", .expected_port = 3141 },
-        .{ .dsn = "geode://127.0.0.1:8443", .expected_port = 8443 },
-        .{ .dsn = "geode://example.com:3141", .expected_port = 3141 },
+        .{ .dsn = "quic://localhost:3141", .expected_port = 3141 },
+        .{ .dsn = "quic://127.0.0.1:8443", .expected_port = 8443 },
+        .{ .dsn = "quic://example.com:3141", .expected_port = 3141 },
     };
 
     var buffer: [4096]u8 = undefined;
@@ -147,7 +147,7 @@ test "property: special characters don't crash" {
         "\x00\x00\x00",
         "localhost:\x00",
         "localhost:3141\x00extra",
-        "geode://\x00:3141",
+        "quic://\x00:3141",
         "localhost:3141?key=\x00",
         "\xff\xfe\xfd",
         "localhost:3141?" ++ "\x00" ** 100,
@@ -186,26 +186,26 @@ test "property: very long inputs don't crash" {
 
 test "property: malformed URLs don't crash" {
     const inputs = [_][]const u8{
-        "geode://",
-        "geode:///",
-        "geode://:",
-        "geode://:3141",
-        "geode://host:",
-        "geode://host:abc",
-        "geode://host:-1",
-        "geode://host:99999",
-        "geode://@host:3141",
-        "geode://user@:3141",
-        "geode://user:@host:3141",
-        "geode://:pass@host:3141",
+        "quic://",
+        "quic:///",
+        "quic://:",
+        "quic://:3141",
+        "quic://host:",
+        "quic://host:abc",
+        "quic://host:-1",
+        "quic://host:99999",
+        "quic://@host:3141",
+        "quic://user@:3141",
+        "quic://user:@host:3141",
+        "quic://:pass@host:3141",
         "http://localhost:3141", // Wrong scheme
         "://localhost:3141",
-        "geode://localhost:3141?",
-        "geode://localhost:3141?=value",
-        "geode://localhost:3141?key=",
-        "geode://localhost:3141?&",
-        "geode://localhost:3141?key=value&",
-        "geode://localhost:3141?key=value&&key2=value2",
+        "quic://localhost:3141?",
+        "quic://localhost:3141?=value",
+        "quic://localhost:3141?key=",
+        "quic://localhost:3141?&",
+        "quic://localhost:3141?key=value&",
+        "quic://localhost:3141?key=value&&key2=value2",
     };
 
     var buffer: [4096]u8 = undefined;

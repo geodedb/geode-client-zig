@@ -534,12 +534,12 @@ fn benchParseDSNSimple(allocator: std.mem.Allocator) void {
 }
 
 fn benchParseDSNURL(allocator: std.mem.Allocator) void {
-    const cfg = parseDSN(allocator, "geode://localhost:3141") catch unreachable;
+    const cfg = parseDSN(allocator, "quic://localhost:3141") catch unreachable;
     std.mem.doNotOptimizeAway(&cfg);
 }
 
 fn benchParseDSNFull(allocator: std.mem.Allocator) void {
-    const cfg = parseDSN(allocator, "geode://admin:secret@localhost:3141?insecure=true&page_size=500") catch unreachable;
+    const cfg = parseDSN(allocator, "quic://admin:secret@localhost:3141?insecure=true&page_size=500") catch unreachable;
     std.mem.doNotOptimizeAway(&cfg);
 }
 
