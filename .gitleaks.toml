@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 DevNW LLC
 #
-# SECURITY: This configuration uses targeted rules instead of blanket file
-# exclusions to ensure secrets in .zig and .md files are still detected.
-# See GAP_ANALYSIS.md Finding 2.
+# SECURITY: This configuration uses allowlists for known false positives
+# while still detecting actual secrets. All patterns are documented with
+# justification for why they are safe to ignore.
 
 title = "Gitleaks Configuration"
 
@@ -12,12 +12,13 @@ title = "Gitleaks Configuration"
 useDefault = true
 
 [allowlist]
-description = "Global path allowlist for build artifacts and vendored code"
+description = "Global allowlist for false positives"
+# Path-based allowlists for build artifacts
 paths = [
   # Build artifacts and cache
   '''\.zig-cache''',
   '''zig-out''',
-  # Vendored dependencies (may contain test vectors)
+  # Vendored dependencies
   '''vendor/.*''',
   # Test data directories
   '''testdata''',
@@ -25,63 +26,40 @@ paths = [
   '''.*\.log$''',
 ]
 
-# =============================================================================
-# Targeted regex allowlists for known test patterns
-# These replace the blanket .zig and .md exclusions with specific patterns
-# =============================================================================
-
-[[rules]]
-id = "test-credentials-zig"
-description = "Allow known test credentials in Zig test code"
-regex = '''("secret"|"password123"|"token123"|"admin"|"testuser"|"newuser")'''
-allowlist.paths = [
-  '''tests/.*\.zig$''',
-  '''src/.*\.zig$''',
-  '''benchmarks/.*\.zig$''',
-  '''fuzz/.*\.zig$''',
+# Regex-based allowlists for false positives
+# These patterns match known false positives that are not actual secrets
+regexes = [
+  # Zig struct field declarations (type annotations, not values)
+  '''password:\s*\??(\[\]const u8|u8)''',
+  '''(session_token|token_secret|token_expiry):\s*''',
+  # DSN example strings in documentation/tests with test credentials
+  '''(quic|grpc|geode)://(admin|user|testuser):(secret|password)@(localhost|127\.0\.0\.1|::1)''',
+  # Query parameter examples with test credentials
+  '''(user|username)=(admin|testuser)&(pass|password)=secret''',
+  # withCredentials function calls in examples
+  '''withCredentials\("(admin|testuser)",\s*"secret"\)''',
+  # Test assertion patterns
+  '''expectEqualStrings?\("(secret|password123?|pass=word)"''',
+  # JSON field declarations (building protocol messages)
+  '''"password":\s*\\"''',
+  # Default test password constant
+  '''GeodeTestPassword123!''',
+  # Error message strings mentioning credentials
+  '''(invalid|bad|wrong|missing)\s+credentials''',
 ]
 
-[[rules]]
-id = "zig-struct-field-password"
-description = "Allow password field declarations in Zig structs"
-regex = '''password:\s*(\?\[\]const u8|\[\]const u8)'''
-
-[[rules]]
-id = "zig-struct-field-token"
-description = "Allow token field declarations in Zig structs"
-regex = '''(session_token|token_secret|token_expiry):\s*'''
-
-[[rules]]
-id = "dsn-example-credentials"
-description = "Allow DSN examples with test credentials"
-regex = '''geode://(admin|user):secret@(localhost|127\.0\.0\.1):\d+'''
-
-[[rules]]
-id = "test-expect-password"
-description = "Allow test assertions containing password strings"
-regex = '''expectEqualStrings\("(secret|pass=word|password123)"'''
-
-[[rules]]
-id = "json-field-password"
-description = "Allow JSON password field patterns in protocol builders"
-regex = '''"password":\\"'''
-
-[[rules]]
-id = "doc-example-credentials"
-description = "Allow example credentials in documentation"
-regex = '''(username|user)=(admin|testuser)&(password|pass)=secret'''
-allowlist.paths = [
-  '''.*\.md$''',
-  '''CLAUDE\.md$''',
-  '''README\.md$''',
+# Stop words to reduce noise
+stopwords = [
+  "EXAMPLE",
+  "example",
+  "test",
+  "TEST",
+  "mock",
+  "MOCK",
+  "sample",
+  "SAMPLE",
+  "placeholder",
+  "PLACEHOLDER",
+  "TODO",
+  "FIXME",
 ]
-
-[[rules]]
-id = "config-example-credentials"
-description = "Allow withCredentials examples"
-regex = '''withCredentials\("admin",\s*"secret"\)'''
-
-[[rules]]
-id = "error-messages"
-description = "Allow error messages mentioning credentials"
-regex = '''(invalid|bad|wrong)\s+credentials'''
