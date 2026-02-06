@@ -21,7 +21,7 @@
 
 variables:
   ZIG_VERSION: "0.15.1"
-  GEODE_IMAGE: "registry.gitlab.com/devnw/geode/geode:latest"
+  GEODE_IMAGE: "geodedb/geode:latest"
 
 default:
   tags:

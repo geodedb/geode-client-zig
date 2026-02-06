@@ -12,7 +12,7 @@
 #   ./scripts/docker-integration-test.sh [options]
 #
 # Options:
-#   --image IMAGE    Docker image to use (default: registry.gitlab.com/devnw/geode/geode:latest)
+#   --image IMAGE    Docker image to use (default: geodedb/geode:latest)
 #   --timeout SECS   Startup timeout in seconds (default: 60)
 #   --keep           Keep container running after tests
 #   --pull           Pull latest image before running
@@ -25,7 +25,7 @@
 set -e
 
 # Configuration
-DOCKER_IMAGE="${GEODE_IMAGE:-registry.gitlab.com/devnw/geode/geode:latest}"
+DOCKER_IMAGE="${GEODE_IMAGE:-geodedb/geode:latest}"
 CONTAINER_NAME="geode-zig-test-$$"
 CONTAINER_PORT=3141
 STARTUP_TIMEOUT=60

@@ -7,7 +7,7 @@ ZIG ?= zig
 ZIG_FLAGS ?=
 
 # Docker settings
-DOCKER_IMAGE ?= registry.gitlab.com/devnw/geode/geode:latest
+DOCKER_IMAGE ?= geodedb/geode:latest
 DOCKER_CONTAINER_NAME ?= geode-test-server
 GEODE_HOST ?= 127.0.0.1
 GEODE_PORT ?= 3141
