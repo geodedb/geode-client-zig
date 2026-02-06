@@ -383,8 +383,10 @@ fn encodeValue(allocator: std.mem.Allocator, val: Value) ![]u8 {
         try encodeDouble(dbl_buf.writer(allocator), 1, d);
         try encodeSubmessage(writer, 3, dbl_buf.items);
     } else if (val.bool_val) |b| {
-        // bool_val is a scalar bool in the oneof (not a submessage)
-        try encodeBool(writer, 4, b);
+        // bool_val is a scalar bool in the oneof (not a submessage).
+        // Must always encode, even for false, since this is inside a oneof.
+        try encodeTag(writer, 4, WIRE_VARINT);
+        try encodeVarint(writer, if (b) 1 else 0);
     } else if (val.string_val) |s| {
         // StringValue message with value field
         var str_buf: std.ArrayListUnmanaged(u8) = .{};
