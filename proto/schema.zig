@@ -221,18 +221,18 @@ pub const Value = struct {
 };
 
 pub const ValueKind = union(enum) {
-    string_val: []const u8,
+    null_val: bool,
     int_val: i64,
     double_val: f64,
     bool_val: bool,
-    null_val: bool,
+    string_val: []const u8,
 
     pub const _desc_table = .{
-        .string_val = fd(1, .{ .scalar = .string }),
+        .null_val = fd(1, .{ .scalar = .bool }),
         .int_val = fd(2, .{ .scalar = .int64 }),
         .double_val = fd(3, .{ .scalar = .double }),
         .bool_val = fd(4, .{ .scalar = .bool }),
-        .null_val = fd(5, .{ .scalar = .bool }),
+        .string_val = fd(5, .{ .scalar = .string }),
     };
 };
 
@@ -295,10 +295,10 @@ pub const QuicClientMessage = union(enum) {
     pub const _desc_table = .{
         .hello = fd(1, .{ .submessage = {} }),
         .execute = fd(2, .{ .submessage = {} }),
-        .ping = fd(3, .{ .submessage = {} }),
-        .begin = fd(6, .{ .submessage = {} }),
-        .commit = fd(7, .{ .submessage = {} }),
-        .rollback = fd(8, .{ .submessage = {} }),
+        .ping = fd(4, .{ .submessage = {} }),
+        .begin = fd(7, .{ .submessage = {} }),
+        .commit = fd(8, .{ .submessage = {} }),
+        .rollback = fd(9, .{ .submessage = {} }),
     };
 };
 
@@ -313,10 +313,10 @@ pub const QuicServerMessage = union(enum) {
     pub const _desc_table = .{
         .hello = fd(1, .{ .submessage = {} }),
         .execute = fd(2, .{ .submessage = {} }),
-        .ping = fd(3, .{ .submessage = {} }),
-        .begin = fd(6, .{ .submessage = {} }),
-        .commit = fd(7, .{ .submessage = {} }),
-        .rollback = fd(8, .{ .submessage = {} }),
+        .ping = fd(4, .{ .submessage = {} }),
+        .begin = fd(7, .{ .submessage = {} }),
+        .commit = fd(8, .{ .submessage = {} }),
+        .rollback = fd(9, .{ .submessage = {} }),
     };
 };
 
@@ -348,11 +348,11 @@ pub const ExecutionResponseUnion = union(enum) {
     heartbeat: Heartbeat,
 
     pub const _desc_table = .{
-        .schema = fd(1, .{ .submessage = {} }),
-        .page = fd(2, .{ .submessage = {} }),
-        .@"error" = fd(3, .{ .submessage = {} }),
-        .metrics = fd(4, .{ .submessage = {} }),
-        .heartbeat = fd(5, .{ .submessage = {} }),
+        .schema = fd(2, .{ .submessage = {} }),
+        .page = fd(3, .{ .submessage = {} }),
+        .@"error" = fd(4, .{ .submessage = {} }),
+        .metrics = fd(5, .{ .submessage = {} }),
+        .heartbeat = fd(8, .{ .submessage = {} }),
     };
 };
 

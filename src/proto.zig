@@ -383,11 +383,8 @@ fn encodeValue(allocator: std.mem.Allocator, val: Value) ![]u8 {
         try encodeDouble(dbl_buf.writer(allocator), 1, d);
         try encodeSubmessage(writer, 3, dbl_buf.items);
     } else if (val.bool_val) |b| {
-        // BoolValue message with value field
-        var bool_buf: std.ArrayListUnmanaged(u8) = .{};
-        defer bool_buf.deinit(allocator);
-        try encodeBool(bool_buf.writer(allocator), 1, b);
-        try encodeSubmessage(writer, 4, bool_buf.items);
+        // bool_val is a scalar bool in the oneof (not a submessage)
+        try encodeBool(writer, 4, b);
     } else if (val.string_val) |s| {
         // StringValue message with value field
         var str_buf: std.ArrayListUnmanaged(u8) = .{};
@@ -691,21 +688,16 @@ fn decodeHelloResponse(allocator: std.mem.Allocator, data: []const u8) !HelloRes
 }
 
 fn decodeColumnDefinition(allocator: std.mem.Allocator, data: []const u8) !ColumnDefinition {
-    _ = allocator;
     var col = ColumnDefinition{};
     var pos: usize = 0;
     while (pos < data.len) {
         const tag = try decodeTag(data, &pos);
         switch (tag.field_num) {
             1 => if (tag.wire_type == WIRE_BYTES) {
-                const length: usize = @intCast(try decodeVarint(data, &pos));
-                col.name = data[pos..][0..length];
-                pos += length;
+                col.name = try decodeString(allocator, data, &pos);
             } else try skipField(data, &pos, tag.wire_type),
             2 => if (tag.wire_type == WIRE_BYTES) {
-                const length: usize = @intCast(try decodeVarint(data, &pos));
-                col.col_type = data[pos..][0..length];
-                pos += length;
+                col.col_type = try decodeString(allocator, data, &pos);
             } else try skipField(data, &pos, tag.wire_type),
             else => try skipField(data, &pos, tag.wire_type),
         }
@@ -730,7 +722,7 @@ fn decodeSchemaDefinition(allocator: std.mem.Allocator, data: []const u8) !Schem
     return schema;
 }
 
-fn decodeValue(data: []const u8, pos: *usize) !Value {
+fn decodeValue(allocator: std.mem.Allocator, data: []const u8, pos: *usize) !Value {
     var val = Value{};
     const val_data = try decodeBytesField(data, pos);
     var val_pos: usize = 0;
@@ -768,29 +760,18 @@ fn decodeValue(data: []const u8, pos: *usize) !Value {
                     }
                 }
             } else try skipField(val_data, &val_pos, tag.wire_type),
-            4 => if (tag.wire_type == WIRE_BYTES) {
-                // BoolValue submessage
-                const bool_data = try decodeBytesField(val_data, &val_pos);
-                var bool_pos: usize = 0;
-                while (bool_pos < bool_data.len) {
-                    const bool_tag = try decodeTag(bool_data, &bool_pos);
-                    if (bool_tag.field_num == 1 and bool_tag.wire_type == WIRE_VARINT) {
-                        val.bool_val = try decodeBool(bool_data, &bool_pos);
-                    } else {
-                        try skipField(bool_data, &bool_pos, bool_tag.wire_type);
-                    }
-                }
+            4 => if (tag.wire_type == WIRE_VARINT) {
+                // bool_val is a scalar bool in the oneof (not a submessage)
+                val.bool_val = try decodeBool(val_data, &val_pos);
             } else try skipField(val_data, &val_pos, tag.wire_type),
             5 => if (tag.wire_type == WIRE_BYTES) {
-                // StringValue submessage
+                // StringValue submessage - allocate copy to avoid dangling slice
                 const str_data = try decodeBytesField(val_data, &val_pos);
                 var str_pos: usize = 0;
                 while (str_pos < str_data.len) {
                     const str_tag = try decodeTag(str_data, &str_pos);
                     if (str_tag.field_num == 1 and str_tag.wire_type == WIRE_BYTES) {
-                        const length: usize = @intCast(try decodeVarint(str_data, &str_pos));
-                        val.string_val = str_data[str_pos..][0..length];
-                        str_pos += length;
+                        val.string_val = try decodeString(allocator, str_data, &str_pos);
                     } else {
                         try skipField(str_data, &str_pos, str_tag.wire_type);
                     }
@@ -809,7 +790,7 @@ fn decodeRow(allocator: std.mem.Allocator, data: []const u8) !Row {
         const tag = try decodeTag(data, &pos);
         switch (tag.field_num) {
             1 => if (tag.wire_type == WIRE_BYTES) {
-                const val = try decodeValue(data, &pos);
+                const val = try decodeValue(allocator, data, &pos);
                 try row.values.append(allocator, val);
             } else try skipField(data, &pos, tag.wire_type),
             else => try skipField(data, &pos, tag.wire_type),
@@ -846,31 +827,22 @@ fn decodeDataPage(allocator: std.mem.Allocator, data: []const u8) !DataPage {
 }
 
 fn decodeProtoError(allocator: std.mem.Allocator, data: []const u8) !ProtoError {
-    _ = allocator;
     var err = ProtoError{};
     var pos: usize = 0;
     while (pos < data.len) {
         const tag = try decodeTag(data, &pos);
         switch (tag.field_num) {
             1 => if (tag.wire_type == WIRE_BYTES) {
-                const length: usize = @intCast(try decodeVarint(data, &pos));
-                err.code = data[pos..][0..length];
-                pos += length;
+                err.code = try decodeString(allocator, data, &pos);
             } else try skipField(data, &pos, tag.wire_type),
             2 => if (tag.wire_type == WIRE_BYTES) {
-                const length: usize = @intCast(try decodeVarint(data, &pos));
-                err.message = data[pos..][0..length];
-                pos += length;
+                err.message = try decodeString(allocator, data, &pos);
             } else try skipField(data, &pos, tag.wire_type),
             3 => if (tag.wire_type == WIRE_BYTES) {
-                const length: usize = @intCast(try decodeVarint(data, &pos));
-                err.error_type = data[pos..][0..length];
-                pos += length;
+                err.error_type = try decodeString(allocator, data, &pos);
             } else try skipField(data, &pos, tag.wire_type),
             4 => if (tag.wire_type == WIRE_BYTES) {
-                const length: usize = @intCast(try decodeVarint(data, &pos));
-                err.anchor = data[pos..][0..length];
-                pos += length;
+                err.anchor = try decodeString(allocator, data, &pos);
             } else try skipField(data, &pos, tag.wire_type),
             else => try skipField(data, &pos, tag.wire_type),
         }
@@ -910,21 +882,17 @@ fn decodeStatus(allocator: std.mem.Allocator, data: []const u8) !Status {
         const tag = try decodeTag(data, &pos);
         switch (tag.field_num) {
             1 => if (tag.wire_type == WIRE_BYTES) {
-                const length: usize = @intCast(try decodeVarint(data, &pos));
-                status.status_class = data[pos..][0..length];
-                pos += length;
+                status.status_class = try decodeString(allocator, data, &pos);
             } else try skipField(data, &pos, tag.wire_type),
             2 => if (tag.wire_type == WIRE_BYTES) {
-                const length: usize = @intCast(try decodeVarint(data, &pos));
-                status.status_subclass = data[pos..][0..length];
-                pos += length;
+                status.status_subclass = try decodeString(allocator, data, &pos);
             } else try skipField(data, &pos, tag.wire_type),
             3 => if (tag.wire_type == WIRE_BYTES) {
-                const s = try decodeBytesField(data, &pos);
+                const s = try decodeString(allocator, data, &pos);
                 try status.additional_statuses.append(allocator, s);
             } else try skipField(data, &pos, tag.wire_type),
             4 => if (tag.wire_type == WIRE_BYTES) {
-                const f = try decodeBytesField(data, &pos);
+                const f = try decodeString(allocator, data, &pos);
                 try status.flagger_findings.append(allocator, f);
             } else try skipField(data, &pos, tag.wire_type),
             else => try skipField(data, &pos, tag.wire_type),
