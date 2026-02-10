@@ -11,6 +11,7 @@ DOCKER_IMAGE ?= geodedb/geode:latest
 DOCKER_CONTAINER_NAME ?= geode-test-server
 GEODE_HOST ?= 127.0.0.1
 GEODE_PORT ?= 3141
+GEODE_GRPC_PORT ?= 50051
 
 .PHONY: all build release test test-unit test-integration test-integration-docker \
         test-integration-docker-legacy test-integration-docker-verbose test-integration-docker-keep \
@@ -45,6 +46,7 @@ help:
 	@echo "  make test           - Run all unit tests"
 	@echo "  make test-unit      - Run unit tests only"
 	@echo "  make test-integration        - Run integration tests (requires Geode server)"
+	@echo "  make test-integration-grpc  - Run gRPC integration tests"
 	@echo "  make test-integration-docker - Run integration tests with Docker (auto container)"
 	@echo "  make test-integration-docker-verbose - Run with verbose Docker output"
 	@echo "  make test-integration-docker-keep    - Keep container running after tests"
@@ -182,6 +184,18 @@ test-connection-v2: build
 	@echo "Running test_connection_v2..."
 	GEODE_SERVER=$(GEODE_HOST):$(GEODE_PORT) GEODE_INSECURE=1 ./zig-out/bin/test_connection_v2
 
+test-integration-grpc:
+	@echo "Running gRPC integration tests..."
+	@echo ""
+	@echo "Tests connect to Geode gRPC server at $(GEODE_HOST):$(GEODE_GRPC_PORT)"
+	@echo "Start server first: cd ../geode && ./zig-out/bin/geode serve --listen-grpc 0.0.0.0:50051"
+	@echo "Or use: make docker-start"
+	@echo ""
+	GEODE_TRANSPORT=grpc GEODE_SERVER=$(GEODE_HOST):$(GEODE_GRPC_PORT) GEODE_INSECURE=1 \
+		$(ZIG) build test-integration $(ZIG_FLAGS)
+	@echo ""
+	@echo "✓ gRPC integration tests complete"
+
 test-all: test-unit test-integration test-fuzz
 	@echo "✓ All tests complete (including integration and fuzz)"
 
@@ -234,8 +248,9 @@ docker-start:
 		docker run -d --rm \
 			--name $(DOCKER_CONTAINER_NAME) \
 			-p $(GEODE_PORT):3141/udp \
+			-p $(GEODE_GRPC_PORT):50051/tcp \
 			$(DOCKER_IMAGE) \
-			serve --listen 0.0.0.0:3141 --log-level info; \
+			serve --listen 0.0.0.0:3141 --listen-grpc 0.0.0.0:50051 --log-level info; \
 		echo "✓ Container started: $(DOCKER_CONTAINER_NAME)"; \
 	fi
 

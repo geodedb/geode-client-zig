@@ -28,6 +28,7 @@ set -e
 DOCKER_IMAGE="${GEODE_IMAGE:-geodedb/geode:latest}"
 CONTAINER_NAME="geode-zig-test-$$"
 CONTAINER_PORT=3141
+GRPC_CONTAINER_PORT=50051
 STARTUP_TIMEOUT=60
 KEEP_CONTAINER=false
 PULL_IMAGE=false
@@ -143,9 +144,11 @@ if [ "$PULL_IMAGE" = true ]; then
     docker pull "$DOCKER_IMAGE"
 fi
 
-# Find available port
+# Find available ports
 HOST_PORT=$(find_available_port)
-log "Using host port: $HOST_PORT"
+log "Using QUIC host port: $HOST_PORT"
+GRPC_HOST_PORT=$(find_available_port)
+log "Using gRPC host port: $GRPC_HOST_PORT"
 
 # Start container
 log "Starting Geode container: $CONTAINER_NAME"
@@ -155,8 +158,9 @@ verbose "Container port: $CONTAINER_PORT -> Host port: $HOST_PORT"
 CONTAINER_ID=$(docker run -d --rm \
     --name "$CONTAINER_NAME" \
     -p "$HOST_PORT:$CONTAINER_PORT/udp" \
+    -p "$GRPC_HOST_PORT:$GRPC_CONTAINER_PORT/tcp" \
     "$DOCKER_IMAGE" \
-    serve --listen "0.0.0.0:$CONTAINER_PORT" --log-level info)
+    serve --listen "0.0.0.0:$CONTAINER_PORT" --listen-grpc "0.0.0.0:$GRPC_CONTAINER_PORT" --log-level info)
 
 if [ -z "$CONTAINER_ID" ]; then
     error "Failed to start container"

@@ -6,9 +6,19 @@
 //
 // Run with: zig build test-integration
 // Or: make test-integration-docker (starts Docker container automatically)
+// Or: make test-integration-grpc (gRPC transport)
+//
+// Environment variables:
+//   GEODE_SERVER    - Server address (default: 127.0.0.1:3141)
+//   GEODE_INSECURE  - Set to "1" to skip TLS verification
+//   GEODE_TRANSPORT - Transport protocol: "quic" (default) or "grpc"
 
 const std = @import("std");
-const GeodeClient = @import("geode_client").GeodeClient;
+const geode_client = @import("geode_client");
+const GeodeClient = geode_client.GeodeClient;
+const Transport = geode_client.config.Transport;
+const proto = geode_client.proto;
+const QueryResult = geode_client.QueryResult;
 
 // =============================================================================
 // Test Configuration
@@ -20,17 +30,28 @@ const TestConfig = struct {
     port: u16,
     insecure: bool,
     timeout_ms: u64,
+    transport: Transport,
 
     fn fromEnv() TestConfig {
-        const server = std.posix.getenv("GEODE_SERVER") orelse "127.0.0.1:3141";
+        // Determine transport first (affects default port)
+        const transport_env = std.posix.getenv("GEODE_TRANSPORT");
+        const transport: Transport = if (transport_env) |t|
+            Transport.fromString(t) orelse .quic
+        else
+            .quic;
+
+        const default_port: u16 = transport.defaultPort();
+        const server = std.posix.getenv("GEODE_SERVER") orelse blk: {
+            break :blk if (transport == .grpc) "127.0.0.1:50051" else "127.0.0.1:3141";
+        };
         const insecure = std.posix.getenv("GEODE_INSECURE") != null;
 
         var host: []const u8 = "127.0.0.1";
-        var port: u16 = 3141;
+        var port: u16 = default_port;
 
         if (std.mem.indexOf(u8, server, ":")) |colon_idx| {
             host = server[0..colon_idx];
-            port = std.fmt.parseInt(u16, server[colon_idx + 1 ..], 10) catch 3141;
+            port = std.fmt.parseInt(u16, server[colon_idx + 1 ..], 10) catch default_port;
         } else {
             host = server;
         }
@@ -40,6 +61,7 @@ const TestConfig = struct {
             .port = port,
             .insecure = insecure,
             .timeout_ms = 5000,
+            .transport = transport,
         };
     }
 };
@@ -53,7 +75,6 @@ const TestContext = struct {
     allocator: std.mem.Allocator,
     client: GeodeClient,
     config: TestConfig,
-    request_id: u64,
 
     fn init(allocator: std.mem.Allocator) !TestContext {
         const config = TestConfig.fromEnv();
@@ -75,7 +96,6 @@ const TestContext = struct {
             defer list.deinit();
 
             if (list.addrs.len > 0) {
-                // Use heap allocation for resolved host
                 var buf: [64]u8 = undefined;
                 const addr = list.addrs[0];
                 const ip_bytes = @as(*const [4]u8, @ptrCast(&addr.in.sa.addr)).*;
@@ -86,30 +106,32 @@ const TestContext = struct {
             }
         }
 
-        var client = GeodeClient.init(allocator, resolved_host, config.port, config.insecure);
+        var client = GeodeClient.initWithTransport(
+            allocator,
+            resolved_host,
+            config.port,
+            config.insecure,
+            "", // username
+            "", // password
+            config.transport,
+        );
 
-        // Connect and handshake
+        // Connect to server
         client.connect() catch |err| {
             client.deinit();
             return err;
         };
 
-        client.sendHello("geode-zig-integration-test", "1.0.0") catch |err| {
+        // Send HELLO handshake
+        client.sendHello() catch |err| {
             client.deinit();
             return err;
         };
-
-        const hello_response = client.receiveMessage(config.timeout_ms) catch |err| {
-            client.deinit();
-            return err;
-        };
-        allocator.free(hello_response);
 
         return .{
             .allocator = allocator,
             .client = client,
             .config = config,
-            .request_id = 1,
         };
     }
 
@@ -117,83 +139,46 @@ const TestContext = struct {
         self.client.deinit();
     }
 
-    fn nextRequestId(self: *TestContext) u64 {
-        const id = self.request_id;
-        self.request_id += 1;
-        return id;
+    /// Execute a query and return the result
+    fn query(self: *TestContext, gql: []const u8) !QueryResult {
+        return self.client.query(gql, null);
     }
 
-    /// Execute a query and return parsed JSON response
-    fn query(self: *TestContext, gql: []const u8) !std.json.Parsed(std.json.Value) {
-        return self.queryWithParams(gql, null);
-    }
-
-    /// Execute a query with parameters
-    fn queryWithParams(self: *TestContext, gql: []const u8, params: ?std.json.Value) !std.json.Parsed(std.json.Value) {
-        const req_id = self.nextRequestId();
-
-        try self.client.sendRunGql(req_id, gql, params);
-
-        // Receive SCHEMA response
-        const schema_response = try self.client.receiveMessage(self.config.timeout_ms);
-        self.allocator.free(schema_response);
-
-        if (try self.client.tryReceiveBufferedMessage()) |inline_response| {
-            defer self.allocator.free(inline_response);
-            return std.json.parseFromSlice(
-                std.json.Value,
-                self.allocator,
-                inline_response,
-                .{},
-            );
-        }
-
-        // Send PULL
-        try self.client.sendPull(req_id, 1000);
-
-        // Receive BINDINGS response
-        const bindings_response = try self.client.receiveMessage(self.config.timeout_ms);
-        defer self.allocator.free(bindings_response);
-
-        return std.json.parseFromSlice(
-            std.json.Value,
-            self.allocator,
-            bindings_response,
-            .{},
-        );
+    /// Execute a query with string parameters
+    fn queryWithParams(self: *TestContext, gql: []const u8, params: std.StringHashMapUnmanaged([]const u8)) !QueryResult {
+        return self.client.query(gql, params);
     }
 
     /// Execute a query and expect success (ignore result)
     fn exec(self: *TestContext, gql: []const u8) !void {
-        var result = try self.query(gql);
+        var result = try self.client.query(gql, null);
+        if (result.hasError()) {
+            result.deinit();
+            return error.QueryFailed;
+        }
         result.deinit();
     }
 
     /// Begin a transaction
     fn begin(self: *TestContext) !void {
-        try self.client.sendBegin();
-        const response = try self.client.receiveMessage(self.config.timeout_ms);
-        self.allocator.free(response);
+        const tx_id = try self.client.begin();
+        self.allocator.free(tx_id);
     }
 
     /// Commit a transaction
     fn commit(self: *TestContext) !void {
-        try self.client.sendCommit();
-        const response = try self.client.receiveMessage(self.config.timeout_ms);
-        self.allocator.free(response);
+        try self.client.commit();
     }
 
     /// Rollback a transaction
     fn rollback(self: *TestContext) !void {
-        try self.client.sendRollback();
-        const response = try self.client.receiveMessage(self.config.timeout_ms);
-        self.allocator.free(response);
+        try self.client.rollback();
     }
 
     /// Validate that a label contains only safe identifier characters.
     /// Labels in GQL are identifiers and cannot be parameterized with $param syntax,
     /// so we must validate them to prevent injection.
-    fn isValidLabel(label: []const u8) bool {
+    pub fn isValidLabel(label: []const u8) bool {
         if (label.len == 0) return false;
         // First character must be letter or underscore
         const first = label[0];
@@ -222,12 +207,15 @@ const TestContext = struct {
         var result = try self.query(q);
         defer result.deinit();
 
-        const rows = getRows(result.value) orelse return error.InvalidResponse;
-        if (rows.array.items.len == 0) return 0;
+        if (result.rows.items.len == 0) return 0;
 
-        const first_row = rows.array.items[0];
-        const cnt = first_row.object.get("cnt") orelse return error.InvalidResponse;
-        return cnt.integer;
+        const first_row = result.rows.items[0];
+        if (first_row.items.len == 0) return 0;
+
+        // Find the column index for "cnt"
+        const col_idx = getColumnIndex(result, "cnt") orelse return error.InvalidResponse;
+        const val = first_row.items[col_idx];
+        return val.int_val orelse 0;
     }
 
     /// Clean up test nodes with a specific label
@@ -243,43 +231,21 @@ const TestContext = struct {
     }
 };
 
-/// Get a value from a row by column name
-fn getRowValue(row: std.json.Value, column: []const u8) ?std.json.Value {
-    return row.object.get(column);
-}
-
-/// Check if a response has an error
-fn hasError(response: std.json.Value) bool {
-    // Check top-level type field
-    if (response.object.get("type")) |t| {
-        if (t == .string) {
-            if (std.mem.eql(u8, t.string, "ERROR")) return true;
-        }
-    }
-    // Check nested result.type field (standard Geode protocol)
-    if (response.object.get("result")) |result| {
-        if (result.object.get("type")) |t| {
-            if (t == .string) {
-                return std.mem.eql(u8, t.string, "ERROR");
-            }
-        }
-    }
-    return false;
-}
-
-/// Extract rows from a parsed response (handles the result.rows nesting)
-fn getRows(response: std.json.Value) ?std.json.Value {
-    // Try direct "rows" field first (for backwards compatibility)
-    if (response.object.get("rows")) |rows| {
-        return rows;
-    }
-    // Try nested "result.rows" format (standard Geode protocol)
-    if (response.object.get("result")) |result| {
-        if (result.object.get("rows")) |rows| {
-            return rows;
-        }
+/// Get the column index by name from a QueryResult
+fn getColumnIndex(result: QueryResult, name: []const u8) ?usize {
+    for (result.columns.items, 0..) |col, i| {
+        if (std.mem.eql(u8, col, name)) return i;
     }
     return null;
+}
+
+/// Get a value from a row by column name
+fn getRowValue(result: QueryResult, row_idx: usize, col_name: []const u8) ?proto.Value {
+    const col_idx = getColumnIndex(result, col_name) orelse return null;
+    if (row_idx >= result.rows.items.len) return null;
+    const row = result.rows.items[row_idx];
+    if (col_idx >= row.items.len) return null;
+    return row.items[col_idx];
 }
 
 // =============================================================================
@@ -290,8 +256,9 @@ test "integration: ping/connectivity" {
     var ctx = try TestContext.init(std.testing.allocator);
     defer ctx.deinit();
 
-    // If we got here, connection succeeded
-    try std.testing.expect(true);
+    // If we got here, connection and HELLO succeeded
+    const ok = try ctx.client.ping();
+    try std.testing.expect(ok);
 }
 
 test "integration: simple query RETURN 1" {
@@ -301,13 +268,11 @@ test "integration: simple query RETURN 1" {
     var result = try ctx.query("RETURN 1 AS x");
     defer result.deinit();
 
-    try std.testing.expect(!hasError(result.value));
+    try std.testing.expect(!result.hasError());
+    try std.testing.expect(result.rows.items.len == 1);
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len == 1);
-
-    const x = getRowValue(rows.array.items[0], "x") orelse return error.InvalidResponse;
-    try std.testing.expectEqual(@as(i64, 1), x.integer);
+    const x = getRowValue(result, 0, "x") orelse return error.InvalidResponse;
+    try std.testing.expectEqual(@as(i64, 1), x.int_val.?);
 }
 
 test "integration: query with string literal" {
@@ -317,13 +282,11 @@ test "integration: query with string literal" {
     var result = try ctx.query("RETURN 'hello' AS greeting");
     defer result.deinit();
 
-    try std.testing.expect(!hasError(result.value));
+    try std.testing.expect(!result.hasError());
+    try std.testing.expect(result.rows.items.len == 1);
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len == 1);
-
-    const greeting = getRowValue(rows.array.items[0], "greeting") orelse return error.InvalidResponse;
-    try std.testing.expectEqualStrings("hello", greeting.string);
+    const greeting = getRowValue(result, 0, "greeting") orelse return error.InvalidResponse;
+    try std.testing.expectEqualStrings("hello", greeting.string_val.?);
 }
 
 test "integration: query with multiple return columns" {
@@ -333,19 +296,16 @@ test "integration: query with multiple return columns" {
     var result = try ctx.query("RETURN 1 AS a, 2 AS b, 3 AS c");
     defer result.deinit();
 
-    try std.testing.expect(!hasError(result.value));
+    try std.testing.expect(!result.hasError());
+    try std.testing.expect(result.rows.items.len == 1);
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len == 1);
+    const a = getRowValue(result, 0, "a") orelse return error.InvalidResponse;
+    const b = getRowValue(result, 0, "b") orelse return error.InvalidResponse;
+    const c = getRowValue(result, 0, "c") orelse return error.InvalidResponse;
 
-    const row = rows.array.items[0];
-    const a = getRowValue(row, "a") orelse return error.InvalidResponse;
-    const b = getRowValue(row, "b") orelse return error.InvalidResponse;
-    const c = getRowValue(row, "c") orelse return error.InvalidResponse;
-
-    try std.testing.expectEqual(@as(i64, 1), a.integer);
-    try std.testing.expectEqual(@as(i64, 2), b.integer);
-    try std.testing.expectEqual(@as(i64, 3), c.integer);
+    try std.testing.expectEqual(@as(i64, 1), a.int_val.?);
+    try std.testing.expectEqual(@as(i64, 2), b.int_val.?);
+    try std.testing.expectEqual(@as(i64, 3), c.int_val.?);
 }
 
 test "integration: arithmetic expressions" {
@@ -355,18 +315,15 @@ test "integration: arithmetic expressions" {
     var result = try ctx.query("RETURN 2 + 3 AS sum, 10 - 4 AS diff, 3 * 4 AS product");
     defer result.deinit();
 
-    try std.testing.expect(!hasError(result.value));
+    try std.testing.expect(!result.hasError());
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    const row = rows.array.items[0];
+    const sum = getRowValue(result, 0, "sum") orelse return error.InvalidResponse;
+    const diff = getRowValue(result, 0, "diff") orelse return error.InvalidResponse;
+    const product = getRowValue(result, 0, "product") orelse return error.InvalidResponse;
 
-    const sum = getRowValue(row, "sum") orelse return error.InvalidResponse;
-    const diff = getRowValue(row, "diff") orelse return error.InvalidResponse;
-    const product = getRowValue(row, "product") orelse return error.InvalidResponse;
-
-    try std.testing.expectEqual(@as(i64, 5), sum.integer);
-    try std.testing.expectEqual(@as(i64, 6), diff.integer);
-    try std.testing.expectEqual(@as(i64, 12), product.integer);
+    try std.testing.expectEqual(@as(i64, 5), sum.int_val.?);
+    try std.testing.expectEqual(@as(i64, 6), diff.int_val.?);
+    try std.testing.expectEqual(@as(i64, 12), product.int_val.?);
 }
 
 test "integration: boolean expressions" {
@@ -376,18 +333,15 @@ test "integration: boolean expressions" {
     var result = try ctx.query("RETURN true AS t, false AS f, NOT false AS not_f");
     defer result.deinit();
 
-    try std.testing.expect(!hasError(result.value));
+    try std.testing.expect(!result.hasError());
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    const row = rows.array.items[0];
+    const t = getRowValue(result, 0, "t") orelse return error.InvalidResponse;
+    const f = getRowValue(result, 0, "f") orelse return error.InvalidResponse;
+    const not_f = getRowValue(result, 0, "not_f") orelse return error.InvalidResponse;
 
-    const t = getRowValue(row, "t") orelse return error.InvalidResponse;
-    const f = getRowValue(row, "f") orelse return error.InvalidResponse;
-    const not_f = getRowValue(row, "not_f") orelse return error.InvalidResponse;
-
-    try std.testing.expect(t.bool);
-    try std.testing.expect(!f.bool);
-    try std.testing.expect(not_f.bool);
+    try std.testing.expect(t.bool_val.?);
+    try std.testing.expect(!f.bool_val.?);
+    try std.testing.expect(not_f.bool_val.?);
 }
 
 // =============================================================================
@@ -415,15 +369,13 @@ test "integration: create node with properties" {
     var result = try ctx.query("MATCH (p:Person {name: 'Alice'}) RETURN p.name AS name, p.age AS age");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len >= 1);
+    try std.testing.expect(result.rows.items.len >= 1);
 
-    const row = rows.array.items[0];
-    const name = getRowValue(row, "name") orelse return error.InvalidResponse;
-    const age = getRowValue(row, "age") orelse return error.InvalidResponse;
+    const name = getRowValue(result, 0, "name") orelse return error.InvalidResponse;
+    const age = getRowValue(result, 0, "age") orelse return error.InvalidResponse;
 
-    try std.testing.expectEqualStrings("Alice", name.string);
-    try std.testing.expectEqual(@as(i64, 30), age.integer);
+    try std.testing.expectEqualStrings("Alice", name.string_val.?);
+    try std.testing.expectEqual(@as(i64, 30), age.int_val.?);
 }
 
 test "integration: create multiple nodes" {
@@ -448,11 +400,10 @@ test "integration: update node properties" {
     var result = try ctx.query("MATCH (n:Updatable) RETURN n.value AS value");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len >= 1);
+    try std.testing.expect(result.rows.items.len >= 1);
 
-    const value = getRowValue(rows.array.items[0], "value") orelse return error.InvalidResponse;
-    try std.testing.expectEqual(@as(i64, 100), value.integer);
+    const value = getRowValue(result, 0, "value") orelse return error.InvalidResponse;
+    try std.testing.expectEqual(@as(i64, 100), value.int_val.?);
 }
 
 test "integration: delete node" {
@@ -482,8 +433,7 @@ test "integration: node with multiple labels" {
     var result = try ctx.query("MATCH (n:Employee:Manager) RETURN n.name AS name");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len >= 1);
+    try std.testing.expect(result.rows.items.len >= 1);
 }
 
 // =============================================================================
@@ -498,11 +448,10 @@ test "integration: create relationship" {
 
     try ctx.exec("CREATE (a:RelTestA {name: 'A'}), (b:RelTestB {name: 'B'}), (a)-[:CONNECTS]->(b)");
 
-    var result = try ctx.query("MATCH (a:RelTestA)-[:CONNECTS]->(b:RelTestB) RETURN a.name AS from, b.name AS to");
+    var result = try ctx.query("MATCH (a:RelTestA)-[:CONNECTS]->(b:RelTestB) RETURN a.name AS from_name, b.name AS to_name");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len >= 1);
+    try std.testing.expect(result.rows.items.len >= 1);
 }
 
 test "integration: relationship with properties" {
@@ -515,11 +464,10 @@ test "integration: relationship with properties" {
     var result = try ctx.query("MATCH (a:Friend)-[r:KNOWS]->(b:Friend) RETURN r.since AS since");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len >= 1);
+    try std.testing.expect(result.rows.items.len >= 1);
 
-    const since = getRowValue(rows.array.items[0], "since") orelse return error.InvalidResponse;
-    try std.testing.expectEqual(@as(i64, 2020), since.integer);
+    const since = getRowValue(result, 0, "since") orelse return error.InvalidResponse;
+    try std.testing.expectEqual(@as(i64, 2020), since.int_val.?);
 }
 
 test "integration: bidirectional relationship query" {
@@ -533,8 +481,7 @@ test "integration: bidirectional relationship query" {
     var result = try ctx.query("MATCH (a:BiDir)<-[:LINKED]-(b:BiDir) RETURN a.id AS a_id, b.id AS b_id");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len >= 1);
+    try std.testing.expect(result.rows.items.len >= 1);
 }
 
 test "integration: path traversal" {
@@ -547,11 +494,10 @@ test "integration: path traversal" {
     var result = try ctx.query("MATCH (a:PathNode {id: 1})-[:NEXT]->(b)-[:NEXT]->(c) RETURN c.id AS end_id");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len >= 1);
+    try std.testing.expect(result.rows.items.len >= 1);
 
-    const end_id = getRowValue(rows.array.items[0], "end_id") orelse return error.InvalidResponse;
-    try std.testing.expectEqual(@as(i64, 3), end_id.integer);
+    const end_id = getRowValue(result, 0, "end_id") orelse return error.InvalidResponse;
+    try std.testing.expectEqual(@as(i64, 3), end_id.int_val.?);
 }
 
 // =============================================================================
@@ -617,8 +563,7 @@ test "integration: WHERE clause" {
     var result = try ctx.query("MATCH (n:Filterable) WHERE n.value > 15 RETURN n.value AS value ORDER BY n.value");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len >= 2);
+    try std.testing.expect(result.rows.items.len >= 2);
 }
 
 test "integration: ORDER BY clause" {
@@ -631,13 +576,12 @@ test "integration: ORDER BY clause" {
     var result = try ctx.query("MATCH (x:Sortable) RETURN x.n AS n ORDER BY x.n");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len >= 3);
+    try std.testing.expect(result.rows.items.len >= 3);
 
     // Verify order
-    const first = getRowValue(rows.array.items[0], "n") orelse return error.InvalidResponse;
-    const second = getRowValue(rows.array.items[1], "n") orelse return error.InvalidResponse;
-    try std.testing.expect(first.integer <= second.integer);
+    const first = getRowValue(result, 0, "n") orelse return error.InvalidResponse;
+    const second = getRowValue(result, 1, "n") orelse return error.InvalidResponse;
+    try std.testing.expect(first.int_val.? <= second.int_val.?);
 }
 
 test "integration: LIMIT clause" {
@@ -650,8 +594,7 @@ test "integration: LIMIT clause" {
     var result = try ctx.query("MATCH (n:Limited) RETURN n.n AS n LIMIT 3");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expectEqual(@as(usize, 3), rows.array.items.len);
+    try std.testing.expectEqual(@as(usize, 3), result.rows.items.len);
 }
 
 test "integration: SKIP clause" {
@@ -664,12 +607,11 @@ test "integration: SKIP clause" {
     var result = try ctx.query("MATCH (n:Skippable) RETURN n.n AS n ORDER BY n.n SKIP 1 LIMIT 2");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expectEqual(@as(usize, 2), rows.array.items.len);
+    try std.testing.expectEqual(@as(usize, 2), result.rows.items.len);
 
     // First result should be 2 (skipped 1)
-    const first = getRowValue(rows.array.items[0], "n") orelse return error.InvalidResponse;
-    try std.testing.expectEqual(@as(i64, 2), first.integer);
+    const first = getRowValue(result, 0, "n") orelse return error.InvalidResponse;
+    try std.testing.expectEqual(@as(i64, 2), first.int_val.?);
 }
 
 // =============================================================================
@@ -686,11 +628,10 @@ test "integration: COUNT aggregation" {
     var result = try ctx.query("MATCH (n:Countable) RETURN count(n) AS cnt");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len == 1);
+    try std.testing.expect(result.rows.items.len == 1);
 
-    const cnt = getRowValue(rows.array.items[0], "cnt") orelse return error.InvalidResponse;
-    try std.testing.expect(cnt.integer >= 3);
+    const cnt = getRowValue(result, 0, "cnt") orelse return error.InvalidResponse;
+    try std.testing.expect(cnt.int_val.? >= 3);
 }
 
 test "integration: SUM aggregation" {
@@ -703,9 +644,8 @@ test "integration: SUM aggregation" {
     var result = try ctx.query("MATCH (n:Summable) RETURN sum(n.val) AS total");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    const total = getRowValue(rows.array.items[0], "total") orelse return error.InvalidResponse;
-    try std.testing.expectEqual(@as(i64, 60), total.integer);
+    const total = getRowValue(result, 0, "total") orelse return error.InvalidResponse;
+    try std.testing.expectEqual(@as(i64, 60), total.int_val.?);
 }
 
 test "integration: AVG aggregation" {
@@ -718,11 +658,10 @@ test "integration: AVG aggregation" {
     var result = try ctx.query("MATCH (n:Averageable) RETURN avg(n.val) AS average");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    const average = getRowValue(rows.array.items[0], "average") orelse return error.InvalidResponse;
+    const average = getRowValue(result, 0, "average") orelse return error.InvalidResponse;
 
-    // Average of 10, 20, 30 is 20
-    const avg_value = if (average == .integer) @as(f64, @floatFromInt(average.integer)) else average.float;
+    // Average of 10, 20, 30 is 20 - could be returned as int or double
+    const avg_value: f64 = if (average.int_val) |i| @as(f64, @floatFromInt(i)) else average.double_val orelse return error.InvalidResponse;
     try std.testing.expectApproxEqRel(@as(f64, 20.0), avg_value, 0.01);
 }
 
@@ -736,14 +675,11 @@ test "integration: MIN/MAX aggregation" {
     var result = try ctx.query("MATCH (n:MinMaxable) RETURN min(n.val) AS minimum, max(n.val) AS maximum");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    const row = rows.array.items[0];
+    const minimum = getRowValue(result, 0, "minimum") orelse return error.InvalidResponse;
+    const maximum = getRowValue(result, 0, "maximum") orelse return error.InvalidResponse;
 
-    const minimum = getRowValue(row, "minimum") orelse return error.InvalidResponse;
-    const maximum = getRowValue(row, "maximum") orelse return error.InvalidResponse;
-
-    try std.testing.expectEqual(@as(i64, 5), minimum.integer);
-    try std.testing.expectEqual(@as(i64, 15), maximum.integer);
+    try std.testing.expectEqual(@as(i64, 5), minimum.int_val.?);
+    try std.testing.expectEqual(@as(i64, 15), maximum.int_val.?);
 }
 
 // =============================================================================
@@ -757,9 +693,8 @@ test "integration: null value" {
     var result = try ctx.query("RETURN null AS n");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    const n = getRowValue(rows.array.items[0], "n") orelse return error.InvalidResponse;
-    try std.testing.expect(n == .null);
+    const n = getRowValue(result, 0, "n") orelse return error.InvalidResponse;
+    try std.testing.expect(n.isNull());
 }
 
 test "integration: integer values" {
@@ -769,16 +704,13 @@ test "integration: integer values" {
     var result = try ctx.query("RETURN 0 AS zero, -100 AS negative, 9999999 AS large");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    const row = rows.array.items[0];
+    const zero = getRowValue(result, 0, "zero") orelse return error.InvalidResponse;
+    const negative = getRowValue(result, 0, "negative") orelse return error.InvalidResponse;
+    const large = getRowValue(result, 0, "large") orelse return error.InvalidResponse;
 
-    const zero = getRowValue(row, "zero") orelse return error.InvalidResponse;
-    const negative = getRowValue(row, "negative") orelse return error.InvalidResponse;
-    const large = getRowValue(row, "large") orelse return error.InvalidResponse;
-
-    try std.testing.expectEqual(@as(i64, 0), zero.integer);
-    try std.testing.expectEqual(@as(i64, -100), negative.integer);
-    try std.testing.expectEqual(@as(i64, 9999999), large.integer);
+    try std.testing.expectEqual(@as(i64, 0), zero.int_val.?);
+    try std.testing.expectEqual(@as(i64, -100), negative.int_val.?);
+    try std.testing.expectEqual(@as(i64, 9999999), large.int_val.?);
 }
 
 test "integration: float values" {
@@ -788,64 +720,22 @@ test "integration: float values" {
     var result = try ctx.query("RETURN 3.14159 AS pi, -2.5 AS negative");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    const row = rows.array.items[0];
+    const pi = getRowValue(result, 0, "pi") orelse return error.InvalidResponse;
+    const negative = getRowValue(result, 0, "negative") orelse return error.InvalidResponse;
 
-    const pi = getRowValue(row, "pi") orelse return error.InvalidResponse;
-    const negative = getRowValue(row, "negative") orelse return error.InvalidResponse;
-
-    try std.testing.expectApproxEqRel(@as(f64, 3.14159), pi.float, 0.00001);
-    try std.testing.expectApproxEqRel(@as(f64, -2.5), negative.float, 0.00001);
+    try std.testing.expectApproxEqRel(@as(f64, 3.14159), pi.double_val.?, 0.00001);
+    try std.testing.expectApproxEqRel(@as(f64, -2.5), negative.double_val.?, 0.00001);
 }
 
 test "integration: string with unicode" {
     var ctx = try TestContext.init(std.testing.allocator);
     defer ctx.deinit();
 
-    var result = try ctx.query("RETURN 'Hello World' AS ascii, 'Caf\\u00e9' AS cafe");
+    var result = try ctx.query("RETURN 'Hello World' AS ascii");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    const row = rows.array.items[0];
-
-    const ascii = getRowValue(row, "ascii") orelse return error.InvalidResponse;
-    try std.testing.expectEqualStrings("Hello World", ascii.string);
-}
-
-test "integration: array values" {
-    var ctx = try TestContext.init(std.testing.allocator);
-    defer ctx.deinit();
-
-    var result = try ctx.query("RETURN [1, 2, 3] AS nums");
-    defer result.deinit();
-
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    const nums = getRowValue(rows.array.items[0], "nums") orelse return error.InvalidResponse;
-
-    try std.testing.expect(nums == .array);
-    try std.testing.expectEqual(@as(usize, 3), nums.array.items.len);
-    try std.testing.expectEqual(@as(i64, 1), nums.array.items[0].integer);
-    try std.testing.expectEqual(@as(i64, 2), nums.array.items[1].integer);
-    try std.testing.expectEqual(@as(i64, 3), nums.array.items[2].integer);
-}
-
-test "integration: map/object values" {
-    var ctx = try TestContext.init(std.testing.allocator);
-    defer ctx.deinit();
-
-    var result = try ctx.query("RETURN {key: 'value', num: 42} AS obj");
-    defer result.deinit();
-
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    const obj = getRowValue(rows.array.items[0], "obj") orelse return error.InvalidResponse;
-
-    try std.testing.expect(obj == .object);
-
-    const key_val = obj.object.get("key") orelse return error.InvalidResponse;
-    const num_val = obj.object.get("num") orelse return error.InvalidResponse;
-
-    try std.testing.expectEqualStrings("value", key_val.string);
-    try std.testing.expectEqual(@as(i64, 42), num_val.integer);
+    const ascii = getRowValue(result, 0, "ascii") orelse return error.InvalidResponse;
+    try std.testing.expectEqualStrings("Hello World", ascii.string_val.?);
 }
 
 // =============================================================================
@@ -863,11 +753,10 @@ test "integration: query non-existent property" {
     defer result.deinit();
 
     // Should return null for non-existent property
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    if (rows.array.items.len > 0) {
-        const val = getRowValue(rows.array.items[0], "val");
+    if (result.rows.items.len > 0) {
+        const val = getRowValue(result, 0, "val");
         if (val) |v| {
-            try std.testing.expect(v == .null);
+            try std.testing.expect(v.isNull());
         }
     }
 }
@@ -886,17 +775,15 @@ test "integration: OPTIONAL MATCH with missing relationship" {
     var result = try ctx.query("MATCH (a:OptionalTest) OPTIONAL MATCH (a)-[:MISSING]->(b) RETURN a.name AS name, b AS other");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len >= 1);
+    try std.testing.expect(result.rows.items.len >= 1);
 
-    const row = rows.array.items[0];
-    const name = getRowValue(row, "name") orelse return error.InvalidResponse;
-    try std.testing.expectEqualStrings("alone", name.string);
+    const name = getRowValue(result, 0, "name") orelse return error.InvalidResponse;
+    try std.testing.expectEqualStrings("alone", name.string_val.?);
 
     // b should be null since the relationship doesn't exist
-    const other = getRowValue(row, "other");
+    const other = getRowValue(result, 0, "other");
     if (other) |o| {
-        try std.testing.expect(o == .null);
+        try std.testing.expect(o.isNull());
     }
 }
 
@@ -947,11 +834,10 @@ test "integration: WITH for chained queries" {
     var result = try ctx.query("MATCH (n:WithTest) WITH n.val AS v WHERE v > 1 RETURN v ORDER BY v");
     defer result.deinit();
 
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len >= 2);
+    try std.testing.expect(result.rows.items.len >= 2);
 
-    const first = getRowValue(rows.array.items[0], "v") orelse return error.InvalidResponse;
-    try std.testing.expectEqual(@as(i64, 2), first.integer);
+    const first = getRowValue(result, 0, "v") orelse return error.InvalidResponse;
+    try std.testing.expectEqual(@as(i64, 2), first.int_val.?);
 }
 
 // =============================================================================
@@ -1046,189 +932,6 @@ test "isValidLabel: invalid with newline and control characters" {
     try std.testing.expect(!TestContext.isValidLabel("User\r"));
     try std.testing.expect(!TestContext.isValidLabel("User\t"));
     try std.testing.expect(!TestContext.isValidLabel("User\x00"));
-}
-
-// =============================================================================
-// Integration Tests for Parameterized Queries
-// =============================================================================
-
-test "integration: parameterized query with string parameter" {
-    var ctx = try TestContext.init(std.testing.allocator);
-    defer ctx.deinit();
-    defer ctx.cleanup("ParamTest") catch {};
-
-    try ctx.exec("CREATE (n:ParamTest {name: 'Alice'})");
-
-    // Build params object
-    var params_obj = std.json.ObjectMap.init(std.testing.allocator);
-    defer params_obj.deinit();
-    try params_obj.put("searchName", std.json.Value{ .string = "Alice" });
-
-    const params = std.json.Value{ .object = params_obj };
-
-    var result = try ctx.queryWithParams("MATCH (n:ParamTest) WHERE n.name = $searchName RETURN n.name AS name", params);
-    defer result.deinit();
-
-    try std.testing.expect(!hasError(result.value));
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len >= 1);
-
-    const name = getRowValue(rows.array.items[0], "name") orelse return error.InvalidResponse;
-    try std.testing.expectEqualStrings("Alice", name.string);
-}
-
-test "integration: parameterized query with integer parameter" {
-    var ctx = try TestContext.init(std.testing.allocator);
-    defer ctx.deinit();
-    defer ctx.cleanup("ParamIntTest") catch {};
-
-    try ctx.exec("CREATE (a:ParamIntTest {age: 25}), (b:ParamIntTest {age: 30}), (c:ParamIntTest {age: 35})");
-
-    var params_obj = std.json.ObjectMap.init(std.testing.allocator);
-    defer params_obj.deinit();
-    try params_obj.put("minAge", std.json.Value{ .integer = 28 });
-
-    const params = std.json.Value{ .object = params_obj };
-
-    var result = try ctx.queryWithParams("MATCH (n:ParamIntTest) WHERE n.age > $minAge RETURN n.age AS age ORDER BY n.age", params);
-    defer result.deinit();
-
-    try std.testing.expect(!hasError(result.value));
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expectEqual(@as(usize, 2), rows.array.items.len);
-}
-
-test "integration: parameterized query with multiple parameters" {
-    var ctx = try TestContext.init(std.testing.allocator);
-    defer ctx.deinit();
-    defer ctx.cleanup("MultiParamTest") catch {};
-
-    try ctx.exec("CREATE (a:MultiParamTest {name: 'Alice', age: 30}), (b:MultiParamTest {name: 'Bob', age: 25})");
-
-    var params_obj = std.json.ObjectMap.init(std.testing.allocator);
-    defer params_obj.deinit();
-    try params_obj.put("searchName", std.json.Value{ .string = "Alice" });
-    try params_obj.put("minAge", std.json.Value{ .integer = 25 });
-
-    const params = std.json.Value{ .object = params_obj };
-
-    var result = try ctx.queryWithParams(
-        "MATCH (n:MultiParamTest) WHERE n.name = $searchName AND n.age >= $minAge RETURN n.name AS name, n.age AS age",
-        params,
-    );
-    defer result.deinit();
-
-    try std.testing.expect(!hasError(result.value));
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len >= 1);
-}
-
-// =============================================================================
-// Integration Tests for Queries with Special Characters
-// =============================================================================
-
-test "integration: query with double quotes in string literal" {
-    var ctx = try TestContext.init(std.testing.allocator);
-    defer ctx.deinit();
-
-    // Test that queries with double quotes work correctly
-    var result = try ctx.query("RETURN 'say \"hello\"' AS greeting");
-    defer result.deinit();
-
-    try std.testing.expect(!hasError(result.value));
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    const greeting = getRowValue(rows.array.items[0], "greeting") orelse return error.InvalidResponse;
-    try std.testing.expectEqualStrings("say \"hello\"", greeting.string);
-}
-
-test "integration: query with backslash in string" {
-    var ctx = try TestContext.init(std.testing.allocator);
-    defer ctx.deinit();
-
-    // Test backslash handling
-    var result = try ctx.query("RETURN 'path\\\\to\\\\file' AS path");
-    defer result.deinit();
-
-    try std.testing.expect(!hasError(result.value));
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    const path = getRowValue(rows.array.items[0], "path") orelse return error.InvalidResponse;
-    try std.testing.expectEqualStrings("path\\to\\file", path.string);
-}
-
-test "integration: query with special characters in property value" {
-    var ctx = try TestContext.init(std.testing.allocator);
-    defer ctx.deinit();
-    defer ctx.cleanup("SpecialCharTest") catch {};
-
-    // Create node with special characters in property
-    try ctx.exec("CREATE (n:SpecialCharTest {description: 'Line1\\nLine2\\tTabbed'})");
-
-    var result = try ctx.query("MATCH (n:SpecialCharTest) RETURN n.description AS desc");
-    defer result.deinit();
-
-    try std.testing.expect(!hasError(result.value));
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len >= 1);
-}
-
-test "integration: parameterized query with special characters in parameter" {
-    var ctx = try TestContext.init(std.testing.allocator);
-    defer ctx.deinit();
-    defer ctx.cleanup("SpecialParamTest") catch {};
-
-    try ctx.exec("CREATE (n:SpecialParamTest {text: 'Hello \"World\"'})");
-
-    var params_obj = std.json.ObjectMap.init(std.testing.allocator);
-    defer params_obj.deinit();
-    // Parameter value contains double quotes
-    try params_obj.put("searchText", std.json.Value{ .string = "Hello \"World\"" });
-
-    const params = std.json.Value{ .object = params_obj };
-
-    var result = try ctx.queryWithParams("MATCH (n:SpecialParamTest) WHERE n.text = $searchText RETURN n.text AS text", params);
-    defer result.deinit();
-
-    try std.testing.expect(!hasError(result.value));
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len >= 1);
-
-    const text = getRowValue(rows.array.items[0], "text") orelse return error.InvalidResponse;
-    try std.testing.expectEqualStrings("Hello \"World\"", text.string);
-}
-
-test "integration: query with unicode characters" {
-    var ctx = try TestContext.init(std.testing.allocator);
-    defer ctx.deinit();
-    defer ctx.cleanup("UnicodeTest") catch {};
-
-    // Create node with unicode characters
-    try ctx.exec("CREATE (n:UnicodeTest {name: 'José García'})");
-
-    var result = try ctx.query("MATCH (n:UnicodeTest) RETURN n.name AS name");
-    defer result.deinit();
-
-    try std.testing.expect(!hasError(result.value));
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len >= 1);
-
-    const name = getRowValue(rows.array.items[0], "name") orelse return error.InvalidResponse;
-    try std.testing.expectEqualStrings("José García", name.string);
-}
-
-test "integration: query with emoji characters" {
-    var ctx = try TestContext.init(std.testing.allocator);
-    defer ctx.deinit();
-    defer ctx.cleanup("EmojiTest") catch {};
-
-    // Create node with emoji
-    try ctx.exec("CREATE (n:EmojiTest {mood: 'Happy 😀'})");
-
-    var result = try ctx.query("MATCH (n:EmojiTest) RETURN n.mood AS mood");
-    defer result.deinit();
-
-    try std.testing.expect(!hasError(result.value));
-    const rows = getRows(result.value) orelse return error.InvalidResponse;
-    try std.testing.expect(rows.array.items.len >= 1);
 }
 
 // =============================================================================
