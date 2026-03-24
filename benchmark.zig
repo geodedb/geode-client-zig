@@ -90,6 +90,19 @@ fn runWorker(
     return result;
 }
 
+fn workerThread(
+    result_ptr: *WorkerResult,
+    allocator: std.mem.Allocator,
+    host: []const u8,
+    port: u16,
+    queries: usize,
+    insecure: bool,
+    username: []const u8,
+    password: []const u8,
+) void {
+    result_ptr.* = runWorker(allocator, host, port, queries, insecure, username, password);
+}
+
 fn parseArgs(allocator: std.mem.Allocator) !struct {
     host: []const u8,
     port: u16,
@@ -169,25 +182,42 @@ pub fn main() !void {
 
     const stdout = std.fs.File.stdout().deprecatedWriter();
 
-    // Collect results from workers (sequential for now - Zig's threading is more complex)
+    // Collect results from workers in parallel using threads
     var all_latencies: std.ArrayList(f64) = .{};
     defer all_latencies.deinit(allocator);
 
     var total_successful: i64 = 0;
     var total_failed: i64 = 0;
 
+    // Each worker thread gets its own allocator via ArenaAllocator to avoid contention
+    const max_workers = 256;
+    if (args.workers > max_workers) {
+        return error.TooManyWorkers;
+    }
+
+    var results: [max_workers]WorkerResult = undefined;
+    var threads: [max_workers]?std.Thread = [_]?std.Thread{null} ** max_workers;
+
     const start = std.time.nanoTimestamp();
 
-    // Run workers sequentially (parallel would require thread pool setup)
-    for (0..args.workers) |_| {
-        var result = runWorker(allocator, args.host, args.port, args.queries, args.insecure, args.username, args.password);
-        defer result.latencies.deinit(allocator);
+    // Spawn all worker threads
+    for (0..args.workers) |i| {
+        threads[i] = try std.Thread.spawn(.{}, workerThread, .{ &results[i], allocator, args.host, args.port, args.queries, args.insecure, args.username, args.password });
+    }
 
-        for (result.latencies.items) |lat| {
+    // Join all worker threads and collect results
+    for (0..args.workers) |i| {
+        if (threads[i]) |t| {
+            t.join();
+        }
+
+        defer results[i].latencies.deinit(allocator);
+
+        for (results[i].latencies.items) |lat| {
             try all_latencies.append(allocator, lat);
         }
-        total_successful += result.successful;
-        total_failed += result.failed;
+        total_successful += results[i].successful;
+        total_failed += results[i].failed;
     }
 
     const end = std.time.nanoTimestamp();

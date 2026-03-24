@@ -1,5 +1,20 @@
 const std = @import("std");
 
+/// Link system libraries required by QUIC/TLS transport.
+fn linkSystemDeps(step: *std.Build.Step.Compile, target: std.Build.ResolvedTarget) void {
+    step.linkLibC();
+    if (target.result.os.tag != .windows) {
+        step.linkSystemLibrary("ssl");
+        step.linkSystemLibrary("crypto");
+    }
+    if (target.result.os.tag == .linux) {
+        step.linkSystemLibrary("dl");
+    }
+    if (target.result.os.tag == .windows) {
+        step.linkSystemLibrary("ws2_32");
+    }
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -15,48 +30,6 @@ pub fn build(b: *std.Build) void {
     });
     const quic_mod = quic_dep.module("quic");
 
-    // JSON library for enhanced JSON operations (optional, std.json also available)
-    const json_dep = b.dependency("json", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const json_mod = json_dep.module("json");
-
-    // DNS resolution library
-    const dns_dep = b.dependency("dns", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const dns_mod = dns_dep.module("dns");
-
-    // Configuration library (YAML, TOML, JSON)
-    const config_dep = b.dependency("config", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const config_mod = config_dep.module("config");
-
-    // Structured logging
-    const slog_dep = b.dependency("slog", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const slog_mod = slog_dep.module("slogz");
-
-    // URI parsing
-    const uri_dep = b.dependency("uri", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const uri_mod = uri_dep.module("uri");
-
-    // String utilities
-    const strings_dep = b.dependency("strings", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const strings_mod = strings_dep.module("strings");
-
     // Protocol Buffers - same as geode server
     const protobuf_dep = b.dependency("protobuf", .{
         .target = target,
@@ -70,13 +43,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const grpc_client_mod = grpc_zig_dep.module("grpc-client");
-
-    // Spice - Fork/join parallelism
-    const spice_dep = b.dependency("spice", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const spice_mod = spice_dep.module("spice");
 
     // UUID - RFC 9562 compliant (V1-V8)
     const uuid_dep = b.dependency("uuid", .{
@@ -119,13 +85,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const concurrency_mod = concurrency_dep.module("concurrency");
-
-    // FLE - Field-level encryption with AEAD, HKDF, blind indices
-    const fle_dep = b.dependency("fle", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const fle_mod = fle_dep.module("fle");
 
     // ========================================================================
     // Internal Modules (src/)
@@ -194,13 +153,6 @@ pub fn build(b: *std.Build) void {
     prepared_mod.addImport("types", types_mod);
     prepared_mod.addImport("validate", validate_mod);
 
-    // Explain/profile module
-    const explain_mod = b.createModule(.{
-        .root_source_file = b.path("src/explain.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
     // Batch module
     const batch_mod = b.createModule(.{
         .root_source_file = b.path("src/batch.zig"),
@@ -256,76 +208,22 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // Add QUIC as the primary transport dependency
+    // Add only the dependencies actually @import'd by geode_client_v2.zig
     geode_client_mod.addImport("quic", quic_mod);
-
-    // Add internal modules
-    geode_client_mod.addImport("error", error_mod);
-    geode_client_mod.addImport("types", types_mod);
-    geode_client_mod.addImport("config", cfg_mod);
-    geode_client_mod.addImport("validate", validate_mod);
-    geode_client_mod.addImport("query_builder", query_builder_mod);
-    geode_client_mod.addImport("pool", pool_mod);
-    geode_client_mod.addImport("prepared", prepared_mod);
-    geode_client_mod.addImport("explain", explain_mod);
-    geode_client_mod.addImport("batch", batch_mod);
-    geode_client_mod.addImport("auth", auth_mod);
-    geode_client_mod.addImport("client_metrics", client_metrics_mod);
-    geode_client_mod.addImport("proto", proto_mod);
-    geode_client_mod.addImport("grpc", grpc_mod);
-
-    // Add external utility dependencies
-    geode_client_mod.addImport("json", json_mod);
-    geode_client_mod.addImport("dns", dns_mod);
-    geode_client_mod.addImport("ext_config", config_mod);
-    geode_client_mod.addImport("slog", slog_mod);
-    geode_client_mod.addImport("uri", uri_mod);
-    geode_client_mod.addImport("strings", strings_mod);
-    geode_client_mod.addImport("protobuf", protobuf_mod);
-    geode_client_mod.addImport("grpc_zig", grpc_client_mod);
-    geode_client_mod.addImport("spice", spice_mod);
     geode_client_mod.addImport("uuid", uuid_mod);
-    geode_client_mod.addImport("auth_lib", auth_lib_mod);
-    geode_client_mod.addImport("advanced_types", advanced_types_mod);
-    geode_client_mod.addImport("gql", gql_mod);
-    geode_client_mod.addImport("metrics", metrics_mod);
-    geode_client_mod.addImport("concurrency", concurrency_mod);
-    geode_client_mod.addImport("fle", fle_mod);
+    geode_client_mod.addImport("proto", proto_mod);
+    geode_client_mod.addImport("config", cfg_mod);
+    geode_client_mod.addImport("grpc", grpc_mod);
 
     // Export geode_client module for dependents
     _ = b.addModule("geode_client", .{
         .root_source_file = b.path("geode_client_v2.zig"),
         .imports = &.{
             .{ .name = "quic", .module = quic_mod },
-            .{ .name = "error", .module = error_mod },
-            .{ .name = "types", .module = types_mod },
-            .{ .name = "config", .module = cfg_mod },
-            .{ .name = "validate", .module = validate_mod },
-            .{ .name = "query_builder", .module = query_builder_mod },
-            .{ .name = "pool", .module = pool_mod },
-            .{ .name = "prepared", .module = prepared_mod },
-            .{ .name = "explain", .module = explain_mod },
-            .{ .name = "batch", .module = batch_mod },
-            .{ .name = "auth", .module = auth_mod },
-            .{ .name = "client_metrics", .module = client_metrics_mod },
-            .{ .name = "proto", .module = proto_mod },
-            .{ .name = "grpc", .module = grpc_mod },
-            .{ .name = "json", .module = json_mod },
-            .{ .name = "dns", .module = dns_mod },
-            .{ .name = "ext_config", .module = config_mod },
-            .{ .name = "slog", .module = slog_mod },
-            .{ .name = "uri", .module = uri_mod },
-            .{ .name = "strings", .module = strings_mod },
-            .{ .name = "protobuf", .module = protobuf_mod },
-            .{ .name = "grpc_zig", .module = grpc_client_mod },
-            .{ .name = "spice", .module = spice_mod },
             .{ .name = "uuid", .module = uuid_mod },
-            .{ .name = "auth_lib", .module = auth_lib_mod },
-            .{ .name = "advanced_types", .module = advanced_types_mod },
-            .{ .name = "gql", .module = gql_mod },
-            .{ .name = "metrics", .module = metrics_mod },
-            .{ .name = "concurrency", .module = concurrency_mod },
-            .{ .name = "fle", .module = fle_mod },
+            .{ .name = "proto", .module = proto_mod },
+            .{ .name = "config", .module = cfg_mod },
+            .{ .name = "grpc", .module = grpc_mod },
         },
     });
 
@@ -346,18 +244,7 @@ pub fn build(b: *std.Build) void {
     test_exe.root_module.addImport("geode_client", geode_client_mod);
     test_exe.root_module.addImport("quic", quic_mod);
 
-    // Link system libraries required by QUIC
-    test_exe.linkLibC();
-    if (target.result.os.tag != .windows) {
-        test_exe.linkSystemLibrary("ssl");
-        test_exe.linkSystemLibrary("crypto");
-    }
-    if (target.result.os.tag == .linux) {
-        test_exe.linkSystemLibrary("dl");
-    }
-    if (target.result.os.tag == .windows) {
-        test_exe.linkSystemLibrary("ws2_32");
-    }
+    linkSystemDeps(test_exe, target);
 
     b.installArtifact(test_exe);
 
@@ -374,18 +261,7 @@ pub fn build(b: *std.Build) void {
     test_exe_v2.root_module.addImport("geode_client", geode_client_mod);
     test_exe_v2.root_module.addImport("quic", quic_mod);
 
-    // Link system libraries required by QUIC
-    test_exe_v2.linkLibC();
-    if (target.result.os.tag != .windows) {
-        test_exe_v2.linkSystemLibrary("ssl");
-        test_exe_v2.linkSystemLibrary("crypto");
-    }
-    if (target.result.os.tag == .linux) {
-        test_exe_v2.linkSystemLibrary("dl");
-    }
-    if (target.result.os.tag == .windows) {
-        test_exe_v2.linkSystemLibrary("ws2_32");
-    }
+    linkSystemDeps(test_exe_v2, target);
 
     b.installArtifact(test_exe_v2);
 
@@ -585,44 +461,12 @@ pub fn build(b: *std.Build) void {
     });
 
     client_tests.root_module.addImport("quic", quic_mod);
-    client_tests.root_module.addImport("error", error_mod);
-    client_tests.root_module.addImport("types", types_mod);
-    client_tests.root_module.addImport("config", cfg_mod);
-    client_tests.root_module.addImport("validate", validate_mod);
-    client_tests.root_module.addImport("query_builder", query_builder_mod);
-    client_tests.root_module.addImport("pool", pool_mod);
-    client_tests.root_module.addImport("prepared", prepared_mod);
-    client_tests.root_module.addImport("explain", explain_mod);
-    client_tests.root_module.addImport("batch", batch_mod);
-    client_tests.root_module.addImport("auth", auth_mod);
-    client_tests.root_module.addImport("client_metrics", client_metrics_mod);
-    client_tests.root_module.addImport("proto", proto_mod);
-    client_tests.root_module.addImport("grpc", grpc_mod);
-    client_tests.root_module.addImport("json", json_mod);
-    client_tests.root_module.addImport("dns", dns_mod);
-    client_tests.root_module.addImport("ext_config", config_mod);
-    client_tests.root_module.addImport("slog", slog_mod);
-    client_tests.root_module.addImport("uri", uri_mod);
-    client_tests.root_module.addImport("strings", strings_mod);
-    client_tests.root_module.addImport("protobuf", protobuf_mod);
-    client_tests.root_module.addImport("grpc_zig", grpc_client_mod);
-    client_tests.root_module.addImport("spice", spice_mod);
     client_tests.root_module.addImport("uuid", uuid_mod);
-    client_tests.root_module.addImport("auth_lib", auth_lib_mod);
-    client_tests.root_module.addImport("advanced_types", advanced_types_mod);
-    client_tests.root_module.addImport("gql", gql_mod);
-    client_tests.root_module.addImport("metrics", metrics_mod);
-    client_tests.root_module.addImport("concurrency", concurrency_mod);
-    client_tests.root_module.addImport("fle", fle_mod);
+    client_tests.root_module.addImport("proto", proto_mod);
+    client_tests.root_module.addImport("config", cfg_mod);
+    client_tests.root_module.addImport("grpc", grpc_mod);
 
-    client_tests.linkLibC();
-    if (target.result.os.tag != .windows) {
-        client_tests.linkSystemLibrary("ssl");
-        client_tests.linkSystemLibrary("crypto");
-    }
-    if (target.result.os.tag == .linux) {
-        client_tests.linkSystemLibrary("dl");
-    }
+    linkSystemDeps(client_tests, target);
 
     const run_client_tests = b.addRunArtifact(client_tests);
     test_step.dependOn(&run_client_tests.step);
@@ -644,18 +488,7 @@ pub fn build(b: *std.Build) void {
     integration_tests.root_module.addImport("geode_client", geode_client_mod);
     integration_tests.root_module.addImport("quic", quic_mod);
 
-    // Link system libraries required by QUIC
-    integration_tests.linkLibC();
-    if (target.result.os.tag != .windows) {
-        integration_tests.linkSystemLibrary("ssl");
-        integration_tests.linkSystemLibrary("crypto");
-    }
-    if (target.result.os.tag == .linux) {
-        integration_tests.linkSystemLibrary("dl");
-    }
-    if (target.result.os.tag == .windows) {
-        integration_tests.linkSystemLibrary("ws2_32");
-    }
+    linkSystemDeps(integration_tests, target);
 
     const run_integration_tests = b.addRunArtifact(integration_tests);
     integration_test_step.dependOn(&run_integration_tests.step);
@@ -680,6 +513,7 @@ pub fn build(b: *std.Build) void {
     bench_exe.root_module.addImport("pool", pool_mod);
     bench_exe.root_module.addImport("validate", validate_mod);
     bench_exe.root_module.addImport("error", error_mod);
+    bench_exe.root_module.addImport("proto", proto_mod);
 
     b.installArtifact(bench_exe);
 
@@ -705,18 +539,7 @@ pub fn build(b: *std.Build) void {
     benchmark_exe.root_module.addImport("geode_client", geode_client_mod);
     benchmark_exe.root_module.addImport("quic", quic_mod);
 
-    // Link system libraries required by QUIC
-    benchmark_exe.linkLibC();
-    if (target.result.os.tag != .windows) {
-        benchmark_exe.linkSystemLibrary("ssl");
-        benchmark_exe.linkSystemLibrary("crypto");
-    }
-    if (target.result.os.tag == .linux) {
-        benchmark_exe.linkSystemLibrary("dl");
-    }
-    if (target.result.os.tag == .windows) {
-        benchmark_exe.linkSystemLibrary("ws2_32");
-    }
+    linkSystemDeps(benchmark_exe, target);
 
     b.installArtifact(benchmark_exe);
 

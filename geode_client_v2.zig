@@ -201,13 +201,16 @@ pub const GeodeClient = struct {
         // Always provide SNI; allow_insecure disables verification when requested.
         self.conn = try quic.connect(ep, server_addr, self.host);
 
-        // Wait for handshake confirmation
+        // Wait for handshake confirmation using poll()-based blocking.
+        // poll() blocks on epoll/kqueue until packets arrive, so there is no
+        // need for an additional sleep between iterations.
         const timeout_ns: u64 = 30 * std.time.ns_per_s;
         const start = std.time.nanoTimestamp();
-        while (std.time.nanoTimestamp() - start < timeout_ns) {
-            quic.poll(ep, 10) catch {};
+        while (true) {
+            const remaining = remainingMs(start, timeout_ns);
+            if (remaining == 0) break;
+            quic.poll(ep, @intCast(@min(remaining, 100))) catch {};
             if (quic.isHandshakeConfirmed(self.conn.?)) return;
-            std.Thread.sleep(10 * std.time.ns_per_ms);
         }
 
         return error.ConnectionTimeout;
@@ -242,34 +245,53 @@ pub const GeodeClient = struct {
         }
     }
 
+    /// Compute the remaining timeout in milliseconds from a start timestamp and total timeout.
+    /// Returns 0 when the deadline has already passed.
+    fn remainingMs(start: i128, timeout_ns: u64) u32 {
+        const elapsed_ns = std.time.nanoTimestamp() - start;
+        if (elapsed_ns < 0) return 0;
+        const elapsed: u64 = @intCast(elapsed_ns);
+        if (elapsed >= timeout_ns) return 0;
+        const remaining_ns = timeout_ns - elapsed;
+        const remaining_ms = remaining_ns / std.time.ns_per_ms;
+        // Clamp to u32 and ensure at least 1ms when there is remaining time
+        if (remaining_ms == 0) return 1;
+        if (remaining_ms > std.math.maxInt(u32)) return std.math.maxInt(u32);
+        return @intCast(remaining_ms);
+    }
+
     fn writeAll(self: *GeodeClient, data: []const u8, fin: bool) !void {
         if (self.conn == null or self.stream_id == null) return error.NoStream;
         var written: usize = 0;
-        var attempts: usize = 0;
-        const max_attempts: usize = 2000;
 
-        while (written < data.len or (fin and data.len == 0 and attempts < max_attempts)) : (attempts += 1) {
+        // PERF-002: Use poll()-based blocking instead of sleep-based polling.
+        // quic.poll() uses epoll/kqueue internally, so it returns as soon as
+        // the transport is ready rather than sleeping a fixed duration.
+        const write_timeout_ns: u64 = 30 * std.time.ns_per_s;
+        const start = std.time.nanoTimestamp();
+
+        while (written < data.len or (fin and data.len == 0)) {
+            const remaining = remainingMs(start, write_timeout_ns);
+            if (remaining == 0) return error.WriteError;
+
             const slice = data[written..];
             const n = quic.writeStream(self.conn.?, self.stream_id.?, slice, fin and written + slice.len == data.len) catch |err| switch (err) {
                 error.KeysNotReady, error.FlowControlBlocked, error.WouldBlock, error.OutOfStreams => blk: {
-                    self.poll(10);
-                    std.Thread.sleep(1 * std.time.ns_per_ms);
+                    // Block in poll() until the transport is ready, up to remaining timeout
+                    self.poll(@min(remaining, 10));
                     break :blk 0;
                 },
                 else => return err,
             };
 
             if (n == 0) {
-                self.poll(10);
-                std.Thread.sleep(1 * std.time.ns_per_ms);
+                self.poll(@min(remaining, 10));
                 continue;
             }
 
             written += n;
             if (written >= data.len) break;
         }
-
-        if (attempts >= max_attempts and written < data.len) return error.WriteError;
     }
 
     /// Send a protobuf message with 4-byte big-endian length prefix.
@@ -316,16 +338,20 @@ pub const GeodeClient = struct {
 
         var temp_buf: [4096]u8 = undefined;
 
+        // PERF-001: Use poll()-based blocking instead of sleep-based polling.
+        // quic.poll() uses epoll/kqueue internally and blocks until data
+        // arrives or the timeout expires, eliminating the 5ms latency floor
+        // that sleep-based polling imposed on every read.
+
         // Read until we have at least 4 bytes for length prefix
         while (self.recv_buffer.items.len < 4) {
-            if (std.time.nanoTimestamp() - start >= timeout_ns) {
-                return error.ReceiveTimeout;
-            }
+            const remaining = remainingMs(start, timeout_ns);
+            if (remaining == 0) return error.ReceiveTimeout;
 
             const n = quic.readStream(self.conn.?, self.stream_id.?, temp_buf[0..]) catch |err| switch (err) {
                 error.WouldBlock => blk: {
-                    self.poll(10);
-                    std.Thread.sleep(5 * std.time.ns_per_ms);
+                    // Block in poll() until data arrives, up to remaining timeout
+                    self.poll(@min(remaining, 100));
                     break :blk 0;
                 },
                 error.InvalidStream => return error.NoStream,
@@ -338,8 +364,8 @@ pub const GeodeClient = struct {
                 }
                 try self.recv_buffer.appendSlice(self.allocator, temp_buf[0..n]);
             } else {
-                self.poll(10);
-                std.Thread.sleep(5 * std.time.ns_per_ms);
+                // No data yet; let poll() block until the transport has data
+                self.poll(@min(remaining, 100));
             }
         }
 
@@ -355,14 +381,12 @@ pub const GeodeClient = struct {
 
         // Read until we have the complete message
         while (self.recv_buffer.items.len < total_len) {
-            if (std.time.nanoTimestamp() - start >= timeout_ns) {
-                return error.ReceiveTimeout;
-            }
+            const remaining = remainingMs(start, timeout_ns);
+            if (remaining == 0) return error.ReceiveTimeout;
 
             const n = quic.readStream(self.conn.?, self.stream_id.?, temp_buf[0..]) catch |err| switch (err) {
                 error.WouldBlock => blk: {
-                    self.poll(10);
-                    std.Thread.sleep(5 * std.time.ns_per_ms);
+                    self.poll(@min(remaining, 100));
                     break :blk 0;
                 },
                 error.InvalidStream => return error.NoStream,
@@ -375,8 +399,7 @@ pub const GeodeClient = struct {
                 }
                 try self.recv_buffer.appendSlice(self.allocator, temp_buf[0..n]);
             } else {
-                self.poll(10);
-                std.Thread.sleep(5 * std.time.ns_per_ms);
+                self.poll(@min(remaining, 100));
             }
         }
 

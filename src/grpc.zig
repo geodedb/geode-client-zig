@@ -332,9 +332,11 @@ pub const GrpcClient = struct {
         }
     }
 
-    /// Execute a GQL query
-    pub fn query(self: *Self, gql: []const u8) ![]u8 {
-        var execute = proto.ExecuteRequest{
+    /// Execute a GQL query and return the server response.
+    /// The caller owns the returned `QuicServerMessage` and must call
+    /// `deinit(allocator)` on it when done.
+    pub fn query(self: *Self, gql: []const u8) !proto.QuicServerMessage {
+        const execute = proto.ExecuteRequest{
             .session_id = self.session_id orelse "",
             .query = gql,
         };
@@ -342,16 +344,14 @@ pub const GrpcClient = struct {
         const msg = proto.QuicClientMessage{ .execute = execute };
         try self.sendProto(msg);
 
-        _ = &execute; // Avoid unused variable warning
+        var response = try self.receiveProto();
+        errdefer response.deinit(self.allocator);
 
-        const response = try self.receiveProto();
         if (response.execute) |exec_resp| {
-            if (exec_resp.err) |err| {
-                _ = err;
+            if (exec_resp.err) |_| {
                 return error.QueryFailed;
             }
-            // Return success indicator
-            return try self.allocator.dupe(u8, "OK");
+            return response;
         }
 
         return GrpcError.InvalidResponse;

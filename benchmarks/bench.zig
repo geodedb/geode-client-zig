@@ -16,6 +16,7 @@ const parseDSN = @import("config").parseDSN;
 const Pool = @import("pool").Pool;
 const PoolConfig = @import("pool").PoolConfig;
 const validate = @import("validate");
+const proto = @import("proto");
 
 // =============================================================================
 // Benchmark Framework
@@ -669,6 +670,107 @@ fn benchTimestampFormat() void {
 }
 
 // =============================================================================
+// Protobuf Encode/Decode Benchmarks
+// =============================================================================
+
+fn benchProtoEncodeHelloRequest(allocator: std.mem.Allocator) void {
+    const msg = proto.QuicClientMessage{
+        .hello = proto.HelloRequest{
+            .username = "admin",
+            .password = "supersecret",
+            .client_name = "geode-zig",
+            .client_version = "0.1.0",
+            .wanted_conformance = "minimum",
+        },
+    };
+    const data = proto.encodeQuicClientMessage(allocator, msg) catch unreachable;
+    defer allocator.free(data);
+    std.mem.doNotOptimizeAway(data);
+}
+
+fn benchProtoEncodeExecuteRequest(allocator: std.mem.Allocator) void {
+    const msg = proto.QuicClientMessage{
+        .execute = proto.ExecuteRequest{
+            .session_id = "sess-abc123",
+            .query = "MATCH (n:Person)-[:KNOWS]->(m:Person) WHERE n.age > 25 RETURN n.name, m.name",
+            .request_id = "req-001",
+        },
+    };
+    const data = proto.encodeQuicClientMessage(allocator, msg) catch unreachable;
+    defer allocator.free(data);
+    std.mem.doNotOptimizeAway(data);
+}
+
+fn benchProtoEncodeWithLengthPrefix(allocator: std.mem.Allocator) void {
+    const msg = proto.QuicClientMessage{
+        .hello = proto.HelloRequest{
+            .username = "admin",
+            .password = "supersecret",
+            .client_name = "geode-zig",
+            .client_version = "0.1.0",
+            .wanted_conformance = "minimum",
+        },
+    };
+    const data = proto.encodeWithLengthPrefix(allocator, msg) catch unreachable;
+    defer allocator.free(data);
+    std.mem.doNotOptimizeAway(data);
+}
+
+/// Pre-encoded HelloResponse protobuf bytes for decode benchmarks.
+/// Fields: success=true (field 1, varint), session_id="sess-abc123" (field 2, bytes),
+/// capability="gql-minimum" (field 4, bytes).
+const hello_response_payload: []const u8 = &[_]u8{
+    0x08, 0x01, // field 1, varint, value=1 (true)
+    0x12, 0x0b, // field 2, bytes, len=11
+    's', 'e', 's', 's', '-', 'a', 'b', 'c', '1', '2', '3', // "sess-abc123"
+    0x22, 0x0b, // field 4, bytes, len=11
+    'g', 'q', 'l', '-', 'm', 'i', 'n', 'i', 'm', 'u', 'm', // "gql-minimum"
+};
+
+/// Pre-encoded QuicServerMessage wrapping the HelloResponse submessage (field 1).
+const server_hello_payload: []const u8 = &[_]u8{
+    0x0a, 0x1c, // field 1, bytes, len=28 (hello_response_payload.len)
+    // -- HelloResponse inner bytes --
+    0x08, 0x01, // field 1, varint, value=1 (true)
+    0x12, 0x0b, // field 2, bytes, len=11
+    's',  'e',
+    's',  's',
+    '-',  'a',
+    'b',  'c',
+    '1',  '2',
+    '3',
+    0x22, 0x0b, // field 4, bytes, len=11
+    'g',  'q',
+    'l',  '-',
+    'm',  'i',
+    'n',  'i',
+    'm',  'u',
+    'm',
+};
+
+fn benchProtoDecodeHelloResponse(allocator: std.mem.Allocator) void {
+    var msg = proto.decodeQuicServerMessage(allocator, server_hello_payload) catch unreachable;
+    defer msg.deinit(allocator);
+    std.mem.doNotOptimizeAway(&msg);
+}
+
+fn benchProtoDecodeTag() void {
+    // Tag bytes for field 2, wire type BYTES (0x12) followed by dummy length
+    const data = [_]u8{ 0x12, 0x05, 0x68, 0x65, 0x6c, 0x6c, 0x6f };
+    var pos: usize = 0;
+    const tag = proto.decodeTag(&data, &pos) catch unreachable;
+    std.mem.doNotOptimizeAway(&tag);
+}
+
+fn benchProtoDecodeVarint() void {
+    // Varint encoding of 300 (0xAC 0x02)
+    const data = [_]u8{ 0xAC, 0x02 };
+    var pos: usize = 0;
+    const val = proto.decodeVarint(&data, &pos) catch unreachable;
+    std.mem.doNotOptimizeAway(&val);
+}
+
+// =============================================================================
 // Main Entry Point
 // =============================================================================
 
@@ -780,6 +882,16 @@ pub fn main() !void {
     benchmarkSimple("validate.ipv4", benchValidateIPv4).print();
     benchmarkSimple("validate.isIpv6", benchValidateIPv6).print();
     benchmark("validate.sanitize", benchValidateSanitize, allocator).print();
+    std.debug.print("\n", .{});
+
+    // Protobuf Encode/Decode Benchmarks
+    std.debug.print("--- Protobuf Encode/Decode ---\n", .{});
+    benchmark("proto.encodeHelloRequest", benchProtoEncodeHelloRequest, allocator).print();
+    benchmark("proto.encodeExecuteRequest", benchProtoEncodeExecuteRequest, allocator).print();
+    benchmark("proto.encodeWithLengthPrefix", benchProtoEncodeWithLengthPrefix, allocator).print();
+    benchmark("proto.decodeHelloResponse", benchProtoDecodeHelloResponse, allocator).print();
+    benchmarkSimple("proto.decodeTag", benchProtoDecodeTag).print();
+    benchmarkSimple("proto.decodeVarint", benchProtoDecodeVarint).print();
     std.debug.print("\n", .{});
 
     std.debug.print("=" ** 100 ++ "\n", .{});

@@ -477,38 +477,31 @@ fn encodeBeginRequest(allocator: std.mem.Allocator, req: BeginRequest) ![]u8 {
     return buf.toOwnedSlice(allocator);
 }
 
-fn encodeCommitRequest(allocator: std.mem.Allocator, req: CommitRequest) ![]u8 {
+/// Shared encoder for messages with up to two string fields.
+/// field1 is encoded as protobuf field 1, field2 (if non-empty) as field 2.
+fn encodeTwoStringFields(allocator: std.mem.Allocator, field1: []const u8, field2: []const u8) ![]u8 {
     var buf: std.ArrayListUnmanaged(u8) = .{};
     errdefer buf.deinit(allocator);
     const writer = buf.writer(allocator);
-    try encodeString(writer, 1, req.session_id);
+    try encodeString(writer, 1, field1);
+    try encodeString(writer, 2, field2);
     return buf.toOwnedSlice(allocator);
+}
+
+fn encodeCommitRequest(allocator: std.mem.Allocator, req: CommitRequest) ![]u8 {
+    return encodeTwoStringFields(allocator, req.session_id, "");
 }
 
 fn encodeRollbackRequest(allocator: std.mem.Allocator, req: RollbackRequest) ![]u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    errdefer buf.deinit(allocator);
-    const writer = buf.writer(allocator);
-    try encodeString(writer, 1, req.session_id);
-    return buf.toOwnedSlice(allocator);
+    return encodeTwoStringFields(allocator, req.session_id, "");
 }
 
 fn encodeSavepointRequest(allocator: std.mem.Allocator, req: SavepointRequest) ![]u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    errdefer buf.deinit(allocator);
-    const writer = buf.writer(allocator);
-    try encodeString(writer, 1, req.name);
-    try encodeString(writer, 2, req.session_id);
-    return buf.toOwnedSlice(allocator);
+    return encodeTwoStringFields(allocator, req.name, req.session_id);
 }
 
 fn encodeRollbackToRequest(allocator: std.mem.Allocator, req: RollbackToRequest) ![]u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    errdefer buf.deinit(allocator);
-    const writer = buf.writer(allocator);
-    try encodeString(writer, 1, req.name);
-    try encodeString(writer, 2, req.session_id);
-    return buf.toOwnedSlice(allocator);
+    return encodeTwoStringFields(allocator, req.name, req.session_id);
 }
 
 /// Encode a QuicClientMessage to protobuf bytes.
@@ -999,64 +992,37 @@ fn decodeBeginResponse(allocator: std.mem.Allocator, data: []const u8) !BeginRes
     return resp;
 }
 
-fn decodeCommitResponse(data: []const u8) !CommitResponse {
-    var resp = CommitResponse{};
+/// Shared decoder for response messages containing a single bool "success" field (field 1).
+/// Returns the decoded bool value.
+fn decodeSingleBoolResponse(data: []const u8) !bool {
     var pos: usize = 0;
+    var success: bool = false;
     while (pos < data.len) {
         const tag = try decodeTag(data, &pos);
         switch (tag.field_num) {
             1 => if (tag.wire_type == WIRE_VARINT) {
-                resp.success = try decodeBool(data, &pos);
+                success = try decodeBool(data, &pos);
             } else try skipField(data, &pos, tag.wire_type),
             else => try skipField(data, &pos, tag.wire_type),
         }
     }
-    return resp;
+    return success;
+}
+
+fn decodeCommitResponse(data: []const u8) !CommitResponse {
+    return .{ .success = try decodeSingleBoolResponse(data) };
 }
 
 fn decodeRollbackResponse(data: []const u8) !RollbackResponse {
-    var resp = RollbackResponse{};
-    var pos: usize = 0;
-    while (pos < data.len) {
-        const tag = try decodeTag(data, &pos);
-        switch (tag.field_num) {
-            1 => if (tag.wire_type == WIRE_VARINT) {
-                resp.success = try decodeBool(data, &pos);
-            } else try skipField(data, &pos, tag.wire_type),
-            else => try skipField(data, &pos, tag.wire_type),
-        }
-    }
-    return resp;
+    return .{ .success = try decodeSingleBoolResponse(data) };
 }
 
 fn decodeSavepointResponse(data: []const u8) !SavepointResponse {
-    var resp = SavepointResponse{};
-    var pos: usize = 0;
-    while (pos < data.len) {
-        const tag = try decodeTag(data, &pos);
-        switch (tag.field_num) {
-            1 => if (tag.wire_type == WIRE_VARINT) {
-                resp.success = try decodeBool(data, &pos);
-            } else try skipField(data, &pos, tag.wire_type),
-            else => try skipField(data, &pos, tag.wire_type),
-        }
-    }
-    return resp;
+    return .{ .success = try decodeSingleBoolResponse(data) };
 }
 
 fn decodeRollbackToResponse(data: []const u8) !RollbackToResponse {
-    var resp = RollbackToResponse{};
-    var pos: usize = 0;
-    while (pos < data.len) {
-        const tag = try decodeTag(data, &pos);
-        switch (tag.field_num) {
-            1 => if (tag.wire_type == WIRE_VARINT) {
-                resp.success = try decodeBool(data, &pos);
-            } else try skipField(data, &pos, tag.wire_type),
-            else => try skipField(data, &pos, tag.wire_type),
-        }
-    }
-    return resp;
+    return .{ .success = try decodeSingleBoolResponse(data) };
 }
 
 /// Decode a QuicServerMessage from protobuf bytes.

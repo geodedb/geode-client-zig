@@ -222,6 +222,7 @@ pub fn Pool(comptime ConnectionType: type) type {
         connections: std.ArrayListUnmanaged(PooledConnection),
         stats: PoolStats,
         mutex: std.Thread.Mutex,
+        condition: std.Thread.Condition,
         next_id: u64,
         closed: bool,
         executor: ?PoolExecutor,
@@ -246,6 +247,7 @@ pub fn Pool(comptime ConnectionType: type) type {
                 .connections = .{},
                 .stats = PoolStats.init(),
                 .mutex = .{},
+                .condition = .{},
                 .next_id = 0,
                 .closed = false,
                 .executor = executor,
@@ -323,16 +325,19 @@ pub fn Pool(comptime ConnectionType: type) type {
             return count;
         }
 
-        /// Acquire a connection from the pool
+        /// Acquire a connection from the pool.
+        /// Blocks until an idle connection is available, a new connection can
+        /// be created, or the acquire timeout expires. Uses a condition
+        /// variable instead of sleep-based polling so that a released
+        /// connection wakes up a waiting acquirer immediately.
         pub fn acquire(self: *Self) !*PooledConnection {
-            const start = std.time.milliTimestamp();
-            const deadline = start + self.config.acquire_timeout_ms;
+            const timeout_ns: u64 = @as(u64, self.config.acquire_timeout_ms) * std.time.ns_per_ms;
 
-            while (std.time.milliTimestamp() < deadline) {
-                self.mutex.lock();
+            self.mutex.lock();
+            defer self.mutex.unlock();
 
+            while (true) {
                 if (self.closed) {
-                    self.mutex.unlock();
                     return error.PoolClosed;
                 }
 
@@ -343,7 +348,6 @@ pub fn Pool(comptime ConnectionType: type) type {
                         self.stats.acquire_count += 1;
                         self.stats.active_connections += 1;
                         self.stats.idle_connections -= 1;
-                        self.mutex.unlock();
                         return conn;
                     }
                 }
@@ -354,24 +358,20 @@ pub fn Pool(comptime ConnectionType: type) type {
                     new_conn.acquire();
                     self.stats.acquire_count += 1;
                     self.stats.active_connections += 1;
-                    self.mutex.unlock();
                     return new_conn;
                 }
 
-                self.mutex.unlock();
-
-                // Wait and retry
-                std.Thread.sleep(10 * std.time.ns_per_ms);
+                // Wait for a connection to be released or timeout
+                self.condition.timedWait(&self.mutex, timeout_ns) catch {
+                    self.stats.timeout_count += 1;
+                    return error.AcquireTimeout;
+                };
             }
-
-            self.mutex.lock();
-            self.stats.timeout_count += 1;
-            self.mutex.unlock();
-
-            return error.AcquireTimeout;
         }
 
-        /// Release a connection back to the pool
+        /// Release a connection back to the pool.
+        /// Signals one waiting acquirer so it can immediately reuse the
+        /// connection without polling.
         pub fn release(self: *Self, conn: *PooledConnection) void {
             self.mutex.lock();
             defer self.mutex.unlock();
@@ -381,6 +381,7 @@ pub fn Pool(comptime ConnectionType: type) type {
                 self.stats.release_count += 1;
                 self.stats.active_connections -= 1;
                 self.stats.idle_connections += 1;
+                self.condition.signal();
             }
         }
 

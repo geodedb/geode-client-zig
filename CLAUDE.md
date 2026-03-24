@@ -7,6 +7,7 @@ This file provides guidance to Claude Code when working with the geode-client-zi
 This is the **Zig client library** for **Geode**, an enterprise-ready graph database implementing the ISO/IEC 39075:2024 Graph Query Language (GQL) standard.
 
 **Status**: Production-ready (Phase 8 Complete)
+**Version**: 0.2.0
 **Zig Version**: 0.15.1+
 **Transport**: QUIC + TLS 1.3 (default), gRPC over HTTP/2 (optional)
 **Wire Format**: Protobuf (JSON protocol removed)
@@ -32,7 +33,9 @@ geode-client-zig/
 │   ├── prepared.zig       # Prepared statement support
 │   ├── explain.zig        # Query explain/profile support
 │   ├── batch.zig          # Batch query execution
-│   └── auth.zig           # Authentication and RLS policies
+│   ├── auth.zig           # Authentication and RLS policies
+│   ├── client_metrics.zig # Observability (counters, gauges, histograms)
+│   └── encryption.zig     # Field-level encryption (AES-256-GCM, blind indexes)
 ├── tests/                 # Integration tests
 │   └── integration.zig    # Comprehensive integration test suite
 ├── benchmarks/            # Performance benchmarks
@@ -79,17 +82,34 @@ make ci-quick           # Quick CI (unit tests only)
 
 ## Dependencies
 
-External dependencies are managed via `build.zig.zon` with local path references:
+External dependencies are managed via `build.zig.zon` with git URL references:
 
-- **quic**: QUIC transport protocol (main networking)
-- **json**: JSON parsing/serialization
-- **dns**: DNS resolution
+**Core Transport & Encoding**:
+
+- **quic**: QUIC transport protocol (RFC 9000) - primary transport
+- **tls**: TLS 1.3 library for QUIC
+- **protobuf**: Protocol Buffers wire format encoding/decoding
+- **grpc_zig**: gRPC for Zig - alternate HTTP/2 transport
+
+**Foundation Libraries**:
+
+- **json**: JSON parsing/serialization (RFC 8259)
+- **dns**: DNS resolution (RFC 1035) with caching and DoT/DoH/DoQ
 - **config**: Configuration file parsing (YAML, TOML, JSON)
-- **slog**: Structured logging
-- **uri**: URI parsing
-- **strings**: String utilities
+- **slog**: Structured logging (slog-style, multiple handlers)
+- **uri**: URI/URL parsing (RFC 3986)
+- **strings**: Unicode string library with SIMD acceleration
+- **spice**: Fork/join parallelism
 
-Dependencies are located at `~/src/gl/devnw/zig/*`.
+**Client Libraries** (aligned with Geode server):
+
+- **uuid**: UUID generation (RFC 9562, V1-V8, k-sortable V7)
+- **auth**: HMAC chain, API keys, TOTP/MFA primitives
+- **advanced_types**: Network, vector, geographic, URL, range value types
+- **gql**: ISO/IEC 39075:2024 GQL front-end (lexer, parser, AST)
+- **metrics**: Counters, gauges, histograms, Prometheus export
+- **concurrency**: Thread pool and bounded MPMC queue
+- **fle**: Field-level encryption with AEAD, HKDF, blind indices
 
 ## Module Overview
 
@@ -513,6 +533,40 @@ client.clearAuthentication();
 - `.update`: Filter on UPDATE operations
 - `.delete`: Filter on DELETE operations
 - `.all`: Apply to all operations
+
+### Client Metrics Module (`src/client_metrics.zig`)
+
+Observability metrics wrapping the `metrics` library. Provides counters, gauges, and histograms for connections, queries, transactions, and byte throughput. All metrics are registered in a single `metrics.Registry` for Prometheus text export or snapshots.
+
+```zig
+const ClientMetrics = @import("client_metrics.zig").ClientMetrics;
+
+var m = try ClientMetrics.init(allocator);
+defer m.deinit();
+
+// Record a successful query
+const sample = m.startQueryTimer();
+// ... execute query ...
+m.recordQuerySuccess(sample);
+
+// Record bytes transferred
+m.recordBytesSent(payload.len);
+m.recordBytesReceived(response.len);
+```
+
+### Encryption Module (`src/encryption.zig`)
+
+Client-side field-level encryption using AES-256-GCM with support for searchable encryption via blind indexes. Wraps the FLE library for transparent encrypt-before-send and decrypt-after-receive.
+
+```zig
+const encryption = @import("encryption.zig");
+
+// Configure field-level encryption
+var enc = encryption.FieldEncryptionConfig{
+    .searchable = true,
+    .aad_context = "Person.ssn",
+};
+```
 
 ## Development Guidelines
 
