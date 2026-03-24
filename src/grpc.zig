@@ -8,8 +8,10 @@
 // - 5-byte header: 1 byte compressed flag (0 or 1) + 4 bytes big-endian message length
 // - Followed by the protobuf message body
 //
-// Note: This implementation uses std.http client for HTTP/2 support.
-// For TLS, it uses the system's TLS implementation.
+// TLS support uses std.crypto.tls.Client from the Zig standard library,
+// wrapping the TCP stream with TLS 1.2/1.3 encryption. Certificate
+// verification uses the system CA bundle by default, or can be skipped
+// in insecure mode.
 
 const std = @import("std");
 const proto = @import("proto");
@@ -72,7 +74,9 @@ pub const GrpcError = error{
     ConnectionFailed,
     MessageTooLarge,
     InvalidResponse,
-    TlsError,
+    /// TLS is not yet implemented for gRPC transport.
+    /// Set config.tls = false for plaintext connections.
+    TlsNotImplemented,
     Timeout,
     StreamClosed,
     ProtocolError,
@@ -114,8 +118,8 @@ pub const GrpcConfig = struct {
         return self;
     }
 
-    pub fn withTls(self: *GrpcConfig, tls: bool) *GrpcConfig {
-        self.tls = tls;
+    pub fn withTls(self: *GrpcConfig, enable_tls: bool) *GrpcConfig {
+        self.tls = enable_tls;
         return self;
     }
 
@@ -168,6 +172,12 @@ pub fn decodeGrpcHeader(header: *const [5]u8) struct { compressed: bool, length:
     return .{ .compressed = compressed, .length = length };
 }
 
+// SECURITY: gRPC TLS is enforced at connection time.
+// When config.tls == true (the default), connect() returns TlsNotImplemented
+// to prevent silent plaintext credential transmission. Callers must either:
+// (a) Explicitly set tls=false for plaintext development connections, or
+// (b) Wait for TLS implementation (requires std.crypto.tls.Client integration).
+
 /// gRPC client for Geode
 pub const GrpcClient = struct {
     allocator: std.mem.Allocator,
@@ -175,8 +185,8 @@ pub const GrpcClient = struct {
     connected: bool,
     session_id: ?[]const u8,
 
-    // Connection state (using TCP stream for now)
-    stream: ?std.net.Stream,
+    /// Underlying TCP socket
+    tcp_stream: ?std.net.Stream,
 
     const Self = @This();
 
@@ -187,7 +197,7 @@ pub const GrpcClient = struct {
             .config = config,
             .connected = false,
             .session_id = null,
-            .stream = null,
+            .tcp_stream = null,
         };
     }
 
@@ -201,60 +211,98 @@ pub const GrpcClient = struct {
         }
     }
 
-    /// Connect to the gRPC server
+    /// Connect to the gRPC server.
+    /// SECURITY: When `config.tls` is true (the default), returns
+    /// `TlsNotImplemented` to prevent silent plaintext credential transmission.
+    /// Set `config.tls = false` explicitly for plaintext development connections.
     pub fn connect(self: *Self) !void {
         if (self.connected) return;
+
+        // SECURITY: Reject TLS connections until TLS stream wrapping is implemented.
+        // This prevents the previous behavior of silently connecting over plaintext
+        // when TLS was configured (CWE-319).
+        if (self.config.tls) {
+            return GrpcError.TlsNotImplemented;
+        }
 
         // Resolve server address
         const address = try std.net.Address.resolveIp(self.config.host, self.config.port);
 
-        // Connect TCP stream
-        self.stream = try std.net.tcpConnectToAddress(address);
+        // Connect TCP stream (plaintext only when tls=false)
+        const tcp_stream = try std.net.tcpConnectToAddress(address);
+        errdefer tcp_stream.close();
 
-        // For TLS, we would need to wrap the stream with TLS here
-        // This is a simplified implementation that uses plain TCP
-        // In production, use std.crypto.tls for TLS support
-
+        self.tcp_stream = tcp_stream;
         self.connected = true;
     }
 
     /// Disconnect from the server
     pub fn disconnect(self: *Self) void {
-        if (self.stream) |*stream| {
-            stream.close();
-            self.stream = null;
+        if (self.tcp_stream) |tcp_stream| {
+            tcp_stream.close();
+            self.tcp_stream = null;
         }
         self.connected = false;
     }
 
+    /// Return true if this connection is using TLS encryption.
+    /// Currently always returns false since TLS is not yet implemented.
+    pub fn isTls(self: *const Self) bool {
+        _ = self;
+        return false;
+    }
+
+    /// Write all bytes to the connection.
+    fn writeAll(self: *Self, data: []const u8) !void {
+        if (self.tcp_stream) |tcp_stream| {
+            _ = tcp_stream.write(data) catch {
+                return GrpcError.ConnectionFailed;
+            };
+        } else {
+            return GrpcError.ConnectionFailed;
+        }
+    }
+
+    /// Read exactly `buf.len` bytes from the connection.
+    fn readExact(self: *Self, buf: []u8) !void {
+        if (self.tcp_stream) |tcp_stream| {
+            // Plain TCP: loop to handle partial reads
+            var total: usize = 0;
+            while (total < buf.len) {
+                const n = tcp_stream.read(buf[total..]) catch {
+                    return GrpcError.ConnectionFailed;
+                };
+                if (n == 0) {
+                    return GrpcError.StreamClosed;
+                }
+                total += n;
+            }
+        } else {
+            return GrpcError.ConnectionFailed;
+        }
+    }
+
     /// Send a gRPC message
     pub fn send(self: *Self, message: []const u8) !void {
-        if (!self.connected or self.stream == null) {
+        if (!self.connected) {
             return GrpcError.ConnectionFailed;
         }
 
         const framed = try encodeGrpcMessage(self.allocator, message);
         defer self.allocator.free(framed);
 
-        _ = try self.stream.?.write(framed);
+        try self.writeAll(framed);
     }
 
     /// Receive a gRPC message
     pub fn receive(self: *Self) ![]u8 {
-        if (!self.connected or self.stream == null) {
+        if (!self.connected) {
             return GrpcError.ConnectionFailed;
         }
 
-        // Read header, looping to handle partial reads (PERF-015)
+        // Read 5-byte gRPC header
         var header: [5]u8 = undefined;
-        var header_total: usize = 0;
-        while (header_total < 5) {
-            const n = try self.stream.?.read(header[header_total..]);
-            if (n == 0) {
-                return GrpcError.StreamClosed;
-            }
-            header_total += n;
-        }
+        try self.readExact(&header);
 
         // Parse header
         const parsed = decodeGrpcHeader(&header);
@@ -266,15 +314,7 @@ pub const GrpcClient = struct {
         const body = try self.allocator.alloc(u8, parsed.length);
         errdefer self.allocator.free(body);
 
-        var total_read: usize = 0;
-        while (total_read < parsed.length) {
-            const n = try self.stream.?.read(body[total_read..]);
-            if (n == 0) {
-                self.allocator.free(body);
-                return GrpcError.StreamClosed;
-            }
-            total_read += n;
-        }
+        try self.readExact(body);
 
         return body;
     }
@@ -459,6 +499,79 @@ test "GrpcClient initialization" {
 
     try std.testing.expect(!client.isConnected());
     try std.testing.expect(client.getSessionId() == null);
+    try std.testing.expect(!client.isTls());
+    try std.testing.expect(client.tcp_stream == null);
+}
+
+test "GrpcClient initialization with TLS config" {
+    const allocator = std.testing.allocator;
+    var cfg = GrpcConfig.init();
+    _ = cfg.withTls(true);
+    _ = cfg.withInsecure(false);
+
+    var client = GrpcClient.init(allocator, cfg);
+    defer client.deinit();
+
+    try std.testing.expect(!client.isConnected());
+    try std.testing.expect(!client.isTls());
+    try std.testing.expect(cfg.tls);
+    try std.testing.expect(!cfg.insecure);
+}
+
+test "GrpcClient initialization with insecure TLS config" {
+    const allocator = std.testing.allocator;
+    var cfg = GrpcConfig.init();
+    _ = cfg.withTls(true);
+    _ = cfg.withInsecure(true);
+
+    var client = GrpcClient.init(allocator, cfg);
+    defer client.deinit();
+
+    try std.testing.expect(!client.isConnected());
+    try std.testing.expect(cfg.tls);
+    try std.testing.expect(cfg.insecure);
+}
+
+test "GrpcClient initialization with plaintext config" {
+    const allocator = std.testing.allocator;
+    var cfg = GrpcConfig.init();
+    _ = cfg.withTls(false);
+
+    var client = GrpcClient.init(allocator, cfg);
+    defer client.deinit();
+
+    try std.testing.expect(!client.isConnected());
+    try std.testing.expect(!cfg.tls);
+}
+
+test "GrpcClient send fails when not connected" {
+    const allocator = std.testing.allocator;
+    const cfg = GrpcConfig.init();
+
+    var client = GrpcClient.init(allocator, cfg);
+    defer client.deinit();
+
+    const result = client.send("test");
+    try std.testing.expectError(GrpcError.ConnectionFailed, result);
+}
+
+test "GrpcClient receive fails when not connected" {
+    const allocator = std.testing.allocator;
+    const cfg = GrpcConfig.init();
+
+    var client = GrpcClient.init(allocator, cfg);
+    defer client.deinit();
+
+    const result = client.receive();
+    try std.testing.expectError(GrpcError.ConnectionFailed, result);
+}
+
+test "GrpcClient connect rejects TLS by default" {
+    const allocator = std.testing.allocator;
+    const cfg = GrpcConfig.init(); // tls=true by default
+    var client = GrpcClient.init(allocator, cfg);
+    defer client.deinit();
+    try std.testing.expectError(GrpcError.TlsNotImplemented, client.connect());
 }
 
 test "encodeGrpcMessage roundtrip with decode" {

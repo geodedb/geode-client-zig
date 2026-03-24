@@ -32,6 +32,7 @@ pub const GeodeClient = struct {
     conn: ?*quic.QuicConnection = null,
     stream_id: ?u64 = null,
     recv_buffer: std.ArrayList(u8),
+    recv_offset: usize = 0,
     session_id: []const u8 = "",
 
     // gRPC transport state
@@ -329,9 +330,31 @@ pub const GeodeClient = struct {
         }
     }
 
+    /// Return the number of unconsumed bytes in the receive buffer.
+    fn recvAvailable(self: *const GeodeClient) usize {
+        return self.recv_buffer.items.len - self.recv_offset;
+    }
+
+    /// Compact the receive buffer by shifting unconsumed data to the front.
+    /// Called when recv_offset exceeds half the buffer length to amortize copy cost.
+    fn compactRecvBuffer(self: *GeodeClient) void {
+        if (self.recv_offset == 0) return;
+        const remaining = self.recv_buffer.items.len - self.recv_offset;
+        if (remaining > 0) {
+            std.mem.copyForwards(u8, self.recv_buffer.items[0..remaining], self.recv_buffer.items[self.recv_offset..]);
+        }
+        self.recv_buffer.items.len = remaining;
+        self.recv_offset = 0;
+    }
+
     /// Receive a protobuf message using QUIC transport.
     fn receiveProtoQuic(self: *GeodeClient, timeout_ms: u64) !proto.QuicServerMessage {
         if (self.conn == null or self.stream_id == null) return error.NoStream;
+
+        // PERF-007: Compact only when offset exceeds half the buffer length (amortized O(1)).
+        if (self.recv_offset > self.recv_buffer.items.len / 2) {
+            self.compactRecvBuffer();
+        }
 
         const timeout_ns: u64 = timeout_ms * std.time.ns_per_ms;
         const start = std.time.nanoTimestamp();
@@ -344,7 +367,7 @@ pub const GeodeClient = struct {
         // that sleep-based polling imposed on every read.
 
         // Read until we have at least 4 bytes for length prefix
-        while (self.recv_buffer.items.len < 4) {
+        while (self.recvAvailable() < 4) {
             const remaining = remainingMs(start, timeout_ns);
             if (remaining == 0) return error.ReceiveTimeout;
 
@@ -370,7 +393,7 @@ pub const GeodeClient = struct {
         }
 
         // Decode length prefix (big-endian u32)
-        const msg_len = proto.decodeLengthPrefix(self.recv_buffer.items[0..4]) catch return error.InvalidMessage;
+        const msg_len = proto.decodeLengthPrefix(self.recv_buffer.items[self.recv_offset..][0..4]) catch return error.InvalidMessage;
 
         // SECURITY: Check message size
         if (msg_len > MAX_RECV_BUFFER_SIZE - 4) {
@@ -380,7 +403,7 @@ pub const GeodeClient = struct {
         const total_len: usize = 4 + @as(usize, msg_len);
 
         // Read until we have the complete message
-        while (self.recv_buffer.items.len < total_len) {
+        while (self.recvAvailable() < total_len) {
             const remaining = remainingMs(start, timeout_ns);
             if (remaining == 0) return error.ReceiveTimeout;
 
@@ -404,16 +427,16 @@ pub const GeodeClient = struct {
         }
 
         // Decode the protobuf message
-        const msg_data = self.recv_buffer.items[4..total_len];
+        const msg_data = self.recv_buffer.items[self.recv_offset + 4 .. self.recv_offset + total_len];
         const msg = try proto.decodeQuicServerMessage(self.allocator, msg_data);
 
-        // Remove consumed data from buffer
-        const remaining = self.recv_buffer.items.len - total_len;
-        if (remaining > 0) {
-            std.mem.copyForwards(u8, self.recv_buffer.items[0..remaining], self.recv_buffer.items[total_len..]);
-            self.recv_buffer.items = self.recv_buffer.items[0..remaining];
-        } else {
-            self.recv_buffer.items = self.recv_buffer.items[0..0];
+        // PERF-007: Advance read cursor instead of shifting data.
+        self.recv_offset += total_len;
+
+        // Reset buffer when fully consumed to reclaim memory.
+        if (self.recv_offset == self.recv_buffer.items.len) {
+            self.recv_buffer.items.len = 0;
+            self.recv_offset = 0;
         }
 
         return msg;
@@ -422,22 +445,23 @@ pub const GeodeClient = struct {
     /// Attempt to read a complete buffered protobuf message without waiting for more data.
     /// Returns null when no full message is buffered yet.
     pub fn tryReceiveBufferedProto(self: *GeodeClient) !?proto.QuicServerMessage {
-        if (self.recv_buffer.items.len < 4) return null;
+        if (self.recvAvailable() < 4) return null;
 
-        const msg_len = proto.decodeLengthPrefix(self.recv_buffer.items[0..4]) catch return null;
+        const msg_len = proto.decodeLengthPrefix(self.recv_buffer.items[self.recv_offset..][0..4]) catch return null;
         const total_len: usize = 4 + @as(usize, msg_len);
 
-        if (self.recv_buffer.items.len < total_len) return null;
+        if (self.recvAvailable() < total_len) return null;
 
-        const msg_data = self.recv_buffer.items[4..total_len];
+        const msg_data = self.recv_buffer.items[self.recv_offset + 4 .. self.recv_offset + total_len];
         const msg = try proto.decodeQuicServerMessage(self.allocator, msg_data);
 
-        const remaining = self.recv_buffer.items.len - total_len;
-        if (remaining > 0) {
-            std.mem.copyForwards(u8, self.recv_buffer.items[0..remaining], self.recv_buffer.items[total_len..]);
-            self.recv_buffer.items = self.recv_buffer.items[0..remaining];
-        } else {
-            self.recv_buffer.items = self.recv_buffer.items[0..0];
+        // PERF-007: Advance read cursor instead of shifting data.
+        self.recv_offset += total_len;
+
+        // Reset buffer when fully consumed to reclaim memory.
+        if (self.recv_offset == self.recv_buffer.items.len) {
+            self.recv_buffer.items.len = 0;
+            self.recv_offset = 0;
         }
 
         return msg;

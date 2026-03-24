@@ -19,6 +19,8 @@ pub const MAX_ROWS_PER_PAGE: usize = 100_000; // matches validate.zig MAX_PAGE_S
 
 // =============================================================================
 // Message Types (aligned with geode.proto)
+//
+// Q-007: This section could be split into a separate proto_types.zig file.
 // =============================================================================
 
 pub const HelloRequest = struct {
@@ -300,7 +302,10 @@ pub const QuicServerMessage = struct {
 };
 
 // =============================================================================
-// Encoding helpers
+// Encoding helpers (low-level protobuf primitives)
+//
+// Q-007: This section could be split into a separate proto_encode.zig file
+// along with the message encoding section below.
 // =============================================================================
 
 pub fn encodeVarint(writer: anytype, v: u64) !void {
@@ -361,65 +366,154 @@ pub fn encodeSubmessage(writer: anytype, field_num: u32, data: []const u8) !void
 }
 
 // =============================================================================
-// Message encoding
+// Message encoding (writer-based, zero intermediate allocations)
+//
+// Q-007: This section could be split into a separate proto_encode.zig file.
+// All functions below write directly into a caller-provided writer, eliminating
+// the N+1 allocation pattern where each encode function allocated its own buffer.
 // =============================================================================
 
-fn encodeValue(allocator: std.mem.Allocator, val: Value) ![]u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    errdefer buf.deinit(allocator);
+/// Stack buffer size for encoding leaf submessages that contain only primitive
+/// fields (IntValue, DoubleValue, StringValue wrappers). These are always
+/// small: a tag (1-2 bytes) + a varint/fixed64/string-length + the data.
+const LEAF_SUBMESSAGE_STACK_BUF_SIZE = 32;
+
+/// Encode a leaf submessage (containing only primitive fields) using a stack
+/// buffer. Only suitable for IntValue, DoubleValue, StringValue inner wrappers
+/// where the encoded size is bounded and small.
+fn writeLeafSubmessage(writer: anytype, field_num: u32, encode_fn: anytype, args: anytype) !void {
+    var stack_buf: [LEAF_SUBMESSAGE_STACK_BUF_SIZE]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&stack_buf);
+    const sub_writer = fbs.writer();
+
+    try @call(.auto, encode_fn, .{sub_writer} ++ args);
+
+    const sub_data = fbs.getWritten();
+    if (sub_data.len == 0) return;
+
+    try encodeTag(writer, field_num, WIRE_BYTES);
+    try encodeVarint(writer, sub_data.len);
+    try writer.writeAll(sub_data);
+}
+
+/// Encode a potentially large submessage directly into an ArrayListUnmanaged
+/// buffer using the backpatch approach: write the tag, reserve 5 bytes for
+/// the varint length (maximum for u32), encode the submessage, then
+/// backpatch the actual length and shift data if fewer bytes were needed.
+///
+/// This is the primary submessage encoding strategy. It avoids intermediate
+/// heap allocations entirely by writing directly into the output buffer and
+/// fixing up the length prefix afterward.
+fn writeSubmessageToList(
+    buf: *std.ArrayListUnmanaged(u8),
+    allocator: std.mem.Allocator,
+    field_num: u32,
+    encode_fn: anytype,
+    args: anytype,
+) !void {
+    // Record starting position before we write anything
+    const start_pos = buf.items.len;
+
     const writer = buf.writer(allocator);
 
+    // Write the tag
+    try encodeTag(writer, field_num, WIRE_BYTES);
+
+    // Reserve 5 bytes for varint length (max varint32 size)
+    const len_pos = buf.items.len;
+    try writer.writeAll(&[5]u8{ 0, 0, 0, 0, 0 });
+    const data_start = buf.items.len;
+
+    // Encode submessage content directly into the buffer.
+    // The encode_fn receives (buf, allocator) so nested submessages can also
+    // use writeSubmessageToList for backpatching.
+    try @call(.auto, encode_fn, .{ buf, allocator } ++ args);
+
+    const data_len = buf.items.len - data_start;
+
+    if (data_len == 0) {
+        // No content written; remove the tag and reserved bytes
+        buf.items.len = start_pos;
+        return;
+    }
+
+    // Compute actual varint length encoding
+    var varint_buf: [5]u8 = undefined;
+    var varint_fbs = std.io.fixedBufferStream(&varint_buf);
+    encodeVarint(varint_fbs.writer(), data_len) catch unreachable;
+    const varint_len = varint_fbs.getWritten().len;
+
+    if (varint_len == 5) {
+        // Perfect fit, just overwrite the reserved bytes
+        @memcpy(buf.items[len_pos..][0..5], varint_fbs.getWritten());
+    } else {
+        // Need to shift data left to close the gap
+        const gap = 5 - varint_len;
+        // Write the actual varint at len_pos
+        @memcpy(buf.items[len_pos..][0..varint_len], varint_fbs.getWritten());
+        // Shift the data left by 'gap' bytes
+        const dest_start = len_pos + varint_len;
+        std.mem.copyForwards(u8, buf.items[dest_start..], buf.items[data_start..buf.items.len]);
+        buf.items.len -= gap;
+    }
+}
+
+fn writeValueTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, val: Value) !void {
+    const writer = buf.writer(allocator);
     // Value uses oneof, so only one field should be set
     if (val.null_val) {
         // NullValue is an empty message, encode as field 1
         try encodeTag(writer, 1, WIRE_BYTES);
         try encodeVarint(writer, 0); // Empty message
     } else if (val.int_val) |i| {
-        // IntValue message with value field
-        var int_buf: std.ArrayListUnmanaged(u8) = .{};
-        defer int_buf.deinit(allocator);
-        try encodeInt64(int_buf.writer(allocator), 1, i);
-        try encodeSubmessage(writer, 2, int_buf.items);
+        // IntValue message with value field - leaf submessage on stack
+        try writeLeafSubmessage(writer, 2, writeIntValue, .{i});
     } else if (val.double_val) |d| {
-        // DoubleValue message with value field
-        var dbl_buf: std.ArrayListUnmanaged(u8) = .{};
-        defer dbl_buf.deinit(allocator);
-        try encodeDouble(dbl_buf.writer(allocator), 1, d);
-        try encodeSubmessage(writer, 3, dbl_buf.items);
+        // DoubleValue message with value field - leaf submessage on stack
+        try writeLeafSubmessage(writer, 3, writeDoubleValue, .{d});
     } else if (val.bool_val) |b| {
         // bool_val is a scalar bool in the oneof (not a submessage).
         // Must always encode, even for false, since this is inside a oneof.
         try encodeTag(writer, 4, WIRE_VARINT);
         try encodeVarint(writer, if (b) 1 else 0);
     } else if (val.string_val) |s| {
-        // StringValue message with value field
-        var str_buf: std.ArrayListUnmanaged(u8) = .{};
-        defer str_buf.deinit(allocator);
-        try encodeString(str_buf.writer(allocator), 1, s);
-        try encodeSubmessage(writer, 5, str_buf.items);
+        // StringValue: the inner message just wraps a string field.
+        // Encode directly without intermediate allocation: write the outer
+        // submessage tag + length, then the inner string field.
+        // Inner content = encodeString(field 1, s) = tag(1, WIRE_BYTES) + varint(s.len) + s
+        // For field 1 with WIRE_BYTES, the tag is always 1 byte (0x0A).
+        // Varint of s.len is 1-5 bytes. Total inner = 1 + varint_len(s.len) + s.len.
+        var inner_len_buf: [5]u8 = undefined;
+        var inner_len_fbs = std.io.fixedBufferStream(&inner_len_buf);
+        encodeVarint(inner_len_fbs.writer(), s.len) catch unreachable;
+        const str_varint_len = inner_len_fbs.getWritten().len;
+        const inner_total = 1 + str_varint_len + s.len; // tag + varint + data
+
+        try encodeTag(writer, 5, WIRE_BYTES);
+        try encodeVarint(writer, inner_total);
+        // Inner: field 1, WIRE_BYTES
+        try writer.writeByte(0x0A); // tag for field 1, wire type 2
+        try writer.writeAll(inner_len_fbs.getWritten());
+        try writer.writeAll(s);
     }
-
-    return buf.toOwnedSlice(allocator);
 }
 
-fn encodeParam(allocator: std.mem.Allocator, param: Param) ![]u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    errdefer buf.deinit(allocator);
+fn writeIntValue(writer: anytype, val: i64) !void {
+    try encodeInt64(writer, 1, val);
+}
+
+fn writeDoubleValue(writer: anytype, val: f64) !void {
+    try encodeDouble(writer, 1, val);
+}
+
+fn writeParamTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, param: Param) !void {
     const writer = buf.writer(allocator);
-
     try encodeString(writer, 1, param.name);
-
-    // Encode value as submessage
-    const value_data = try encodeValue(allocator, param.value);
-    defer allocator.free(value_data);
-    try encodeSubmessage(writer, 2, value_data);
-
-    return buf.toOwnedSlice(allocator);
+    // Encode value as submessage via backpatch
+    try writeSubmessageToList(buf, allocator, 2, writeValueTo, .{param.value});
 }
 
-fn encodeHelloRequest(allocator: std.mem.Allocator, req: HelloRequest) ![]u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    errdefer buf.deinit(allocator);
+fn writeHelloRequestTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, req: HelloRequest) !void {
     const writer = buf.writer(allocator);
     try encodeString(writer, 1, req.username);
     try encodeString(writer, 2, req.password);
@@ -429,138 +523,117 @@ fn encodeHelloRequest(allocator: std.mem.Allocator, req: HelloRequest) ![]u8 {
     try encodeString(writer, 4, req.client_name);
     try encodeString(writer, 5, req.client_version);
     try encodeString(writer, 6, req.wanted_conformance);
-    return buf.toOwnedSlice(allocator);
 }
 
-fn encodeExecuteRequest(allocator: std.mem.Allocator, req: ExecuteRequest) ![]u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    errdefer buf.deinit(allocator);
+fn writeExecuteRequestTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, req: ExecuteRequest) !void {
     const writer = buf.writer(allocator);
     try encodeString(writer, 1, req.session_id);
     try encodeString(writer, 2, req.query);
 
-    // Encode params as repeated Param messages
+    // Encode params as repeated Param submessages via backpatch
     for (req.params.items) |param| {
-        const param_data = try encodeParam(allocator, param);
-        defer allocator.free(param_data);
-        try encodeSubmessage(writer, 3, param_data);
+        try writeSubmessageToList(buf, allocator, 3, writeParamTo, .{param});
     }
 
     // Encode optional request_id for request tracing
     if (req.request_id.len > 0) {
-        try encodeString(writer, 4, req.request_id);
+        try encodeString(buf.writer(allocator), 4, req.request_id);
     }
-
-    return buf.toOwnedSlice(allocator);
 }
 
-fn encodePullRequest(allocator: std.mem.Allocator, req: PullRequest) ![]u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    errdefer buf.deinit(allocator);
+fn writePullRequestTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, req: PullRequest) !void {
     const writer = buf.writer(allocator);
     try encodeUint64(writer, 1, req.request_id);
     try encodeUint32(writer, 2, req.page_size);
     try encodeString(writer, 3, req.session_id);
-    return buf.toOwnedSlice(allocator);
 }
 
-fn encodePingRequest(_: PingRequest) []u8 {
-    return &[_]u8{};
-}
-
-fn encodeBeginRequest(allocator: std.mem.Allocator, req: BeginRequest) ![]u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    errdefer buf.deinit(allocator);
+fn writeBeginRequestTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, req: BeginRequest) !void {
     const writer = buf.writer(allocator);
     try encodeBool(writer, 1, req.read_only);
     try encodeString(writer, 2, req.session_id);
-    return buf.toOwnedSlice(allocator);
 }
 
 /// Shared encoder for messages with up to two string fields.
 /// field1 is encoded as protobuf field 1, field2 (if non-empty) as field 2.
-fn encodeTwoStringFields(allocator: std.mem.Allocator, field1: []const u8, field2: []const u8) ![]u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    errdefer buf.deinit(allocator);
+fn writeTwoStringFieldsTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, field1: []const u8, field2: []const u8) !void {
     const writer = buf.writer(allocator);
     try encodeString(writer, 1, field1);
     try encodeString(writer, 2, field2);
-    return buf.toOwnedSlice(allocator);
 }
 
-fn encodeCommitRequest(allocator: std.mem.Allocator, req: CommitRequest) ![]u8 {
-    return encodeTwoStringFields(allocator, req.session_id, "");
+fn writeCommitRequestTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, req: CommitRequest) !void {
+    try writeTwoStringFieldsTo(buf, allocator, req.session_id, "");
 }
 
-fn encodeRollbackRequest(allocator: std.mem.Allocator, req: RollbackRequest) ![]u8 {
-    return encodeTwoStringFields(allocator, req.session_id, "");
+fn writeRollbackRequestTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, req: RollbackRequest) !void {
+    try writeTwoStringFieldsTo(buf, allocator, req.session_id, "");
 }
 
-fn encodeSavepointRequest(allocator: std.mem.Allocator, req: SavepointRequest) ![]u8 {
-    return encodeTwoStringFields(allocator, req.name, req.session_id);
+fn writeSavepointRequestTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, req: SavepointRequest) !void {
+    try writeTwoStringFieldsTo(buf, allocator, req.name, req.session_id);
 }
 
-fn encodeRollbackToRequest(allocator: std.mem.Allocator, req: RollbackToRequest) ![]u8 {
-    return encodeTwoStringFields(allocator, req.name, req.session_id);
+fn writeRollbackToRequestTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, req: RollbackToRequest) !void {
+    try writeTwoStringFieldsTo(buf, allocator, req.name, req.session_id);
 }
 
-/// Encode a QuicClientMessage to protobuf bytes.
+/// Write a QuicClientMessage directly into a buffer (no intermediate allocations).
+/// Uses writeSubmessageToList for potentially large submessages (execute with
+/// queries), and writeSubmessage with stack buffers for small fixed-size messages.
+fn writeQuicClientMessageToList(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, msg: QuicClientMessage) !void {
+    // Field numbers match QuicClientMessage in geode.proto
+    if (msg.hello) |hello| {
+        // HelloRequest has bounded fields (usernames, version strings) - use stack buffer
+        try writeSubmessageToList(buf, allocator, 1, writeHelloRequestTo, .{hello});
+    }
+    if (msg.execute) |execute| {
+        // ExecuteRequest can contain arbitrarily long queries - must use list backpatch
+        try writeSubmessageToList(buf, allocator, 2, writeExecuteRequestTo, .{execute});
+    }
+    if (msg.pull) |pull| {
+        try writeSubmessageToList(buf, allocator, 3, writePullRequestTo, .{pull});
+    }
+    if (msg.ping != null) {
+        // Ping is an empty submessage. Write tag + zero length to indicate
+        // the field is present in the oneof. The server detects ping by the
+        // presence of field 4 in QuicClientMessage.
+        const writer = buf.writer(allocator);
+        try encodeTag(writer, 4, WIRE_BYTES);
+        try encodeVarint(writer, 0);
+    }
+    if (msg.begin) |begin| {
+        try writeSubmessageToList(buf, allocator, 7, writeBeginRequestTo, .{begin});
+    }
+    if (msg.commit) |commit| {
+        try writeSubmessageToList(buf, allocator, 8, writeCommitRequestTo, .{commit});
+    }
+    if (msg.rollback) |rollback| {
+        try writeSubmessageToList(buf, allocator, 9, writeRollbackRequestTo, .{rollback});
+    }
+    if (msg.savepoint) |savepoint| {
+        try writeSubmessageToList(buf, allocator, 10, writeSavepointRequestTo, .{savepoint});
+    }
+    if (msg.rollback_to) |rollback_to| {
+        try writeSubmessageToList(buf, allocator, 11, writeRollbackToRequestTo, .{rollback_to});
+    }
+}
+
+/// Encode a QuicClientMessage to protobuf bytes (single allocation).
+/// Public API preserved for backward compatibility with benchmarks and callers.
 pub fn encodeQuicClientMessage(allocator: std.mem.Allocator, msg: QuicClientMessage) ![]u8 {
     var buf: std.ArrayListUnmanaged(u8) = .{};
     errdefer buf.deinit(allocator);
-    const writer = buf.writer(allocator);
 
-    // Field numbers match QuicClientMessage in geode.proto
-    if (msg.hello) |hello| {
-        const hello_data = try encodeHelloRequest(allocator, hello);
-        defer allocator.free(hello_data);
-        try encodeSubmessage(writer, 1, hello_data);
-    }
-    if (msg.execute) |execute| {
-        const exec_data = try encodeExecuteRequest(allocator, execute);
-        defer allocator.free(exec_data);
-        try encodeSubmessage(writer, 2, exec_data);
-    }
-    if (msg.pull) |pull| {
-        const pull_data = try encodePullRequest(allocator, pull);
-        defer allocator.free(pull_data);
-        try encodeSubmessage(writer, 3, pull_data);
-    }
-    if (msg.ping) |ping| {
-        const ping_data = encodePingRequest(ping);
-        try encodeSubmessage(writer, 4, ping_data);
-    }
-    if (msg.begin) |begin| {
-        const begin_data = try encodeBeginRequest(allocator, begin);
-        defer allocator.free(begin_data);
-        try encodeSubmessage(writer, 7, begin_data);
-    }
-    if (msg.commit) |commit| {
-        const commit_data = try encodeCommitRequest(allocator, commit);
-        defer allocator.free(commit_data);
-        try encodeSubmessage(writer, 8, commit_data);
-    }
-    if (msg.rollback) |rollback| {
-        const rollback_data = try encodeRollbackRequest(allocator, rollback);
-        defer allocator.free(rollback_data);
-        try encodeSubmessage(writer, 9, rollback_data);
-    }
-    if (msg.savepoint) |savepoint| {
-        const sp_data = try encodeSavepointRequest(allocator, savepoint);
-        defer allocator.free(sp_data);
-        try encodeSubmessage(writer, 10, sp_data);
-    }
-    if (msg.rollback_to) |rollback_to| {
-        const rt_data = try encodeRollbackToRequest(allocator, rollback_to);
-        defer allocator.free(rt_data);
-        try encodeSubmessage(writer, 11, rt_data);
-    }
+    try writeQuicClientMessageToList(&buf, allocator, msg);
 
     return buf.toOwnedSlice(allocator);
 }
 
 // =============================================================================
 // Decoding helpers
+//
+// Q-007: This section could be split into a separate proto_decode.zig file.
 // =============================================================================
 
 pub fn decodeVarint(data: []const u8, pos: *usize) !u64 {
@@ -665,6 +738,8 @@ pub fn decodeDoubleFixed(data: []const u8, pos: *usize) !f64 {
 
 // =============================================================================
 // Message decoding
+//
+// Q-007: This section could remain in proto_decode.zig with the decoding helpers.
 // =============================================================================
 
 fn decodeHelloResponse(allocator: std.mem.Allocator, data: []const u8) !HelloResponse {
@@ -1073,23 +1148,26 @@ pub fn decodeQuicServerMessage(allocator: std.mem.Allocator, data: []const u8) !
     return msg;
 }
 
-/// Encode message with 4-byte big-endian length prefix.
+/// Encode message with 4-byte big-endian length prefix (single allocation).
+/// Reserves 4 bytes, encodes the message directly, then backpatches the length.
 pub fn encodeWithLengthPrefix(allocator: std.mem.Allocator, msg: QuicClientMessage) ![]u8 {
-    const data = try encodeQuicClientMessage(allocator, msg);
-    errdefer allocator.free(data);
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    errdefer buf.deinit(allocator);
 
-    const result = try allocator.alloc(u8, 4 + data.len);
-    errdefer allocator.free(result);
+    // Reserve 4 bytes for the length prefix (will be backpatched)
+    try buf.writer(allocator).writeAll(&[4]u8{ 0, 0, 0, 0 });
 
-    const length: u32 = @intCast(data.len);
-    result[0] = @truncate(length >> 24);
-    result[1] = @truncate(length >> 16);
-    result[2] = @truncate(length >> 8);
-    result[3] = @truncate(length);
-    @memcpy(result[4..], data);
+    // Encode message directly into the same buffer
+    try writeQuicClientMessageToList(&buf, allocator, msg);
 
-    allocator.free(data);
-    return result;
+    // Backpatch the 4-byte big-endian length prefix
+    const msg_len: u32 = @intCast(buf.items.len - 4);
+    buf.items[0] = @truncate(msg_len >> 24);
+    buf.items[1] = @truncate(msg_len >> 16);
+    buf.items[2] = @truncate(msg_len >> 8);
+    buf.items[3] = @truncate(msg_len);
+
+    return buf.toOwnedSlice(allocator);
 }
 
 /// Decode 4-byte big-endian length prefix.
@@ -1105,6 +1183,8 @@ pub fn decodeLengthPrefix(data: []const u8) !u32 {
 
 // =============================================================================
 // Unit Tests
+//
+// Q-007: Tests would move with their respective sections when the file is split.
 // =============================================================================
 
 test "Value.initNull creates null value" {
@@ -1186,9 +1266,10 @@ test "HelloRequest encodes with all fields" {
         .client_version = "1.0.0",
         .wanted_conformance = "full",
     };
-    const data = try encodeHelloRequest(allocator, req);
-    defer allocator.free(data);
-    try std.testing.expect(data.len > 0);
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(allocator);
+    try writeHelloRequestTo(&buf, allocator, req);
+    try std.testing.expect(buf.items.len > 0);
 }
 
 test "QuicClientMessage with hello encodes" {
