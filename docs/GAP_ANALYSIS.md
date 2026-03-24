@@ -2,9 +2,9 @@
 
 **Project:** geode-client-zig
 **Repository:** gitlab.com/devnw/codepros/geode/geode-client-zig
-**Last Updated:** 2026-01-30
-**Review Type:** Comprehensive Security Code Review
-**Reviewed By:** Claude Opus 4.5 (Automated Security Review)
+**Last Updated:** 2026-03-24
+**Review Type:** Comprehensive Security Code Review + Adversarial Review
+**Reviewed By:** Claude Opus 4.5 / Codex (Adversarial Security Review)
 
 ---
 
@@ -13,23 +13,28 @@
 | Severity | Count | Closed |
 |----------|-------|--------|
 | Critical | 0 | 0 |
-| High     | 1 | 1 |
-| Medium   | 7 | 7 |
-| Low      | 10 | 10 |
+| High     | 2 | 2 |
+| Medium   | 9 | 9 |
+| Low      | 12 | 12 |
 | Info     | 1 | 1 |
-| **Total** | **19** | **19** |
+| **Total** | **24** | **24** |
 
-**Status:** 19/19 findings remediated. All security gaps closed.
+**Status:** All 24 findings remediated. 0 open items remain.
+
+**Note:** Findings #1, #4, #6 (JSON injection) were additionally resolved by the protobuf
+wire format migration (commit 53579e8) which eliminated JSON message construction entirely.
+Finding #22 (response type spoofing via substring search) was resolved by the same migration
+since protobuf uses binary tags, not string matching.
 
 ### Findings Overview
 
-1. **JSON Injection in auth.zig** - User input not escaped in protocol message builders (High) - **CLOSED**
+1. **JSON Injection in auth.zig** - User input not escaped in protocol message builders (High) - **CLOSED** (also resolved by protobuf migration)
 2. **Gitleaks allowlist too permissive** - May miss secrets in .zig source files (Medium) - **CLOSED**
 3. **SBOM scan allows failure** - Security scan configured as non-blocking (Low) - **CLOSED**
 4. **Hardcoded allocator in auth.zig** - Code quality issue affecting memory management (Low) - **CLOSED**
 5. **TLS verification skip underdocumented** - Security implications not clearly warned (Info) - **CLOSED**
-6. **JSON Injection in protocol.zig buildHello** - Client metadata fields not escaped (Medium) - **CLOSED**
-7. **CI/CD Supply Chain Risk** - 8 components use unpinned @latest versions (Medium) - **CLOSED (Won't Fix)**
+6. **JSON Injection in protocol.zig buildHello** - Client metadata fields not escaped (Medium) - **CLOSED** (also resolved by protobuf migration)
+7. **CI/CD Supply Chain Risk** - Components use unpinned @latest versions (Medium) - **CLOSED (Won't Fix)**
 8. **QueryBuilder lacks input validation** - Clause methods directly interpolate user strings (Low) - **CLOSED**
 9. **Sensitive data not zeroed before free** - Session tokens not wiped from memory (Medium) - **CLOSED**
 10. **No batch size limit** - Batch module lacks maximum query count (Low) - **CLOSED**
@@ -38,9 +43,15 @@
 13. **Config.password not zeroed before free** - Passwords remain in memory (Medium) - **CLOSED**
 14. **urlDecode has no input length limit** - Potential memory exhaustion (Low) - **CLOSED**
 15. **DSN parsing silently uses default on invalid port** - Unexpected fallback behavior (Low) - **CLOSED**
-16. **recv_buffer has no maximum size limit** - Client memory exhaustion risk (Medium) - **OPEN**
-17. **isIpv6 validation is weak** - Accepts invalid strings as IPv6 (Low) - **OPEN**
-18. **QueryBuilder param() does not validate parameter names** - Missing validation (Low) - **OPEN**
+16. **recv_buffer has no maximum size limit** - Client memory exhaustion risk (Medium) - **CLOSED**
+17. **isIpv6 validation is weak** - Accepts invalid strings as IPv6 (Low) - **CLOSED**
+18. **QueryBuilder param() does not validate parameter names** - Missing validation (Low) - **CLOSED**
+19. **CI downloads Zig without integrity verification** - Supply-chain risk in CI (High) - **CLOSED**
+20. **Config.deinit frees non-owned credentials** - Invalid free / memory corruption risk (Medium) - **CLOSED**
+21. **parseDSNStrict lacks bounds validation** - page_size/timeout out-of-range accepted (Low) - **CLOSED**
+22. **parseResponseType uses substring search** - Response type can be spoofed (Medium) - **CLOSED** (resolved by protobuf migration)
+23. **Examples default to insecure TLS** - Encourages disabling verification (Low) - **CLOSED**
+24. **Dependency scanning may not cover Zig deps** - CI coverage gap (Medium) - **CLOSED**
 
 ---
 
@@ -66,6 +77,12 @@
 | 16 | Medium | 24 | recv_buffer has no maximum size limit | `geode_client_v2.zig` | CWE-400 | Lines 17, 173 | [#16](https://gitlab.com/devnw/codepros/geode/geode-client-zig/-/issues/16) | Added `MAX_RECV_BUFFER_SIZE = 16MB` constant, check before append + 2 tests | Claude | 90 days | **Closed** |
 | 17 | Low | 12 | isIpv6 validation is weak | `src/validate.zig` | CWE-20 | Lines 158-167 | [#17](https://gitlab.com/devnw/codepros/geode/geode-client-zig/-/issues/17) | Strengthened validation to check valid IPv6 character set + 6 tests | Claude | 180 days | **Closed** |
 | 18 | Low | 8 | QueryBuilder param() does not validate parameter names | `src/query_builder.zig` | CWE-20 | Lines 211-214 | [#18](https://gitlab.com/devnw/codepros/geode/geode-client-zig/-/issues/18) | Added `validate.paramName()` call in param() method + 4 tests | Claude | 180 days | **Closed** |
+| 19 | High | 60 | CI downloads Zig without integrity verification | `.gitlab-ci.yml` | CWE-494 | Lines 99-110 | [#19](https://gitlab.com/devnw/codepros/geode/geode-client-zig/-/issues/19) | Added SHA256 verification from index.json before extraction | Claude | 30 days | **Closed** |
+| 20 | Medium | 36 | Config.deinit frees non-owned credentials via withCredentials | `src/config.zig` | CWE-590 | Lines 136-140 | [#20](https://gitlab.com/devnw/codepros/geode/geode-client-zig/-/issues/20) | withCredentials now allocates owned copies + 3 tests | Claude | 90 days | **Closed** |
+| 21 | Low | 16 | parseDSNStrict lacks bounds validation for page_size/timeout | `src/config.zig` | CWE-20, CWE-400 | Lines 407-429 | [#21](https://gitlab.com/devnw/codepros/geode/geode-client-zig/-/issues/21) | Added validate.pageSize/timeout calls + timeout validation + 8 tests | Claude | 180 days | **Closed** |
+| 22 | Medium | 24 | parseResponseType uses substring search (spoofable) | `src/protocol.zig` | CWE-20 | Removed | [#22](https://gitlab.com/devnw/codepros/geode/geode-client-zig/-/issues/22) | Resolved by protobuf migration — binary tags replace string matching | Claude | 90 days | **Closed** |
+| 23 | Low | 16 | Examples default to insecure TLS verification | examples, benchmarks | OWASP A02 | `example_simple.zig`, `example_usage.zig`, `benchmark.zig` | [#23](https://gitlab.com/devnw/codepros/geode/geode-client-zig/-/issues/23) | Default to insecure=false + env var/flag + warnings | Claude | 180 days | **Closed** |
+| 24 | Medium | 48 | Dependency scanning may not cover Zig dependencies | `.gitlab-ci.yml`, `build.zig.zon` | OWASP A06 | CI config | [#24](https://gitlab.com/devnw/codepros/geode/geode-client-zig/-/issues/24) | Added custom SBOM script + CI job for build.zig.zon | Claude | 90 days | **Closed** |
 
 ---
 

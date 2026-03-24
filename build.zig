@@ -97,6 +97,14 @@ pub fn build(b: *std.Build) void {
     });
     types_mod.addImport("error", error_mod);
 
+    // Validate module (defined before config because config depends on it)
+    const validate_mod = b.createModule(.{
+        .root_source_file = b.path("src/validate.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    validate_mod.addImport("error", error_mod);
+
     // Config module
     const cfg_mod = b.createModule(.{
         .root_source_file = b.path("src/config.zig"),
@@ -104,14 +112,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     cfg_mod.addImport("error", error_mod);
-
-    // Validate module
-    const validate_mod = b.createModule(.{
-        .root_source_file = b.path("src/validate.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    validate_mod.addImport("error", error_mod);
+    cfg_mod.addImport("validate", validate_mod);
 
     // Query builder module
     const query_builder_mod = b.createModule(.{
@@ -363,6 +364,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     config_tests.root_module.addImport("error", error_mod);
+    config_tests.root_module.addImport("validate", validate_mod);
     const run_config_tests = b.addRunArtifact(config_tests);
     test_step.dependOn(&run_config_tests.step);
 

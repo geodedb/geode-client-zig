@@ -11,8 +11,23 @@ pub fn main() !void {
     const host = "127.0.0.1";
     const port: u16 = 3141;
 
-    var client = GeodeClient.init(allocator, host, port, true);
+    // SECURITY: Default to secure mode; set GEODE_INSECURE=1 for local testing
+    const insecure = blk: {
+        if (std.process.getEnvVarOwned(allocator, "GEODE_INSECURE")) |val| {
+            defer allocator.free(val);
+            break :blk std.mem.eql(u8, val, "1") or std.mem.eql(u8, val, "true");
+        } else |_| {
+            break :blk false;
+        }
+    };
+
+    var client = GeodeClient.init(allocator, host, port, insecure);
     defer client.deinit();
+
+    if (insecure) {
+        std.debug.print("WARNING: TLS certificate verification is DISABLED (insecure=true)\n", .{});
+        std.debug.print("WARNING: Only use GEODE_INSECURE=1 for local development/testing.\n\n", .{});
+    }
 
     std.debug.print("Connecting to Geode server at {s}:{}...\n", .{ host, port });
     try client.connect();

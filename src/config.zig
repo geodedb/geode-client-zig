@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const GeodeError = @import("error").GeodeError;
+const validate = @import("validate");
 
 /// Default Geode server port for QUIC
 pub const DEFAULT_PORT: u16 = 3141;
@@ -132,10 +133,12 @@ pub const Config = struct {
         return cfg;
     }
 
-    /// Set credentials
-    pub fn withCredentials(self: *Config, username: []const u8, password: []const u8) *Config {
-        self.username = username;
-        self.password = password;
+    /// Set credentials by allocating copies.
+    /// SECURITY: Allocates owned copies to ensure safe cleanup in deinit() (CWE-590).
+    /// The Config takes ownership of the allocated credentials.
+    pub fn withCredentials(self: *Config, allocator: std.mem.Allocator, username: []const u8, password: []const u8) !*Config {
+        self.username = try allocator.dupe(u8, username);
+        self.password = try allocator.dupe(u8, password);
         return self;
     }
 
@@ -406,7 +409,9 @@ fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *C
             } else if (std.mem.eql(u8, key, "page_size") or std.mem.eql(u8, key, "pageSize")) {
                 if (strict) {
                     // SECURITY: Strict mode returns error for invalid page_size (CWE-20)
-                    config.page_size = std.fmt.parseInt(u32, value, 10) catch return error.InvalidPageSize;
+                    const parsed = std.fmt.parseInt(u32, value, 10) catch return error.InvalidPageSize;
+                    try validate.pageSize(parsed);
+                    config.page_size = parsed;
                 } else {
                     config.page_size = std.fmt.parseInt(u32, value, 10) catch DEFAULT_PAGE_SIZE;
                 }
@@ -418,11 +423,15 @@ fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *C
                         if (strict) return error.InvalidTimeout;
                         continue;
                     };
-                    config.timeout_ms = secs * 1000;
+                    const ms = secs * 1000;
+                    if (strict) try validate.timeout(ms);
+                    config.timeout_ms = ms;
                 } else {
                     if (strict) {
                         // SECURITY: Strict mode returns error for invalid timeout (CWE-20)
-                        config.timeout_ms = std.fmt.parseInt(u32, value, 10) catch return error.InvalidTimeout;
+                        const parsed = std.fmt.parseInt(u32, value, 10) catch return error.InvalidTimeout;
+                        try validate.timeout(parsed);
+                        config.timeout_ms = parsed;
                     } else {
                         config.timeout_ms = std.fmt.parseInt(u32, value, 10) catch DEFAULT_TIMEOUT_MS;
                     }
@@ -506,7 +515,8 @@ test "Config.initWithHost sets host and port" {
 
 test "Config.withCredentials sets auth" {
     var cfg = Config.init();
-    _ = cfg.withCredentials("admin", "secret");
+    _ = try cfg.withCredentials(std.testing.allocator, "admin", "secret");
+    defer cfg.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings("admin", cfg.username.?);
     try std.testing.expectEqualStrings("secret", cfg.password.?);
     try std.testing.expect(cfg.hasAuth());
@@ -1064,4 +1074,75 @@ test "parseDSN insecure_tls_skip_verify with grpc" {
     const cfg = try parseDSN(std.testing.allocator, "grpc://localhost:50051?insecure_tls_skip_verify=true");
     try std.testing.expectEqual(Transport.grpc, cfg.transport);
     try std.testing.expect(cfg.insecure);
+}
+
+// =============================================================================
+// Security Tests - parseDSNStrict bounds validation (CWE-20)
+// =============================================================================
+
+test "parseDSNStrict rejects page_size below minimum" {
+    try std.testing.expectError(error.PageSizeOutOfRange, parseDSNStrict(std.testing.allocator, "localhost:3141?page_size=0"));
+}
+
+test "parseDSNStrict rejects page_size above maximum" {
+    try std.testing.expectError(error.PageSizeOutOfRange, parseDSNStrict(std.testing.allocator, "localhost:3141?page_size=100001"));
+}
+
+test "parseDSNStrict accepts page_size at minimum boundary" {
+    const cfg = try parseDSNStrict(std.testing.allocator, "localhost:3141?page_size=1");
+    try std.testing.expectEqual(@as(u32, 1), cfg.page_size);
+}
+
+test "parseDSNStrict accepts page_size at maximum boundary" {
+    const cfg = try parseDSNStrict(std.testing.allocator, "localhost:3141?page_size=100000");
+    try std.testing.expectEqual(@as(u32, 100000), cfg.page_size);
+}
+
+test "parseDSNStrict rejects timeout below minimum" {
+    try std.testing.expectError(error.TimeoutOutOfRange, parseDSNStrict(std.testing.allocator, "localhost:3141?timeout=0"));
+}
+
+test "parseDSNStrict rejects timeout above maximum" {
+    try std.testing.expectError(error.TimeoutOutOfRange, parseDSNStrict(std.testing.allocator, "localhost:3141?timeout=3600001"));
+}
+
+test "parseDSNStrict accepts timeout at minimum boundary" {
+    const cfg = try parseDSNStrict(std.testing.allocator, "localhost:3141?timeout=1");
+    try std.testing.expectEqual(@as(u32, 1), cfg.timeout_ms);
+}
+
+test "parseDSNStrict accepts timeout at maximum boundary" {
+    const cfg = try parseDSNStrict(std.testing.allocator, "localhost:3141?timeout=3600000");
+    try std.testing.expectEqual(@as(u32, 3600000), cfg.timeout_ms);
+}
+
+// =============================================================================
+// Security Tests - withCredentials ownership (CWE-590)
+// =============================================================================
+
+test "Config.withCredentials allocates owned copies" {
+    var cfg = Config.init();
+    _ = try cfg.withCredentials(std.testing.allocator, "testuser", "testpass");
+    defer cfg.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualStrings("testuser", cfg.username.?);
+    try std.testing.expectEqualStrings("testpass", cfg.password.?);
+
+    // Verify they are different pointers (allocated, not borrowed)
+    const literal = "testuser";
+    try std.testing.expect(cfg.username.?.ptr != literal.ptr);
+}
+
+test "Config.withCredentials safe with string literals" {
+    var cfg = Config.init();
+    _ = try cfg.withCredentials(std.testing.allocator, "admin", "secret");
+    cfg.deinit(std.testing.allocator);
+}
+
+test "Config.withCredentials safe with stack buffers" {
+    var cfg = Config.init();
+    const stack_user = [_]u8{ 'u', 's', 'e', 'r' };
+    const stack_pass = [_]u8{ 'p', 'a', 's', 's' };
+    _ = try cfg.withCredentials(std.testing.allocator, &stack_user, &stack_pass);
+    cfg.deinit(std.testing.allocator);
 }

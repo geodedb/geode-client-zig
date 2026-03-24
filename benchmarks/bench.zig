@@ -520,8 +520,13 @@ fn benchConfigInit() void {
 }
 
 fn benchConfigBuilder() void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
     var cfg = Config.init();
-    _ = cfg.withCredentials("admin", "secret");
+    _ = cfg.withCredentials(allocator, "admin", "secret") catch unreachable;
+    defer cfg.deinit(allocator);
     _ = cfg.withInsecure(true);
     _ = cfg.withPageSize(500);
     _ = cfg.withTimeout(30000);

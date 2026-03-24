@@ -28,6 +28,12 @@ pub const MAX_PAGE_SIZE: u32 = 100000;
 /// Minimum page size
 pub const MIN_PAGE_SIZE: u32 = 1;
 
+/// Minimum timeout in milliseconds
+pub const MIN_TIMEOUT_MS: u32 = 1;
+
+/// Maximum timeout in milliseconds (1 hour)
+pub const MAX_TIMEOUT_MS: u32 = 3600000;
+
 /// Validation error types
 pub const ValidationError = error{
     QueryTooLong,
@@ -41,6 +47,7 @@ pub const ValidationError = error{
     HostnameInvalid,
     PortOutOfRange,
     PageSizeOutOfRange,
+    TimeoutOutOfRange,
 };
 
 /// Validate a query string
@@ -118,6 +125,14 @@ pub fn port(p: u16) ValidationError!void {
 pub fn pageSize(size: u32) ValidationError!void {
     if (size < MIN_PAGE_SIZE or size > MAX_PAGE_SIZE) {
         return ValidationError.PageSizeOutOfRange;
+    }
+}
+
+/// Validate a timeout value in milliseconds
+/// SECURITY: Enforces reasonable bounds to prevent resource exhaustion (CWE-20).
+pub fn timeout(timeout_ms: u32) ValidationError!void {
+    if (timeout_ms < MIN_TIMEOUT_MS or timeout_ms > MAX_TIMEOUT_MS) {
+        return ValidationError.TimeoutOutOfRange;
     }
 }
 
@@ -346,6 +361,23 @@ test "pageSize rejects zero" {
 test "pageSize rejects too large" {
     try std.testing.expectError(ValidationError.PageSizeOutOfRange, pageSize(100001));
     try std.testing.expectError(ValidationError.PageSizeOutOfRange, pageSize(1000000));
+}
+
+test "timeout validates normal timeouts" {
+    try timeout(1);
+    try timeout(1000);
+    try timeout(30000);
+    try timeout(60000);
+    try timeout(3600000);
+}
+
+test "timeout rejects zero" {
+    try std.testing.expectError(ValidationError.TimeoutOutOfRange, timeout(0));
+}
+
+test "timeout rejects too large" {
+    try std.testing.expectError(ValidationError.TimeoutOutOfRange, timeout(3600001));
+    try std.testing.expectError(ValidationError.TimeoutOutOfRange, timeout(10000000));
 }
 
 test "ipv4 validates correct addresses" {

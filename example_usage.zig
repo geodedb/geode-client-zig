@@ -18,6 +18,8 @@ pub fn main() !void {
     var host: []const u8 = "localhost";
     var port: u16 = 8443;
     var query: []const u8 = "RETURN 1 AS x";
+    // SECURITY: Default to secure mode (insecure=false)
+    var insecure: bool = false;
 
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--host")) {
@@ -27,14 +29,21 @@ pub fn main() !void {
             port = try std.fmt.parseInt(u16, port_str, 10);
         } else if (std.mem.eql(u8, arg, "--query")) {
             query = args.next() orelse "RETURN 1 AS x";
+        } else if (std.mem.eql(u8, arg, "--insecure")) {
+            insecure = true;
         }
     }
 
     std.debug.print("Connecting to {s}:{d}\n", .{ host, port });
 
     // Create and connect client
-    var client = GeodeClient.init(allocator, host, port, true); // insecure = true
+    var client = GeodeClient.init(allocator, host, port, insecure);
     defer client.deinit();
+
+    if (insecure) {
+        std.debug.print("WARNING: TLS certificate verification is DISABLED (insecure=true)\n", .{});
+        std.debug.print("WARNING: Only use --insecure for local development/testing.\n\n", .{});
+    }
 
     std.debug.print("Initializing connection...\n", .{});
     try client.connect();

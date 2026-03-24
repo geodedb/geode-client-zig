@@ -102,7 +102,8 @@ fn parseArgs(allocator: std.mem.Allocator) !struct {
     var workers: usize = 10;
     var queries: usize = 1000;
     var json: bool = false;
-    var insecure: bool = true;
+    // SECURITY: Default to secure mode (insecure=false)
+    var insecure: bool = false;
     var username: []const u8 = "";
     var password: []const u8 = "";
 
