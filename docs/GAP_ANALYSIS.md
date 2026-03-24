@@ -3,23 +3,31 @@
 **Project:** geode-client-zig
 **Repository:** gitlab.com/devnw/codepros/geode/geode-client-zig
 **Last Updated:** 2026-03-24
-**Review Type:** Comprehensive Security Code Review + Adversarial Review
-**Reviewed By:** Claude Opus 4.5 / Codex (Adversarial Security Review)
+**Review Type:** Comprehensive Security Code Review + Adversarial Review + Protobuf Migration Audit
+**Reviewed By:** Claude Opus 4.5 / Codex (Adversarial Security Review) / Claude Opus 4.6 (2026-03-24 Audit)
 
 ---
 
 ## Summary
 
-| Severity | Count | Closed |
-|----------|-------|--------|
-| Critical | 0 | 0 |
-| High     | 2 | 2 |
-| Medium   | 9 | 9 |
-| Low      | 12 | 12 |
-| Info     | 1 | 1 |
-| **Total** | **24** | **24** |
+| Severity | Count | Closed | Open |
+|----------|-------|--------|------|
+| Critical | 0 | 0 | 0 |
+| High     | 5 | 2 | 3 |
+| Medium   | 13 | 9 | 4 |
+| Low      | 13 | 12 | 1 |
+| Info     | 1 | 1 | 0 |
+| **Total** | **32** | **24** | **8** |
 
-**Status:** All 24 findings remediated. 0 open items remain.
+**Status:** 24 of 32 findings remediated. 8 open items from 2026-03-24 audit remain.
+
+**Top 5 Risks (by score):**
+
+1. #25 GQL Injection via RLS Policy Predicate (Risk: 60, High)
+2. #26 gRPC Transport Has No TLS Implementation (Risk: 60, High)
+3. #27 Password Not Zeroed in GeodeClient.deinit() (Risk: 48, High)
+4. #28 Protobuf String Decoding Has No Per-Field Size Limit (Risk: 30, Medium)
+5. #29 Unbounded Row Count in DataPage Decoding (Risk: 30, Medium)
 
 **Note:** Findings #1, #4, #6 (JSON injection) were additionally resolved by the protobuf
 wire format migration (commit 53579e8) which eliminated JSON message construction entirely.
@@ -52,6 +60,14 @@ since protobuf uses binary tags, not string matching.
 22. **parseResponseType uses substring search** - Response type can be spoofed (Medium) - **CLOSED** (resolved by protobuf migration)
 23. **Examples default to insecure TLS** - Encourages disabling verification (Low) - **CLOSED**
 24. **Dependency scanning may not cover Zig deps** - CI coverage gap (Medium) - **CLOSED**
+25. **GQL Injection via RLS Policy Predicate** - policy.predicate injected raw into GQL without escaping (High) - **OPEN**
+26. **gRPC Transport Has No TLS Implementation** - connect() uses plain TCP, credentials sent in cleartext (High) - **OPEN**
+27. **Password Not Zeroed in GeodeClient.deinit()** - password/session_id not zeroed before free (High) - **OPEN**
+28. **Protobuf String Decoding Has No Per-Field Size Limit** - decodeString allocates based on untrusted varint (Medium) - **OPEN**
+29. **Unbounded Row Count in DataPage Decoding** - decodeDataPage appends rows without count limit (Medium) - **OPEN**
+30. **SHA256 Verification Fetches Checksum from Same Origin** - archive and checksum both from ziglang.org (Medium) - **OPEN**
+31. **Docker Images Use Unpinned :latest Tags** - mutable image tags in CI (Medium) - **OPEN**
+32. **@constCast on Potentially Static Strings in proto.zig** - UB risk freeing string literals (Low) - **OPEN**
 
 ---
 
@@ -83,6 +99,14 @@ since protobuf uses binary tags, not string matching.
 | 22 | Medium | 24 | parseResponseType uses substring search (spoofable) | `src/protocol.zig` | CWE-20 | Removed | [#22](https://gitlab.com/devnw/codepros/geode/geode-client-zig/-/issues/22) | Resolved by protobuf migration — binary tags replace string matching | Claude | 90 days | **Closed** |
 | 23 | Low | 16 | Examples default to insecure TLS verification | examples, benchmarks | OWASP A02 | `example_simple.zig`, `example_usage.zig`, `benchmark.zig` | [#23](https://gitlab.com/devnw/codepros/geode/geode-client-zig/-/issues/23) | Default to insecure=false + env var/flag + warnings | Claude | 180 days | **Closed** |
 | 24 | Medium | 48 | Dependency scanning may not cover Zig dependencies | `.gitlab-ci.yml`, `build.zig.zon` | OWASP A06 | CI config | [#24](https://gitlab.com/devnw/codepros/geode/geode-client-zig/-/issues/24) | Added custom SBOM script + CI job for build.zig.zon | Claude | 90 days | **Closed** |
+| 25 | High | 60 | GQL Injection via RLS Policy Predicate - predicate injected raw without escaping | `src/auth.zig` | CWE-89, CWE-943 / OWASP A03 | `src/auth.zig:351` | --skip-issues | Escape or parameterize predicate in `buildCreateRlsPolicyQuery` | - | 30 days | **Open** |
+| 26 | High | 60 | gRPC Transport Has No TLS Implementation - plain TCP, credentials in cleartext | `src/grpc.zig` | CWE-319 / OWASP A02 | `src/grpc.zig:204-217` | --skip-issues | Implement TLS using Config.tls/insecure fields; reject cleartext when insecure=false | - | 30 days | **Open** |
+| 27 | High | 48 | Password Not Zeroed in GeodeClient.deinit() - password/session_id left in memory | `geode_client_v2.zig` | CWE-316, CWE-226 / OWASP A02 | `geode_client_v2.zig:75-93` | --skip-issues | Zero password and session_id with `@memset` before free in deinit; consider owning copy of password | - | 30 days | **Open** |
+| 28 | Medium | 30 | Protobuf String Decoding Has No Per-Field Size Limit - allocates from untrusted varint | `src/proto.zig` | CWE-400, CWE-770 / OWASP A05 | `src/proto.zig:614-622` | --skip-issues | Add MAX_STRING_FIELD_SIZE (e.g. 1MB) check before allocation | - | 90 days | **Open** |
+| 29 | Medium | 30 | Unbounded Row Count in DataPage Decoding - no limit on appended rows | `src/proto.zig` | CWE-400, CWE-770 / OWASP A05 | `src/proto.zig:804-828` | --skip-issues | Add MAX_ROWS_PER_PAGE limit before appending | - | 90 days | **Open** |
+| 30 | Medium | 24 | SHA256 Verification Fetches Checksum from Same Origin as archive | `.gitlab-ci.yml` | CWE-494 / OWASP A08 | `.gitlab-ci.yml:112-117` | --skip-issues | Pin expected hash in CI config or fetch checksum from independent mirror | - | 90 days | **Open** |
+| 31 | Medium | 24 | Docker Images Use Unpinned :latest Tags - mutable image references | `.gitlab-ci.yml` | CWE-829 / OWASP A08 | `.gitlab-ci.yml:24,265` | --skip-issues | Pin images to digest (sha256) or specific version tags | - | 90 days | **Open** |
+| 32 | Low | 8 | @constCast on Potentially Static Strings in proto.zig - UB if freeing string literals | `src/proto.zig` | CWE-758 | `src/proto.zig:41,44` | --skip-issues | Guard free with allocation-source flag or use optional/sentinel values | - | 180 days | **Open** |
 
 ---
 
@@ -717,6 +741,212 @@ pub fn param(self: *QueryBuilder, name: []const u8, value: Value) !*QueryBuilder
 
 ---
 
+#### Finding 25: GQL Injection via RLS Policy Predicate (High) - **OPEN**
+
+**Description:**
+In `src/auth.zig:351`, the `buildCreateRlsPolicyQuery` function injects `policy.predicate` raw into the GQL query string without escaping. While `name`, `target_label`, and role fields are properly escaped via `appendEscapedGqlString`, the predicate field is interpolated directly. An attacker who controls the predicate value can inject arbitrary GQL, potentially bypassing row-level security or executing unintended graph mutations.
+
+**Risk Assessment:**
+
+- Severity: High
+- CWE: CWE-89 (SQL/GQL Injection), CWE-943 (Improper Neutralization of Special Elements in Data Query Logic)
+- OWASP: A03:2021 - Injection
+- Risk Score: 60 (Impact: 4 x Likelihood: 3 x 4) -- requires authentication to create RLS policies
+- Exploit Surface: Internal (admin-only access typically, but depends on authorization model)
+- Confidence: `confidence::confirmed` -- visible in source code
+
+**Evidence:**
+
+- File: `src/auth.zig:351`
+- The predicate string is concatenated directly into the query without passing through `appendEscapedGqlString`
+
+**Attack Scenario:**
+An authenticated user with RLS policy creation privileges provides a crafted predicate such as `true) RETURN n UNION MATCH (x) DETACH DELETE x //` to escape the predicate context, delete all nodes, and comment out the remainder of the query.
+
+**Fix Guidance:**
+Escape the predicate through `appendEscapedGqlString` or, preferably, use a parameterized query with `$predicate` as a bound parameter. If predicates must contain GQL expressions, implement a predicate-specific parser/validator that only allows safe expression syntax.
+
+**Acceptance Criteria:**
+
+- [ ] `policy.predicate` is escaped or parameterized in `buildCreateRlsPolicyQuery`
+- [ ] Unit test demonstrates injection payload is neutralized
+- [ ] Existing RLS policy tests continue to pass
+
+**How to Verify:** Craft an `RlsPolicy` with predicate `n.x = 1) RETURN n UNION MATCH (m) DELETE m //` and confirm the built query does not break out of the predicate context.
+
+---
+
+#### Finding 26: gRPC Transport Has No TLS Implementation (High) - **OPEN**
+
+**Description:**
+In `src/grpc.zig:204-217`, the `connect()` function establishes a plain TCP connection with a comment noting "simplified implementation." The `Config.tls` and `Config.insecure` fields are never consulted. All gRPC connections transmit credentials (username, password, session tokens) in cleartext over the network.
+
+**Risk Assessment:**
+
+- Severity: High
+- CWE: CWE-319 (Cleartext Transmission of Sensitive Information)
+- OWASP: A02:2021 - Cryptographic Failures
+- Risk Score: 60 (Impact: 4 x Likelihood: 3 x 4) -- remote, but requires network position
+- Exploit Surface: Internal network (gRPC transport is an alternative to QUIC)
+- Confidence: `confidence::confirmed` -- visible in source code
+
+**Evidence:**
+
+- File: `src/grpc.zig:204-217`
+- Comment in source: "simplified implementation"
+- `Config.tls` and `Config.insecure` are not referenced in the gRPC connect path
+
+**Attack Scenario:**
+A network-positioned attacker (same LAN, compromised router, cloud VPC peer) captures gRPC traffic and extracts authentication credentials transmitted in plaintext.
+
+**Fix Guidance:**
+Implement TLS negotiation in the gRPC connect path. When `Config.insecure` is false (the default), require TLS. When `Config.tls` configuration is provided, use it. Reject connections that would transmit credentials without encryption unless explicitly opted in via `insecure=true`.
+
+**Acceptance Criteria:**
+
+- [ ] gRPC `connect()` uses TLS by default
+- [ ] `Config.insecure` flag is respected
+- [ ] `Config.tls` settings (cert paths, etc.) are applied
+- [ ] Unit/integration test confirms TLS negotiation occurs
+
+**How to Verify:** Attempt a gRPC connection with `insecure=false` (default) and confirm TLS handshake occurs. Use packet capture to verify no plaintext credentials on wire.
+
+---
+
+#### Finding 27: Password Not Zeroed in GeodeClient.deinit() (High) - **OPEN**
+
+**Description:**
+In `geode_client_v2.zig:75-93`, `GeodeClient.deinit()` does not zero the password or session_id fields before the struct is freed/goes out of scope. This contrasts with `AuthClient.deinit()` and `Config.deinit()` which both zero sensitive data. Additionally, the password is stored as a borrowed `[]const u8` (not an owned copy), meaning the client cannot safely zero it.
+
+**Risk Assessment:**
+
+- Severity: High
+- CWE: CWE-316 (Cleartext Storage of Sensitive Information in Memory), CWE-226 (Sensitive Information in Resource Not Removed Before Reuse)
+- OWASP: A02:2021 - Cryptographic Failures
+- Risk Score: 48 (Impact: 4 x Likelihood: 3 x 4) -- requires memory disclosure or privileged access
+- Exploit Surface: Requires local access or memory disclosure vulnerability
+- Confidence: `confidence::confirmed` -- visible in source code
+
+**Evidence:**
+
+- File: `geode_client_v2.zig:75-93`
+- `deinit()` frees connection resources but never zeros `password` or `session_id`
+- Password stored as `[]const u8` (borrowed, not owned)
+
+**Attack Scenario:**
+After `GeodeClient.deinit()`, the password remains in freed memory. A subsequent memory disclosure vulnerability, core dump, or swap file inspection reveals the plaintext password.
+
+**Fix Guidance:**
+
+1. Store password as an owned copy (allocate and duplicate on init)
+2. In `deinit()`, zero the password with `@memset(@constCast(password), 0)` before freeing
+3. Also zero `session_id` if present
+4. Follow the same pattern already established in `AuthClient.deinit()` and `Config.deinit()`
+
+**Acceptance Criteria:**
+
+- [ ] `GeodeClient` stores an owned copy of password
+- [ ] `deinit()` zeros password and session_id before free
+- [ ] Unit test confirms zeroing behavior
+
+**How to Verify:** After calling `deinit()`, inspect the memory region (in a test with known allocator) and confirm password bytes are zeroed.
+
+---
+
+#### Finding 28: Protobuf String Decoding Has No Per-Field Size Limit (Medium) - **OPEN**
+
+**Description:**
+In `src/proto.zig:614-622`, `decodeString` reads a varint length from the wire and allocates that many bytes without any per-field maximum. While the total receive buffer is capped at `MAX_RECV_BUFFER_SIZE` (16MB), a single string field can claim the full 16MB. A malicious or compromised server could send a small message with a large varint length to force excessive allocation.
+
+**Risk Assessment:**
+
+- Severity: Medium
+- CWE: CWE-400 (Uncontrolled Resource Consumption), CWE-770 (Allocation of Resources Without Limits or Throttling)
+- OWASP: A05:2021 - Security Misconfiguration
+- Risk Score: 30 (Impact: 3 x Likelihood: 2.5 x 4)
+- Exploit Surface: Requires malicious server or MitM (network-positioned)
+- Confidence: `confidence::confirmed` -- visible in source code
+
+**Evidence:**
+
+- File: `src/proto.zig:614-622`
+- `decodeString` allocates based on untrusted varint with no per-field cap
+
+**Fix Guidance:**
+Add a `MAX_STRING_FIELD_SIZE` constant (e.g., 1MB or 4MB) and check the decoded length against it before allocating. Return an error such as `error.FieldTooLarge` if exceeded.
+
+**Acceptance Criteria:**
+
+- [ ] `MAX_STRING_FIELD_SIZE` constant defined
+- [ ] `decodeString` validates length before allocation
+- [ ] Test confirms oversized string field is rejected
+
+**How to Verify:** Craft a protobuf message with a string field length header of 16MB and confirm decoding returns an error.
+
+---
+
+#### Finding 29: Unbounded Row Count in DataPage Decoding (Medium) - **OPEN**
+
+**Description:**
+In `src/proto.zig:804-828`, `decodeDataPage` appends rows to an array without any count limit. A malicious server could return a response claiming millions of rows, causing unbounded memory growth on the client.
+
+**Risk Assessment:**
+
+- Severity: Medium
+- CWE: CWE-400 (Uncontrolled Resource Consumption), CWE-770 (Allocation of Resources Without Limits or Throttling)
+- OWASP: A05:2021 - Security Misconfiguration
+- Risk Score: 30 (Impact: 3 x Likelihood: 2.5 x 4)
+- Exploit Surface: Requires malicious server or MitM
+- Confidence: `confidence::confirmed` -- visible in source code
+
+**Evidence:**
+
+- File: `src/proto.zig:804-828`
+- Rows appended in a loop with no maximum count check
+
+**Fix Guidance:**
+Add a `MAX_ROWS_PER_PAGE` constant (e.g., 100,000) and check the row count before each append. Return `error.TooManyRows` if exceeded.
+
+**Acceptance Criteria:**
+
+- [ ] `MAX_ROWS_PER_PAGE` constant defined
+- [ ] `decodeDataPage` validates row count before appending
+- [ ] Test confirms excessive row count is rejected
+
+**How to Verify:** Construct a mock DataPage response with row count exceeding the limit and confirm decoding returns an error.
+
+---
+
+#### Finding 32: @constCast on Potentially Static Strings in proto.zig (Low) - **OPEN**
+
+**Description:**
+In `src/proto.zig:41,44`, `HelloResponse.deinit()` uses `@constCast` to free `session_id` and `error_message`. The default values for these fields are `""` (empty string literals). A guard (`len > 0`) prevents freeing the empty default, but if a non-empty string literal were assigned (without allocation), calling `allocator.free` on it would be undefined behavior.
+
+**Risk Assessment:**
+
+- Severity: Low
+- CWE: CWE-758 (Reliance on Undefined, Unspecified, or Implementation-Defined Behavior)
+- Risk Score: 8 (Impact: 2 x Likelihood: 1 x 4)
+- Exploit Surface: Requires specific code path that assigns a non-empty literal
+- Confidence: `confidence::suspected` -- would need a code path that assigns a literal to confirm exploitability
+
+**Evidence:**
+
+- File: `src/proto.zig:41,44`
+- `@constCast` used on potentially static strings before `allocator.free`
+
+**Fix Guidance:**
+Track allocation source with a boolean flag (e.g., `session_id_allocated: bool`) or use an optional type (`?[]u8`) that is only set when the value was heap-allocated. Alternatively, always allocate owned copies so the free is always valid.
+
+**Acceptance Criteria:**
+
+- [ ] `deinit()` never calls `allocator.free` on non-heap memory
+- [ ] Test verifies deinit on default-initialized `HelloResponse` does not crash
+
+**How to Verify:** Create a `HelloResponse` with default values, call `deinit()`, and confirm no crash or ASAN violation. Then test with a non-empty literal assignment path.
+
+---
+
 ### CI/CD Pipeline
 
 #### Finding 12: Integration Tests allow_failure Bypasses Quality Gate (Low) - **CLOSED**
@@ -825,6 +1055,71 @@ The `.gitlab-ci.yml` file includes 8 CI/CD components using `@latest` instead of
 
 ---
 
+#### Finding 30: SHA256 Verification Fetches Checksum from Same Origin (Medium) - **OPEN**
+
+**Description:**
+In `.gitlab-ci.yml:112-117`, the CI pipeline downloads both the Zig archive and the `index.json` checksum file from `ziglang.org`. If ziglang.org is compromised, an attacker can tamper with both the archive and the checksum simultaneously, making the SHA256 verification ineffective as a supply chain defense.
+
+**Risk Assessment:**
+
+- Severity: Medium
+- CWE: CWE-494 (Download of Code Without Integrity Check) -- partial mitigation
+- OWASP: A08:2021 - Software and Data Integrity Failures
+- Risk Score: 24 (Impact: 4 x Likelihood: 1.5 x 4) -- requires compromising ziglang.org
+- Exploit Surface: CI/CD pipeline (internet-facing download)
+- Confidence: `confidence::confirmed` -- visible in CI config
+
+**Evidence:**
+
+- File: `.gitlab-ci.yml:112-117`
+- Both archive URL and index.json fetched from `ziglang.org`
+
+**Fix Guidance:**
+Pin the expected SHA256 hash directly in the CI configuration file (hardcoded), or fetch the checksum from an independent mirror/source. Update the pinned hash when upgrading Zig versions.
+
+**Acceptance Criteria:**
+
+- [ ] Expected SHA256 hash is pinned in CI config or fetched from independent source
+- [ ] CI fails if hash does not match
+
+**How to Verify:** Modify the pinned hash to a wrong value and confirm the CI job fails.
+
+---
+
+#### Finding 31: Docker Images Use Unpinned :latest Tags (Medium) - **OPEN**
+
+**Description:**
+In `.gitlab-ci.yml:24,265`, Docker images `geodedb/geode:latest` and `alpine:latest` use the mutable `:latest` tag. These tags can change at any time, potentially introducing unexpected behavior or supply chain attacks.
+
+**Risk Assessment:**
+
+- Severity: Medium
+- CWE: CWE-829 (Inclusion of Functionality from Untrusted Control Sphere)
+- OWASP: A08:2021 - Software and Data Integrity Failures
+- Risk Score: 24 (Impact: 4 x Likelihood: 1.5 x 4) -- requires compromising Docker Hub image
+- Exploit Surface: CI/CD pipeline (Docker Hub pull)
+- Confidence: `confidence::confirmed` -- visible in CI config
+
+**Evidence:**
+
+- File: `.gitlab-ci.yml:24` -- `geodedb/geode:latest`
+- File: `.gitlab-ci.yml:265` -- `alpine:latest`
+
+**Fix Guidance:**
+Pin Docker images to specific version tags or, preferably, SHA256 digests. For example:
+
+- `alpine:3.19@sha256:<digest>` instead of `alpine:latest`
+- `geodedb/geode:1.2.3@sha256:<digest>` instead of `geodedb/geode:latest`
+
+**Acceptance Criteria:**
+
+- [ ] All Docker images in CI use pinned version tags or sha256 digests
+- [ ] A process exists to update pinned versions (e.g., Renovate/Dependabot)
+
+**How to Verify:** Grep `.gitlab-ci.yml` for `:latest` and confirm no mutable tags remain.
+
+---
+
 ### Secret Detection Configuration
 
 #### Finding 2: Overly Permissive Gitleaks Allowlist (Medium) - **CLOSED**
@@ -925,14 +1220,18 @@ fn isValidLabel(label: []const u8) bool {
 
 ## Quick Wins / Medium-term / Strategic
 
-### Quick Wins (< 1 week)
+### Quick Wins (< 1 day)
 
 - [x] Add `appendEscapedString` to auth.zig and fix JSON injection (Issue #1) - **DONE**
 - [x] Change SBOM scan `allow_failure` to false (Issue #3) - **DONE**
 - [x] Fix JSON escaping in protocol.zig buildHello for metadata fields (Issue #6) - **DONE**
 - [x] Zero sensitive data before free in auth.zig (Issue #9) - **DONE**
+- [ ] Zero password/session_id in GeodeClient.deinit() (Finding #27)
+- [ ] Add per-field size limit to protobuf decodeString (Finding #28)
+- [ ] Add row count limit to decodeDataPage (Finding #29)
+- [ ] Guard @constCast free with allocation-source check in proto.zig (Finding #32)
 
-### Medium-term (1-3 months)
+### Medium-term (1-5 days)
 
 - [x] Refine gitleaks allowlist with targeted rules (Issue #2) - **DONE**
 - [x] Fix hardcoded allocator usage in auth.zig (Issue #4) - **DONE**
@@ -944,8 +1243,11 @@ fn isValidLabel(label: []const u8) bool {
 - [x] Strengthen isIpv6 validation (Issue #17) - **DONE**
 - [x] Add validate.paramName() to QueryBuilder.param() (Issue #18) - **DONE**
 - [ ] Add fuzz tests for auth message builders
+- [ ] Escape or parameterize RLS policy predicate in auth.zig (Finding #25)
+- [ ] Pin Docker images to digests in .gitlab-ci.yml (Finding #31)
+- [ ] Pin Zig checksum hash in CI config (Finding #30)
 
-### Strategic (3-6 months)
+### Strategic (> 5 days)
 
 - [x] Add security warning documentation for insecure mode (Issue #5) - **DONE**
 - [x] Add QueryBuilder security documentation and warnings (Issue #8) - **DONE**
@@ -954,6 +1256,7 @@ fn isValidLabel(label: []const u8) bool {
 - [x] Add strict DSN parsing mode (Issue #15) - **DONE**
 - [ ] Consider runtime warnings when `insecure=true`
 - [ ] Implement input validation in auth.zig for usernames/roles
+- [ ] Implement TLS for gRPC transport (Finding #26)
 
 ---
 
@@ -965,28 +1268,48 @@ fn isValidLabel(label: []const u8) bool {
 
 2. **Dependency security:** While SBOM scanning is configured, a full dependency audit was not performed. The `build.zig.zon` dependencies should be reviewed for known vulnerabilities.
 
+3. **gRPC transport usage in production:** Finding #26 (cleartext gRPC) severity depends on whether gRPC transport is actively used or is an experimental/internal-only path. If gRPC is not exposed to users, the effective risk is lower.
+
+4. **RLS policy predicate injection (Finding #25):** Exploitation requires determining whether end users can supply arbitrary predicate strings or if predicates are always admin-controlled. If admin-only, effective risk is reduced but the code defect remains.
+
+5. **@constCast UB in proto.zig (Finding #32):** Confirming exploitability requires identifying any code path that assigns a non-empty string literal to `HelloResponse.session_id` or `error_message` without heap allocation.
+
 ### Issue Status
 
-**All Issues Closed (19/19):**
+**Security Findings (24/32 remediated, 8 open):**
 
-- Issue #1: JSON Injection in auth.zig - **CLOSED** (`appendEscapedString` + 8 tests)
-- Issue #2: Gitleaks allowlist too permissive - **CLOSED** (targeted regex rules)
-- Issue #3: SBOM scan allows failure - **CLOSED** (`allow_failure: false`)
-- Issue #4: Hardcoded allocator in auth.zig - **CLOSED** (use `self.allocator`)
-- Issue #5: TLS verification skip underdocumented - **CLOSED** (security warnings added)
-- Issue #6: JSON Injection in protocol.zig buildHello - **CLOSED** (code fix + 2 tests)
-- Issue #7: CI/CD Supply Chain Risk - **Won't Fix** (managed through other organizational controls)
-- Issue #8: QueryBuilder documentation improvements - **CLOSED** (comprehensive docs)
-- Issue #9: Sensitive data not zeroed before free in auth.zig - **CLOSED** (`@memset` before `allocator.free` + 3 tests)
-- Issue #10: Batch module lacks maximum query count - **CLOSED** (`MAX_BATCH_SIZE = 10000` + validation + 4 tests)
-- Issue #11: Date/Time constructors lack bounds validation - **CLOSED** (`initChecked()` methods + 18 tests)
-- Issue #12: Integration tests allow_failure bypasses quality gate - **CLOSED** (rules-based `allow_failure`)
-- Issue #13: Config.password not zeroed before free - **CLOSED** (`Config.deinit()` with `@memset` + 3 tests)
-- Issue #14: urlDecode has no input length limit - **CLOSED** (`MAX_URL_DECODE_LENGTH = 64KB` + 4 tests)
-- Issue #15: DSN parsing silently uses default on invalid port - **CLOSED** (`parseDSNStrict()` + 9 tests)
-- Issue #16: recv_buffer has no maximum size limit - **CLOSED** (`MAX_RECV_BUFFER_SIZE = 16MB` + validation + 2 tests)
-- Issue #17: isIpv6 validation is weak - **CLOSED** (strengthened character validation + 6 tests)
-- Issue #18: QueryBuilder param() does not validate parameter names - **CLOSED** (`validate.paramName()` call + 4 tests)
+- Finding #1: JSON Injection in auth.zig - **CLOSED** (`appendEscapedString` + 8 tests)
+- Finding #2: Gitleaks allowlist too permissive - **CLOSED** (targeted regex rules)
+- Finding #3: SBOM scan allows failure - **CLOSED** (`allow_failure: false`)
+- Finding #4: Hardcoded allocator in auth.zig - **CLOSED** (use `self.allocator`)
+- Finding #5: TLS verification skip underdocumented - **CLOSED** (security warnings added)
+- Finding #6: JSON Injection in protocol.zig buildHello - **CLOSED** (code fix + 2 tests)
+- Finding #7: CI/CD Supply Chain Risk - **Won't Fix** (managed through other organizational controls)
+- Finding #8: QueryBuilder documentation improvements - **CLOSED** (comprehensive docs)
+- Finding #9: Sensitive data not zeroed before free in auth.zig - **CLOSED** (`@memset` before `allocator.free` + 3 tests)
+- Finding #10: Batch module lacks maximum query count - **CLOSED** (`MAX_BATCH_SIZE = 10000` + validation + 4 tests)
+- Finding #11: Date/Time constructors lack bounds validation - **CLOSED** (`initChecked()` methods + 18 tests)
+- Finding #12: Integration tests allow_failure bypasses quality gate - **CLOSED** (rules-based `allow_failure`)
+- Finding #13: Config.password not zeroed before free - **CLOSED** (`Config.deinit()` with `@memset` + 3 tests)
+- Finding #14: urlDecode has no input length limit - **CLOSED** (`MAX_URL_DECODE_LENGTH = 64KB` + 4 tests)
+- Finding #15: DSN parsing silently uses default on invalid port - **CLOSED** (`parseDSNStrict()` + 9 tests)
+- Finding #16: recv_buffer has no maximum size limit - **CLOSED** (`MAX_RECV_BUFFER_SIZE = 16MB` + validation + 2 tests)
+- Finding #17: isIpv6 validation is weak - **CLOSED** (strengthened character validation + 6 tests)
+- Finding #18: QueryBuilder param() does not validate parameter names - **CLOSED** (`validate.paramName()` call + 4 tests)
+- Finding #19: CI downloads Zig without integrity verification - **CLOSED** (SHA256 verification from index.json)
+- Finding #20: Config.deinit frees non-owned credentials - **CLOSED** (`withCredentials` allocates owned copies + 3 tests)
+- Finding #21: parseDSNStrict lacks bounds validation - **CLOSED** (`validate.pageSize/timeout` calls + 8 tests)
+- Finding #22: parseResponseType uses substring search - **CLOSED** (resolved by protobuf migration)
+- Finding #23: Examples default to insecure TLS - **CLOSED** (default `insecure=false` + env var/flag + warnings)
+- Finding #24: Dependency scanning may not cover Zig deps - **CLOSED** (custom SBOM script + CI job)
+- Finding #25: GQL Injection via RLS Policy Predicate - **OPEN** (High, SLA: 30 days)
+- Finding #26: gRPC Transport Has No TLS Implementation - **OPEN** (High, SLA: 30 days)
+- Finding #27: Password Not Zeroed in GeodeClient.deinit() - **OPEN** (High, SLA: 30 days)
+- Finding #28: Protobuf String Decoding Has No Per-Field Size Limit - **OPEN** (Medium, SLA: 90 days)
+- Finding #29: Unbounded Row Count in DataPage Decoding - **OPEN** (Medium, SLA: 90 days)
+- Finding #30: SHA256 Verification Fetches Checksum from Same Origin - **OPEN** (Medium, SLA: 90 days)
+- Finding #31: Docker Images Use Unpinned :latest Tags - **OPEN** (Medium, SLA: 90 days)
+- Finding #32: @constCast on Potentially Static Strings in proto.zig - **OPEN** (Low, SLA: 180 days)
 
 ---
 
@@ -1001,7 +1324,7 @@ This security review was conducted using:
 
 ### Files Reviewed
 
-- `src/*.zig` - All 11 source modules
+- `src/*.zig` - All source modules (including `proto.zig`, `grpc.zig` added in protobuf migration)
 - `geode_client_v2.zig` - Main client implementation
 - `tests/integration.zig` - Integration test suite
 - `.gitlab-ci.yml` - CI/CD pipeline
@@ -1012,8 +1335,9 @@ This security review was conducted using:
 ### Tools Used
 
 - ripgrep for pattern matching
-- GitLab CLI (glab) for issue creation
+- GitLab CLI (glab) for issue creation (prior rounds)
 - Manual code review
+- Adversarial review methodology (2026-03-24 audit)
 
 ---
 
@@ -1051,3 +1375,5 @@ This security review was conducted using:
 | 2026-01-30 | Issue #17 closed: Strengthened `isIpv6()` to validate character set (hex, colons, dots, brackets, zone IDs) + 6 tests | Claude Opus 4.5 |
 | 2026-01-30 | Issue #18 closed: Added `validate.paramName()` call in `QueryBuilder.param()` + updated build.zig + 4 tests | Claude Opus 4.5 |
 | 2026-01-30 | **All 19 findings remediated - Security gap analysis complete** | Claude Opus 4.5 |
+| 2026-03-24 | Adversarial review Phase 3: findings #19-#24 remediated (commits 9ceac61, b44db0b). Closed GitLab issues #1-#5, #9-#24 (21 issues). Updated Issue Status to 24/24. Enhancement issues remain open as future work. | Claude Opus 4.6 |
+| 2026-03-24 | **2026-03-24 Audit**: Added 8 new findings (#25-#32) from protobuf migration and expanded code audit. 3 High (GQL injection in RLS predicate, cleartext gRPC, password not zeroed), 4 Medium (protobuf field size, row count, CI checksum origin, Docker :latest), 1 Low (@constCast UB). --skip-issues mode; no GitLab issues created. | Claude Opus 4.6 |

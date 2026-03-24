@@ -1,5 +1,6 @@
 const std = @import("std");
 const quic = @import("quic");
+const uuid = @import("uuid");
 pub const proto = @import("proto");
 pub const config = @import("config");
 pub const grpc = @import("grpc");
@@ -35,6 +36,9 @@ pub const GeodeClient = struct {
 
     // gRPC transport state
     grpc_client: ?grpc.GrpcClient = null,
+
+    // Request tracking
+    last_request_id: ?[]const u8 = null,
 
     /// Initialize a QUIC client (backward compatible).
     pub fn init(allocator: std.mem.Allocator, host: []const u8, port: u16, insecure: bool, username: []const u8, password: []const u8) GeodeClient {
@@ -75,6 +79,12 @@ pub const GeodeClient = struct {
     pub fn deinit(self: *GeodeClient) void {
         self.recv_buffer.deinit(self.allocator);
 
+        // Clean up request ID
+        if (self.last_request_id) |rid| {
+            self.allocator.free(rid);
+            self.last_request_id = null;
+        }
+
         // Clean up QUIC resources
         if (self.conn) |c| {
             quic.closeConnection(c, 0) catch {};
@@ -91,6 +101,28 @@ pub const GeodeClient = struct {
             gc.deinit();
             self.grpc_client = null;
         }
+    }
+
+    /// Generate a UUID v4 string for use as a request identifier.
+    /// The returned string is heap-allocated; the client tracks and frees it
+    /// automatically on the next call or on deinit.
+    pub fn generateRequestId(self: *GeodeClient) ![]const u8 {
+        // Free previous request ID
+        if (self.last_request_id) |rid| {
+            self.allocator.free(rid);
+            self.last_request_id = null;
+        }
+
+        const id = try uuid.newV4();
+        const str = try id.toStringAlloc(self.allocator);
+        self.last_request_id = str;
+        return str;
+    }
+
+    /// Return the request ID from the most recent query, or null if no query
+    /// has been executed yet.
+    pub fn getLastRequestId(self: *const GeodeClient) ?[]const u8 {
+        return self.last_request_id;
     }
 
     fn ensureEndpoint(self: *GeodeClient) !void {
@@ -390,10 +422,15 @@ pub const GeodeClient = struct {
     }
 
     /// Execute a GQL query and return the result.
+    /// Automatically generates a UUID v4 request ID for tracing.
+    /// The caller may pass an explicit request_id; if null, one is generated.
     pub fn query(self: *GeodeClient, gql: []const u8, params: ?std.StringHashMapUnmanaged([]const u8)) !QueryResult {
+        const request_id = try self.generateRequestId();
+
         var execute = proto.ExecuteRequest{
             .session_id = self.session_id,
             .query = gql,
+            .request_id = request_id,
         };
 
         // Copy parameters if provided

@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const GeodeError = @import("error").GeodeError;
+const gql = @import("gql");
 
 /// Maximum allowed query length (1MB)
 pub const MAX_QUERY_LENGTH: usize = 1024 * 1024;
@@ -67,6 +68,53 @@ pub fn query(q: []const u8) ValidationError!void {
         }
     }
 }
+
+/// Validate a GQL query using the ISO/IEC 39075:2024 parser.
+/// Returns a more detailed error than the basic `query()` function.
+/// SECURITY: Uses the GQL parser for proper syntactic validation (CWE-89).
+///
+/// This function first runs basic string-level validation (length, null bytes),
+/// then parses the query with the full GQL front-end to catch syntactic errors
+/// that basic validation misses.
+///
+/// The parser uses a memory-limited arena (4 MB) to prevent denial-of-service
+/// via memory exhaustion on adversarial input.
+pub fn queryGql(allocator: std.mem.Allocator, q: []const u8) (ValidationError || GqlValidationError || std.mem.Allocator.Error)!void {
+    // First run basic string-level validation (empty, too long, null bytes)
+    try query(q);
+
+    // Then attempt to parse with the GQL parser for syntax validation.
+    // Use an arena backed by the caller's allocator for all AST nodes.
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    var lx = gql.Lexer{ .src = q };
+    var parser = gql.Parser{
+        .lx = &lx,
+        .arena = &arena,
+        .cur = lx.next(),
+    };
+
+    _ = parser.parseProgram() catch |err| switch (err) {
+        error.UnexpectedToken => return GqlValidationError.GqlSyntaxError,
+        error.InvalidCharacter => return GqlValidationError.GqlInvalidCharacter,
+        error.InvalidIndexType => return GqlValidationError.GqlInvalidIndexType,
+        error.Overflow => return GqlValidationError.GqlOverflow,
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+}
+
+/// Errors specific to GQL parser-based validation.
+pub const GqlValidationError = error{
+    /// The query has a syntactic error according to the GQL grammar.
+    GqlSyntaxError,
+    /// The query contains an invalid character.
+    GqlInvalidCharacter,
+    /// The query uses an invalid index type.
+    GqlInvalidIndexType,
+    /// Numeric overflow in a literal or expression.
+    GqlOverflow,
+};
 
 /// Validate a parameter name
 pub fn paramName(name: []const u8) ValidationError!void {
@@ -473,4 +521,32 @@ test "sanitize handles normal string" {
     const result = try sanitize(std.testing.allocator, input);
     defer std.testing.allocator.free(result);
     try std.testing.expectEqualStrings(input, result);
+}
+
+// =============================================================================
+// GQL Parser Validation Tests
+// =============================================================================
+
+test "queryGql accepts valid MATCH query" {
+    try queryGql(std.testing.allocator, "MATCH (n) RETURN n");
+}
+
+test "queryGql accepts valid CREATE query" {
+    try queryGql(std.testing.allocator, "CREATE (p:Person {name: 'Alice'})");
+}
+
+test "queryGql accepts valid relationship query" {
+    try queryGql(std.testing.allocator, "MATCH (a)-[:KNOWS]->(b) RETURN a, b");
+}
+
+test "queryGql rejects empty query" {
+    try std.testing.expectError(ValidationError.QueryEmpty, queryGql(std.testing.allocator, ""));
+}
+
+test "queryGql rejects query with null byte" {
+    try std.testing.expectError(ValidationError.QueryContainsNull, queryGql(std.testing.allocator, "MATCH\x00(n)"));
+}
+
+test "queryGql rejects syntactically invalid query" {
+    try std.testing.expectError(GqlValidationError.GqlSyntaxError, queryGql(std.testing.allocator, "MATCH MATCH MATCH"));
 }

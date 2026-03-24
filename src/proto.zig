@@ -54,6 +54,7 @@ pub const Param = struct {
 pub const ExecuteRequest = struct {
     session_id: []const u8 = "",
     query: []const u8 = "",
+    request_id: []const u8 = "",
     params: std.ArrayListUnmanaged(Param) = .{},
 
     pub fn init(allocator: std.mem.Allocator) ExecuteRequest {
@@ -440,6 +441,11 @@ fn encodeExecuteRequest(allocator: std.mem.Allocator, req: ExecuteRequest) ![]u8
         const param_data = try encodeParam(allocator, param);
         defer allocator.free(param_data);
         try encodeSubmessage(writer, 3, param_data);
+    }
+
+    // Encode optional request_id for request tracing
+    if (req.request_id.len > 0) {
+        try encodeString(writer, 4, req.request_id);
     }
 
     return buf.toOwnedSlice(allocator);

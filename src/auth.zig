@@ -12,6 +12,18 @@
 
 const std = @import("std");
 const validate = @import("validate");
+const auth_lib = @import("auth_lib");
+const uuid = @import("uuid");
+
+/// Supported authentication methods.
+pub const AuthMethod = enum {
+    /// Traditional username/password authentication.
+    password,
+    /// API key authentication (e.g., "ak1.xxx.yyy").
+    api_key,
+    /// HMAC-based authentication.
+    hmac,
+};
 
 /// Authentication credentials.
 pub const Credentials = struct {
@@ -188,6 +200,10 @@ pub const AuthClient = struct {
     current_user: ?[]const u8,
     /// Session token (if authenticated)
     session_token: ?[]const u8,
+    /// Authentication method in use
+    auth_method: AuthMethod,
+    /// API key string (e.g., "ak1.xxx.yyy") when using API key auth
+    api_key: ?[]const u8,
 
     const Self = @This();
 
@@ -197,6 +213,8 @@ pub const AuthClient = struct {
             .allocator = allocator,
             .current_user = null,
             .session_token = null,
+            .auth_method = .password,
+            .api_key = null,
         };
     }
 
@@ -211,6 +229,11 @@ pub const AuthClient = struct {
             // This prevents session tokens from remaining in freed memory
             @memset(@constCast(token), 0);
             self.allocator.free(token);
+        }
+        if (self.api_key) |key| {
+            // SECURITY: Zero API key before freeing (CWE-316, CWE-226)
+            @memset(@constCast(key), 0);
+            self.allocator.free(key);
         }
     }
 
@@ -411,6 +434,78 @@ pub const AuthClient = struct {
             self.allocator.free(token);
             self.session_token = null;
         }
+        if (self.api_key) |key| {
+            // SECURITY: Zero API key before freeing (CWE-316, CWE-226)
+            @memset(@constCast(key), 0);
+            self.allocator.free(key);
+            self.api_key = null;
+        }
+        self.auth_method = .password;
+    }
+
+    /// Set the authentication method to API key and store the key.
+    /// Returns self for builder-style chaining.
+    /// SECURITY: Zeros any previously stored API key before replacing (CWE-316, CWE-226).
+    pub fn withApiKey(self: *Self, api_key: []const u8) !*Self {
+        if (self.api_key) |old| {
+            // SECURITY: Zero old key before freeing (CWE-316, CWE-226)
+            @memset(@constCast(old), 0);
+            self.allocator.free(old);
+        }
+        self.api_key = try self.allocator.dupe(u8, api_key);
+        self.auth_method = .api_key;
+        return self;
+    }
+
+    /// Build a GQL command to authenticate using an API key.
+    /// This is an alternative to username/password login for service accounts
+    /// and automated clients that use API keys (e.g., "ak1.xxx.yyy").
+    ///
+    /// Returns a GQL query string: LOGIN WITH API_KEY '<escaped_key>'
+    pub fn buildApiKeyLoginQuery(self: Self, api_key: []const u8) ![]u8 {
+        var query: std.ArrayListUnmanaged(u8) = .{};
+        errdefer query.deinit(self.allocator);
+
+        try query.appendSlice(self.allocator, "LOGIN WITH API_KEY '");
+        try appendEscapedGqlString(self.allocator, &query, api_key);
+        try query.appendSlice(self.allocator, "'");
+
+        return query.toOwnedSlice(self.allocator);
+    }
+
+    /// Build a GQL command to create a new API key for a user.
+    /// Generates a unique key ID using UUID v4.
+    ///
+    /// Returns a GQL query string: CREATE API_KEY '<key_id>' FOR USER '<username>'
+    pub fn buildCreateApiKeyQuery(self: Self, username: []const u8) ![]u8 {
+        var query: std.ArrayListUnmanaged(u8) = .{};
+        errdefer query.deinit(self.allocator);
+
+        const key_id = try uuid.newV4();
+        const key_id_str = try key_id.toStringAlloc(self.allocator);
+        defer self.allocator.free(key_id_str);
+
+        try query.appendSlice(self.allocator, "CREATE API_KEY '");
+        try query.appendSlice(self.allocator, key_id_str);
+        try query.appendSlice(self.allocator, "' FOR USER '");
+        try appendEscapedGqlString(self.allocator, &query, username);
+        try query.appendSlice(self.allocator, "'");
+
+        return query.toOwnedSlice(self.allocator);
+    }
+
+    /// Build a GQL command to revoke an API key.
+    ///
+    /// Returns a GQL query string: REVOKE API_KEY '<key_id>'
+    pub fn buildRevokeApiKeyQuery(self: Self, key_id: []const u8) ![]u8 {
+        var query: std.ArrayListUnmanaged(u8) = .{};
+        errdefer query.deinit(self.allocator);
+
+        try query.appendSlice(self.allocator, "REVOKE API_KEY '");
+        try appendEscapedGqlString(self.allocator, &query, key_id);
+        try query.appendSlice(self.allocator, "'");
+
+        return query.toOwnedSlice(self.allocator);
     }
 };
 
@@ -434,6 +529,8 @@ pub const AuthError = error{
     PolicyAlreadyExists,
     /// Policy not found
     PolicyNotFound,
+    /// Invalid API key format
+    InvalidApiKey,
 };
 
 // Helper to escape GQL string literals (single quotes)
@@ -586,6 +683,96 @@ test "AuthClient buildDropRlsPolicyQuery" {
     defer std.testing.allocator.free(query);
 
     try std.testing.expect(std.mem.indexOf(u8, query, "DROP POLICY 'old_policy'") != null);
+}
+
+test "AuthMethod enum values" {
+    try std.testing.expectEqual(AuthMethod.password, .password);
+    try std.testing.expectEqual(AuthMethod.api_key, .api_key);
+    try std.testing.expectEqual(AuthMethod.hmac, .hmac);
+}
+
+test "AuthClient default auth method is password" {
+    var client = AuthClient.init(std.testing.allocator);
+    defer client.deinit();
+
+    try std.testing.expectEqual(AuthMethod.password, client.auth_method);
+    try std.testing.expect(client.api_key == null);
+}
+
+test "AuthClient withApiKey sets method and stores key" {
+    var client = AuthClient.init(std.testing.allocator);
+    defer client.deinit();
+
+    _ = try client.withApiKey("ak1.testid.testsecret");
+    try std.testing.expectEqual(AuthMethod.api_key, client.auth_method);
+    try std.testing.expectEqualStrings("ak1.testid.testsecret", client.api_key.?);
+}
+
+test "AuthClient withApiKey replaces previous key" {
+    var client = AuthClient.init(std.testing.allocator);
+    defer client.deinit();
+
+    _ = try client.withApiKey("ak1.first.key");
+    _ = try client.withApiKey("ak1.second.key");
+    try std.testing.expectEqualStrings("ak1.second.key", client.api_key.?);
+}
+
+test "AuthClient buildApiKeyLoginQuery" {
+    var client = AuthClient.init(std.testing.allocator);
+    defer client.deinit();
+
+    const query = try client.buildApiKeyLoginQuery("ak1.myid.mysecret");
+    defer std.testing.allocator.free(query);
+
+    try std.testing.expectEqualStrings("LOGIN WITH API_KEY 'ak1.myid.mysecret'", query);
+}
+
+test "AuthClient buildApiKeyLoginQuery escapes injection" {
+    var client = AuthClient.init(std.testing.allocator);
+    defer client.deinit();
+
+    const query = try client.buildApiKeyLoginQuery("ak1.bad'; DROP USER 'root");
+    defer std.testing.allocator.free(query);
+
+    // Single quotes should be escaped
+    try std.testing.expect(std.mem.indexOf(u8, query, "''") != null);
+    // Should NOT contain unescaped DROP command
+    try std.testing.expect(std.mem.indexOf(u8, query, "DROP USER 'root'") == null);
+}
+
+test "AuthClient buildCreateApiKeyQuery" {
+    var client = AuthClient.init(std.testing.allocator);
+    defer client.deinit();
+
+    const query = try client.buildCreateApiKeyQuery("alice");
+    defer std.testing.allocator.free(query);
+
+    try std.testing.expect(std.mem.indexOf(u8, query, "CREATE API_KEY '") != null);
+    try std.testing.expect(std.mem.indexOf(u8, query, "' FOR USER 'alice'") != null);
+}
+
+test "AuthClient buildRevokeApiKeyQuery" {
+    var client = AuthClient.init(std.testing.allocator);
+    defer client.deinit();
+
+    const query = try client.buildRevokeApiKeyQuery("key-id-123");
+    defer std.testing.allocator.free(query);
+
+    try std.testing.expectEqualStrings("REVOKE API_KEY 'key-id-123'", query);
+}
+
+test "AuthClient clearAuthentication resets api_key and auth_method" {
+    var client = AuthClient.init(std.testing.allocator);
+    defer client.deinit();
+
+    _ = try client.withApiKey("ak1.test.key");
+    try client.setAuthenticated("svc-account", "token456");
+
+    client.clearAuthentication();
+
+    try std.testing.expect(!client.isAuthenticated());
+    try std.testing.expect(client.api_key == null);
+    try std.testing.expectEqual(AuthMethod.password, client.auth_method);
 }
 
 // =============================================================================

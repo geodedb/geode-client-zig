@@ -283,70 +283,81 @@ if (validate.isIpv6("::1")) { ... }
 const clean = try validate.sanitize(allocator, "hello\x00world");
 ```
 
-### Protocol Module (`src/protocol.zig`)
+### Protocol Module (`src/proto.zig`)
 
-Wire protocol handling for JSON line protocol messages:
+Protobuf encoding/decoding for the Geode wire protocol. Wire format: 4-byte Big Endian length prefix + protobuf message body, aligned with the `geode.proto` schema from the server.
 
 ```zig
-const protocol = @import("protocol.zig");
+const proto = @import("proto.zig");
 
-// Build protocol messages
-const hello = try protocol.buildHello(
-    allocator,
-    "geode-zig",      // client name
-    "0.1.0",          // version
-    "minimum",        // conformance
-    1000,             // page size
-    "admin",          // optional username
-    "secret",         // optional password
-);
-defer allocator.free(hello);
+// Message types (structs matching geode.proto)
+var hello = proto.HelloRequest{
+    .username = "admin",
+    .password = "secret",
+    .client_name = "geode-zig",
+    .client_version = "0.1.0",
+    .wanted_conformance = "minimum",
+};
 
-// Build query messages
-const query_msg = try protocol.buildRunGql(allocator, "MATCH (n) RETURN n", null);
-defer allocator.free(query_msg);
+// Execute query
+var exec = proto.ExecuteRequest.init(allocator);
+defer exec.deinit(allocator);
+exec.query = "MATCH (n:Person) RETURN n";
+try exec.addParam(allocator, "minAge", proto.Value.initInt(25));
 
-// Build transaction messages
-const begin = try protocol.buildBegin(allocator);
-const commit = try protocol.buildCommit(allocator);
-const rollback = try protocol.buildRollback(allocator);
+// Pull results
+var pull = proto.PullRequest{ .request_id = 1, .page_size = 1000 };
 
-// Build other messages
-const pull = try protocol.buildPull(allocator, 100);
-const ping = try protocol.buildPing(allocator);
-const explain = try protocol.buildExplain(allocator, "MATCH (n) RETURN n");
+// Transaction control
+var begin = proto.BeginRequest{ .read_only = false };
+var commit = proto.CommitRequest{};
+var rollback = proto.RollbackRequest{};
 
-// Parse responses
-var response = try protocol.parseResponseType(allocator, response_data);
-defer response.deinit();
-if (response.isError()) { ... }
-if (response.isSuccess()) { ... }
+// Savepoints
+var sp = proto.SavepointRequest{ .name = "sp1" };
+var rb_to = proto.RollbackToRequest{ .name = "sp1" };
+
+// Ping
+var ping = proto.PingRequest{};
+
+// QUIC message wrappers
+var client_msg = proto.QuicClientMessage{ .hello = hello };
+var server_msg: proto.QuicServerMessage = ...; // decoded from wire
+defer server_msg.deinit(allocator);
+
+// Encoding helpers
+var buf = std.ArrayList(u8).init(allocator);
+try proto.encodeString(buf.writer(), 1, "hello");
+try proto.encodeVarint(buf.writer(), 42);
 ```
 
-**Message Types**:
+**Request Types** (QUIC client messages):
 
-- `HELLO`: Connection handshake
-- `RUN_GQL`: Execute GQL query
-- `PULL`: Fetch more results
-- `BEGIN`/`COMMIT`/`ROLLBACK`: Transaction control
-- `PING`: Keep-alive
-- `EXPLAIN`/`PROFILE`: Query analysis
+- `HelloRequest`: Connection handshake with credentials
+- `ExecuteRequest`: Execute GQL query with parameters
+- `PullRequest`: Fetch result pages
+- `BeginRequest`/`CommitRequest`/`RollbackRequest`: Transaction control
+- `SavepointRequest`/`RollbackToRequest`: Savepoint management
+- `PingRequest`: Keep-alive
 
-**Response Types**:
+**Response Types** (QUIC server messages):
 
-- `HELLO_ACK`: Handshake acknowledgment
-- `SCHEMA`: Query schema info
-- `BINDINGS`: Result rows
-- `ERROR`: Error with ISO code
-- `SUCCESS`: Operation success
-- `PONG`: Ping response
+- `HelloResponse`: Handshake acknowledgment with session ID and capabilities
+- `ExecutionResponse`: Query result with status, schema, data page, error, and metrics
+- `PullResponse`: Paginated result wrapper
+- `BeginResponse`: Transaction ID
+- `CommitResponse`/`RollbackResponse`: Success flag
+- `PingResponse`: OK flag
 
-**Protocol Constants**:
+**Data Types**:
 
-- `protocol.DEFAULT_CLIENT_NAME`: "geode-zig"
-- `protocol.CONFORMANCE_MINIMUM`: "minimum"
-- `protocol.DEFAULT_PAGE_SIZE`: 1000
-- `protocol.ALPN_GEODE`: "geode/1"
+- `Value`: Protobuf value union (null, int, double, bool, string)
+- `Row`: List of values
+- `DataPage`: Rows + pagination metadata (final, ordered, order_keys)
+- `SchemaDefinition`/`ColumnDefinition`: Result schema
+- `ProtoError`: Error with code, message, type, anchor
+- `Status`: ISO GQL status class/subclass
+- `ExecutionMetrics`: Parse/plan/execute/total duration in nanoseconds
 
 ### Prepared Statement Module (`src/prepared.zig`)
 
@@ -613,23 +624,25 @@ The tests use property-based testing patterns to validate:
 
 ## Wire Protocol
 
-The client uses JSON line protocol over QUIC:
+The client uses protobuf-encoded messages over QUIC (and optionally gRPC over HTTP/2). Each QUIC frame is a 4-byte Big Endian length prefix followed by a protobuf message body, as defined in `geode.proto`.
 
-**Client Messages**:
+**Client Messages** (via `QuicClientMessage` wrapper):
 
-- `HELLO`: Connection handshake
-- `RUN_GQL`: Execute GQL query
-- `PULL`: Fetch results
-- `BEGIN`/`COMMIT`/`ROLLBACK`: Transaction control
-- `PING`: Keep-alive
+- `HelloRequest`: Connection handshake with credentials and client metadata
+- `ExecuteRequest`: Execute GQL query with typed parameters
+- `PullRequest`: Fetch paginated results
+- `BeginRequest`/`CommitRequest`/`RollbackRequest`: Transaction control
+- `SavepointRequest`/`RollbackToRequest`: Savepoint management
+- `PingRequest`: Keep-alive
 
-**Server Responses**:
+**Server Responses** (via `QuicServerMessage` wrapper):
 
-- `SCHEMA`: Query schema information
-- `BINDINGS`: Result rows
-- `ERROR`: Error details with ISO codes
-- `EXPLAIN`: Query execution plan
-- `PROFILE`: Performance metrics
+- `HelloResponse`: Session ID and server capabilities
+- `ExecutionResponse`: Combines status, schema, data page, error, and execution metrics
+- `PullResponse`: Paginated result wrapper
+- `BeginResponse`: Transaction/session ID
+- `CommitResponse`/`RollbackResponse`: Success flag
+- `PingResponse`: OK flag
 
 ## Integration with Geode Server
 

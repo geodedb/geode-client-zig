@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const GeodeError = @import("error").GeodeError;
+const advanced_types = @import("advanced_types");
 
 /// GQL Value type that can represent any value in the type system.
 /// Supports all ISO GQL types including nodes, relationships, paths, and temporal types.
@@ -40,6 +41,40 @@ pub const Value = union(enum) {
     relationship: Relationship,
     /// Graph path
     path: Path,
+    /// Float32 vector for embeddings
+    vector: []const f32,
+    /// Geographic point (latitude, longitude)
+    point: Point,
+    /// IPv4 address
+    ipv4: [4]u8,
+    /// IPv6 address
+    ipv6: [16]u8,
+
+    /// Geographic point type
+    pub const Point = struct {
+        lat: f64,
+        lon: f64,
+
+        pub fn init(lat: f64, lon: f64) Point {
+            return .{ .lat = lat, .lon = lon };
+        }
+
+        pub fn format(self: Point, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt;
+            _ = options;
+            try writer.print("POINT({d}, {d})", .{ self.lat, self.lon });
+        }
+
+        /// Convert to advanced_types LatLon
+        pub fn toLatLon(self: Point) advanced_types.LatLon {
+            return .{ .lat = self.lat, .lon = self.lon };
+        }
+
+        /// Create from advanced_types LatLon
+        pub fn fromLatLon(ll: advanced_types.LatLon) Point {
+            return .{ .lat = ll.lat, .lon = ll.lon };
+        }
+    };
 
     /// Date type (year, month, day)
     /// SECURITY: Use initChecked() for user-provided values to validate bounds (CWE-20).
@@ -266,6 +301,41 @@ pub const Value = union(enum) {
         return .{ .timestamp = Timestamp.init(date, time) };
     }
 
+    /// Create a vector value for embeddings
+    pub fn initVector(data: []const f32) Value {
+        return .{ .vector = data };
+    }
+
+    /// Create a geographic point value
+    pub fn initPoint(lat: f64, lon: f64) Value {
+        return .{ .point = Point.init(lat, lon) };
+    }
+
+    /// Create a geographic point value from advanced_types LatLon
+    pub fn initPointFromLatLon(ll: advanced_types.LatLon) Value {
+        return .{ .point = Point.fromLatLon(ll) };
+    }
+
+    /// Create an IPv4 address value
+    pub fn initIpv4(addr: [4]u8) Value {
+        return .{ .ipv4 = addr };
+    }
+
+    /// Create an IPv4 address value from advanced_types Ipv4Addr
+    pub fn initIpv4FromAddr(addr: advanced_types.Ipv4Addr) Value {
+        return .{ .ipv4 = addr.octets };
+    }
+
+    /// Create an IPv6 address value
+    pub fn initIpv6(addr: [16]u8) Value {
+        return .{ .ipv6 = addr };
+    }
+
+    /// Create an IPv6 address value from advanced_types Ipv6Addr
+    pub fn initIpv6FromAddr(addr: advanced_types.Ipv6Addr) Value {
+        return .{ .ipv6 = addr.octets };
+    }
+
     // =========================================================================
     // Type checking
     // =========================================================================
@@ -343,6 +413,26 @@ pub const Value = union(enum) {
     /// Check if value is a path
     pub fn isPath(self: Value) bool {
         return self == .path;
+    }
+
+    /// Check if value is a vector
+    pub fn isVector(self: Value) bool {
+        return self == .vector;
+    }
+
+    /// Check if value is a geographic point
+    pub fn isPoint(self: Value) bool {
+        return self == .point;
+    }
+
+    /// Check if value is an IPv4 address
+    pub fn isIpv4(self: Value) bool {
+        return self == .ipv4;
+    }
+
+    /// Check if value is an IPv6 address
+    pub fn isIpv6(self: Value) bool {
+        return self == .ipv6;
     }
 
     // =========================================================================
@@ -446,6 +536,38 @@ pub const Value = union(enum) {
         };
     }
 
+    /// Get vector value or return error
+    pub fn asVector(self: Value) ![]const f32 {
+        return switch (self) {
+            .vector => |v| v,
+            else => error.TypeMismatch,
+        };
+    }
+
+    /// Get geographic point value or return error
+    pub fn asPoint(self: Value) !Point {
+        return switch (self) {
+            .point => |p| p,
+            else => error.TypeMismatch,
+        };
+    }
+
+    /// Get IPv4 address value or return error
+    pub fn asIpv4(self: Value) ![4]u8 {
+        return switch (self) {
+            .ipv4 => |a| a,
+            else => error.TypeMismatch,
+        };
+    }
+
+    /// Get IPv6 address value or return error
+    pub fn asIpv6(self: Value) ![16]u8 {
+        return switch (self) {
+            .ipv6 => |a| a,
+            else => error.TypeMismatch,
+        };
+    }
+
     // =========================================================================
     // JSON conversion
     // =========================================================================
@@ -536,6 +658,39 @@ pub const Value = union(enum) {
                 const str = try allocator.dupe(u8, fbs.getWritten());
                 break :blk std.json.Value{ .string = str };
             },
+            .vector => |vec| blk: {
+                var json_arr = std.json.Array.init(allocator);
+                for (vec) |f| {
+                    try json_arr.append(std.json.Value{ .float = @floatCast(f) });
+                }
+                break :blk std.json.Value{ .array = json_arr };
+            },
+            .point => |p| blk: {
+                var buf: [64]u8 = undefined;
+                var fbs = std.io.fixedBufferStream(&buf);
+                p.format("", .{}, fbs.writer()) catch unreachable;
+                const str = try allocator.dupe(u8, fbs.getWritten());
+                break :blk std.json.Value{ .string = str };
+            },
+            .ipv4 => |addr| blk: {
+                var buf: [15]u8 = undefined;
+                var fbs = std.io.fixedBufferStream(&buf);
+                fbs.writer().print("{d}.{d}.{d}.{d}", .{ addr[0], addr[1], addr[2], addr[3] }) catch unreachable;
+                const str = try allocator.dupe(u8, fbs.getWritten());
+                break :blk std.json.Value{ .string = str };
+            },
+            .ipv6 => |addr| blk: {
+                var buf: [39]u8 = undefined;
+                var fbs = std.io.fixedBufferStream(&buf);
+                const w = fbs.writer();
+                var i: usize = 0;
+                while (i < 16) : (i += 2) {
+                    if (i > 0) w.writeAll(":") catch unreachable;
+                    w.print("{x:0>2}{x:0>2}", .{ addr[i], addr[i + 1] }) catch unreachable;
+                }
+                const str = try allocator.dupe(u8, fbs.getWritten());
+                break :blk std.json.Value{ .string = str };
+            },
             .duration, .node, .relationship, .path => {
                 // Complex types serialize as objects
                 return std.json.Value.null; // Simplified
@@ -561,6 +716,10 @@ pub const Value = union(enum) {
             .node => "node",
             .relationship => "relationship",
             .path => "path",
+            .vector => "vector",
+            .point => "point",
+            .ipv4 => "ipv4",
+            .ipv6 => "ipv6",
         };
     }
 };

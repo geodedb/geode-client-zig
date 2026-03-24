@@ -78,6 +78,55 @@ pub fn build(b: *std.Build) void {
     });
     const spice_mod = spice_dep.module("spice");
 
+    // UUID - RFC 9562 compliant (V1-V8)
+    const uuid_dep = b.dependency("uuid", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const uuid_mod = uuid_dep.module("uuid");
+
+    // Auth library - HMAC chain, API keys, TOTP/MFA primitives
+    const auth_lib_dep = b.dependency("auth", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const auth_lib_mod = auth_lib_dep.module("auth");
+
+    // Advanced Types - Network, vector, geographic, URL, range value types
+    const advanced_types_dep = b.dependency("advanced_types", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const advanced_types_mod = advanced_types_dep.module("advanced_types");
+
+    // GQL - ISO/IEC 39075:2024 Graph Query Language front-end
+    const gql_dep = b.dependency("gql", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const gql_mod = gql_dep.module("gql");
+
+    // Metrics - Counters, gauges, histograms, Prometheus export
+    const metrics_dep = b.dependency("metrics", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const metrics_mod = metrics_dep.module("metrics");
+
+    // Concurrency - Thread pool and bounded MPMC queue
+    const concurrency_dep = b.dependency("concurrency", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const concurrency_mod = concurrency_dep.module("concurrency");
+
+    // FLE - Field-level encryption with AEAD, HKDF, blind indices
+    const fle_dep = b.dependency("fle", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const fle_mod = fle_dep.module("fle");
+
     // ========================================================================
     // Internal Modules (src/)
     // ========================================================================
@@ -96,6 +145,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     types_mod.addImport("error", error_mod);
+    types_mod.addImport("advanced_types", advanced_types_mod);
 
     // Validate module (defined before config because config depends on it)
     const validate_mod = b.createModule(.{
@@ -104,6 +154,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     validate_mod.addImport("error", error_mod);
+    validate_mod.addImport("gql", gql_mod);
 
     // Config module
     const cfg_mod = b.createModule(.{
@@ -131,6 +182,8 @@ pub fn build(b: *std.Build) void {
     });
     pool_mod.addImport("config", cfg_mod);
     pool_mod.addImport("error", error_mod);
+    pool_mod.addImport("concurrency", concurrency_mod);
+    pool_mod.addImport("metrics", metrics_mod);
 
     // Prepared statement module
     const prepared_mod = b.createModule(.{
@@ -157,6 +210,14 @@ pub fn build(b: *std.Build) void {
     batch_mod.addImport("types", types_mod);
     batch_mod.addImport("validate", validate_mod);
 
+    // Client metrics module
+    const client_metrics_mod = b.createModule(.{
+        .root_source_file = b.path("src/client_metrics.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    client_metrics_mod.addImport("metrics", metrics_mod);
+
     // Auth module
     const auth_mod = b.createModule(.{
         .root_source_file = b.path("src/auth.zig"),
@@ -164,6 +225,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     auth_mod.addImport("validate", validate_mod);
+    auth_mod.addImport("auth_lib", auth_lib_mod);
+    auth_mod.addImport("uuid", uuid_mod);
 
     // Proto module (protobuf encoding/decoding)
     const proto_mod = b.createModule(.{
@@ -207,6 +270,7 @@ pub fn build(b: *std.Build) void {
     geode_client_mod.addImport("explain", explain_mod);
     geode_client_mod.addImport("batch", batch_mod);
     geode_client_mod.addImport("auth", auth_mod);
+    geode_client_mod.addImport("client_metrics", client_metrics_mod);
     geode_client_mod.addImport("proto", proto_mod);
     geode_client_mod.addImport("grpc", grpc_mod);
 
@@ -220,6 +284,13 @@ pub fn build(b: *std.Build) void {
     geode_client_mod.addImport("protobuf", protobuf_mod);
     geode_client_mod.addImport("grpc_zig", grpc_client_mod);
     geode_client_mod.addImport("spice", spice_mod);
+    geode_client_mod.addImport("uuid", uuid_mod);
+    geode_client_mod.addImport("auth_lib", auth_lib_mod);
+    geode_client_mod.addImport("advanced_types", advanced_types_mod);
+    geode_client_mod.addImport("gql", gql_mod);
+    geode_client_mod.addImport("metrics", metrics_mod);
+    geode_client_mod.addImport("concurrency", concurrency_mod);
+    geode_client_mod.addImport("fle", fle_mod);
 
     // Export geode_client module for dependents
     _ = b.addModule("geode_client", .{
@@ -236,6 +307,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "explain", .module = explain_mod },
             .{ .name = "batch", .module = batch_mod },
             .{ .name = "auth", .module = auth_mod },
+            .{ .name = "client_metrics", .module = client_metrics_mod },
             .{ .name = "proto", .module = proto_mod },
             .{ .name = "grpc", .module = grpc_mod },
             .{ .name = "json", .module = json_mod },
@@ -247,6 +319,13 @@ pub fn build(b: *std.Build) void {
             .{ .name = "protobuf", .module = protobuf_mod },
             .{ .name = "grpc_zig", .module = grpc_client_mod },
             .{ .name = "spice", .module = spice_mod },
+            .{ .name = "uuid", .module = uuid_mod },
+            .{ .name = "auth_lib", .module = auth_lib_mod },
+            .{ .name = "advanced_types", .module = advanced_types_mod },
+            .{ .name = "gql", .module = gql_mod },
+            .{ .name = "metrics", .module = metrics_mod },
+            .{ .name = "concurrency", .module = concurrency_mod },
+            .{ .name = "fle", .module = fle_mod },
         },
     });
 
@@ -352,6 +431,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     types_tests.root_module.addImport("error", error_mod);
+    types_tests.root_module.addImport("advanced_types", advanced_types_mod);
     const run_types_tests = b.addRunArtifact(types_tests);
     test_step.dependOn(&run_types_tests.step);
 
@@ -377,6 +457,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     validate_tests.root_module.addImport("error", error_mod);
+    validate_tests.root_module.addImport("gql", gql_mod);
     const run_validate_tests = b.addRunArtifact(validate_tests);
     test_step.dependOn(&run_validate_tests.step);
 
@@ -403,6 +484,8 @@ pub fn build(b: *std.Build) void {
     });
     pool_tests.root_module.addImport("config", cfg_mod);
     pool_tests.root_module.addImport("error", error_mod);
+    pool_tests.root_module.addImport("concurrency", concurrency_mod);
+    pool_tests.root_module.addImport("metrics", metrics_mod);
     const run_pool_tests = b.addRunArtifact(pool_tests);
     test_step.dependOn(&run_pool_tests.step);
 
@@ -452,8 +535,22 @@ pub fn build(b: *std.Build) void {
         }),
     });
     auth_tests.root_module.addImport("validate", validate_mod);
+    auth_tests.root_module.addImport("auth_lib", auth_lib_mod);
+    auth_tests.root_module.addImport("uuid", uuid_mod);
     const run_auth_tests = b.addRunArtifact(auth_tests);
     test_step.dependOn(&run_auth_tests.step);
+
+    // Test client_metrics module
+    const client_metrics_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/client_metrics.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    client_metrics_tests.root_module.addImport("metrics", metrics_mod);
+    const run_client_metrics_tests = b.addRunArtifact(client_metrics_tests);
+    test_step.dependOn(&run_client_metrics_tests.step);
 
     // Test proto module
     const proto_tests = b.addTest(.{
@@ -498,6 +595,7 @@ pub fn build(b: *std.Build) void {
     client_tests.root_module.addImport("explain", explain_mod);
     client_tests.root_module.addImport("batch", batch_mod);
     client_tests.root_module.addImport("auth", auth_mod);
+    client_tests.root_module.addImport("client_metrics", client_metrics_mod);
     client_tests.root_module.addImport("proto", proto_mod);
     client_tests.root_module.addImport("grpc", grpc_mod);
     client_tests.root_module.addImport("json", json_mod);
@@ -509,6 +607,13 @@ pub fn build(b: *std.Build) void {
     client_tests.root_module.addImport("protobuf", protobuf_mod);
     client_tests.root_module.addImport("grpc_zig", grpc_client_mod);
     client_tests.root_module.addImport("spice", spice_mod);
+    client_tests.root_module.addImport("uuid", uuid_mod);
+    client_tests.root_module.addImport("auth_lib", auth_lib_mod);
+    client_tests.root_module.addImport("advanced_types", advanced_types_mod);
+    client_tests.root_module.addImport("gql", gql_mod);
+    client_tests.root_module.addImport("metrics", metrics_mod);
+    client_tests.root_module.addImport("concurrency", concurrency_mod);
+    client_tests.root_module.addImport("fle", fle_mod);
 
     client_tests.linkLibC();
     if (target.result.os.tag != .windows) {
