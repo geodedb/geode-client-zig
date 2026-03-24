@@ -195,6 +195,7 @@ pub const GrpcClient = struct {
     pub fn deinit(self: *Self) void {
         self.disconnect();
         if (self.session_id) |sid| {
+            std.crypto.secureZero(u8, @constCast(sid));
             self.allocator.free(sid);
             self.session_id = null;
         }
@@ -244,11 +245,15 @@ pub const GrpcClient = struct {
             return GrpcError.ConnectionFailed;
         }
 
-        // Read header
+        // Read header, looping to handle partial reads (PERF-015)
         var header: [5]u8 = undefined;
-        const header_read = try self.stream.?.read(&header);
-        if (header_read < 5) {
-            return GrpcError.StreamClosed;
+        var header_total: usize = 0;
+        while (header_total < 5) {
+            const n = try self.stream.?.read(header[header_total..]);
+            if (n == 0) {
+                return GrpcError.StreamClosed;
+            }
+            header_total += n;
         }
 
         // Parse header
@@ -307,10 +312,16 @@ pub const GrpcClient = struct {
         const msg = proto.QuicClientMessage{ .hello = hello_req };
         try self.sendProto(msg);
 
-        const response = try self.receiveProto();
+        var response = try self.receiveProto();
+        defer response.deinit(self.allocator);
         if (response.hello) |hello_resp| {
             if (hello_resp.success) {
                 if (hello_resp.session_id.len > 0) {
+                    // Free previous session_id to prevent leak on repeated hello() calls (Q-002)
+                    if (self.session_id) |old_sid| {
+                        std.crypto.secureZero(u8, @constCast(old_sid));
+                        self.allocator.free(old_sid);
+                    }
                     self.session_id = try self.allocator.dupe(u8, hello_resp.session_id);
                 }
             } else {

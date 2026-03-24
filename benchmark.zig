@@ -42,7 +42,10 @@ fn runWorker(
         .failed = 0,
     };
 
-    var client = geode.GeodeClient.init(allocator, host, port, insecure, username, password);
+    var client = geode.GeodeClient.init(allocator, host, port, insecure, username, password) catch {
+        result.failed = @intCast(queries);
+        return result;
+    };
     defer client.deinit();
 
     client.connect() catch {

@@ -37,7 +37,7 @@ pub fn main() !void {
     std.debug.print("Connecting to {s}:{d}\n", .{ host, port });
 
     // Create and connect client
-    var client = GeodeClient.init(allocator, host, port, insecure);
+    var client = try GeodeClient.init(allocator, host, port, insecure, "", "");
     defer client.deinit();
 
     if (insecure) {

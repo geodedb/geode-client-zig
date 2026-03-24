@@ -106,7 +106,7 @@ const TestContext = struct {
             }
         }
 
-        var client = GeodeClient.initWithTransport(
+        var client = try GeodeClient.initWithTransport(
             allocator,
             resolved_host,
             config.port,

@@ -21,7 +21,7 @@ pub fn main() !void {
         }
     } else |_| {}
 
-    var client = GeodeClient.init(allocator, host, port, true, username, password);
+    var client = try GeodeClient.init(allocator, host, port, true, username, password);
     defer client.deinit();
 
     std.debug.print("Attempting to connect...\n", .{});

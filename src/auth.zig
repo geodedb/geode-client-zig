@@ -12,6 +12,7 @@
 
 const std = @import("std");
 const validate = @import("validate");
+// auth_lib is available for future HMAC/TOTP integration
 const auth_lib = @import("auth_lib");
 const uuid = @import("uuid");
 
@@ -227,12 +228,12 @@ pub const AuthClient = struct {
         if (self.session_token) |token| {
             // SECURITY: Zero sensitive token data before freeing (CWE-316, CWE-226)
             // This prevents session tokens from remaining in freed memory
-            @memset(@constCast(token), 0);
+            std.crypto.secureZero(u8, @constCast(token));
             self.allocator.free(token);
         }
         if (self.api_key) |key| {
             // SECURITY: Zero API key before freeing (CWE-316, CWE-226)
-            @memset(@constCast(key), 0);
+            std.crypto.secureZero(u8, @constCast(key));
             self.allocator.free(key);
         }
     }
@@ -357,10 +358,14 @@ pub const AuthClient = struct {
     }
 
     /// Build a GQL command to create an RLS policy.
+    /// SECURITY: Validates the predicate to prevent GQL injection via the USING clause.
     pub fn buildCreateRlsPolicyQuery(
         self: Self,
         policy: RlsPolicy,
-    ) ![]u8 {
+    ) (AuthError || std.mem.Allocator.Error)![]u8 {
+        // SECURITY: Validate predicate before interpolating into GQL command (#25)
+        try validatePredicate(policy.predicate);
+
         var query: std.ArrayListUnmanaged(u8) = .{};
         errdefer query.deinit(self.allocator);
 
@@ -413,7 +418,7 @@ pub const AuthClient = struct {
         }
         if (self.session_token) |old| {
             // SECURITY: Zero old token before freeing (CWE-316, CWE-226)
-            @memset(@constCast(old), 0);
+            std.crypto.secureZero(u8, @constCast(old));
             self.allocator.free(old);
         }
         self.current_user = try self.allocator.dupe(u8, username);
@@ -430,13 +435,13 @@ pub const AuthClient = struct {
         if (self.session_token) |token| {
             // SECURITY: Zero sensitive token data before freeing (CWE-316, CWE-226)
             // This prevents session tokens from remaining in freed memory
-            @memset(@constCast(token), 0);
+            std.crypto.secureZero(u8, @constCast(token));
             self.allocator.free(token);
             self.session_token = null;
         }
         if (self.api_key) |key| {
             // SECURITY: Zero API key before freeing (CWE-316, CWE-226)
-            @memset(@constCast(key), 0);
+            std.crypto.secureZero(u8, @constCast(key));
             self.allocator.free(key);
             self.api_key = null;
         }
@@ -449,7 +454,7 @@ pub const AuthClient = struct {
     pub fn withApiKey(self: *Self, api_key: []const u8) !*Self {
         if (self.api_key) |old| {
             // SECURITY: Zero old key before freeing (CWE-316, CWE-226)
-            @memset(@constCast(old), 0);
+            std.crypto.secureZero(u8, @constCast(old));
             self.allocator.free(old);
         }
         self.api_key = try self.allocator.dupe(u8, api_key);
@@ -531,7 +536,39 @@ pub const AuthError = error{
     PolicyNotFound,
     /// Invalid API key format
     InvalidApiKey,
+    /// RLS policy predicate contains dangerous characters or is malformed
+    InvalidPredicate,
 };
+
+/// Validate an RLS policy predicate expression.
+/// SECURITY: Rejects predicates containing statement terminators (`;`) or unbalanced
+/// parentheses, which could allow GQL injection when the predicate is interpolated
+/// into a USING(...) clause. Single quotes are also rejected since predicates should
+/// use parameterized values ($param), not string literals.
+fn validatePredicate(predicate: []const u8) AuthError!void {
+    if (predicate.len == 0) return AuthError.InvalidPredicate;
+
+    var paren_depth: i32 = 0;
+    for (predicate) |c| {
+        switch (c) {
+            // Statement terminator enables multi-statement injection
+            ';' => return AuthError.InvalidPredicate,
+            // Single quotes could break out of the USING context
+            '\'' => return AuthError.InvalidPredicate,
+            // Null bytes should never appear in predicates
+            0 => return AuthError.InvalidPredicate,
+            '(' => paren_depth += 1,
+            ')' => {
+                paren_depth -= 1;
+                // Closing paren without matching open could escape the USING clause
+                if (paren_depth < 0) return AuthError.InvalidPredicate;
+            },
+            else => {},
+        }
+    }
+    // Unbalanced open parentheses
+    if (paren_depth != 0) return AuthError.InvalidPredicate;
+}
 
 // Helper to escape GQL string literals (single quotes)
 // SECURITY: Escapes single quotes to prevent GQL injection
@@ -845,4 +882,55 @@ test "deinit zeros session token" {
     try std.testing.expect(client.isAuthenticated());
 
     client.deinit();
+}
+
+// =============================================================================
+// Security Tests - RLS Predicate Injection Prevention (#25)
+// =============================================================================
+
+test "validatePredicate rejects semicolon injection" {
+    try std.testing.expectError(AuthError.InvalidPredicate, validatePredicate("true) ; DROP POLICY 'x"));
+}
+
+test "validatePredicate rejects single quotes" {
+    try std.testing.expectError(AuthError.InvalidPredicate, validatePredicate("n.name = 'alice'"));
+}
+
+test "validatePredicate rejects empty predicate" {
+    try std.testing.expectError(AuthError.InvalidPredicate, validatePredicate(""));
+}
+
+test "validatePredicate rejects unbalanced open parens" {
+    try std.testing.expectError(AuthError.InvalidPredicate, validatePredicate("n.age > (10"));
+}
+
+test "validatePredicate rejects unbalanced close parens" {
+    try std.testing.expectError(AuthError.InvalidPredicate, validatePredicate("n.age > 10)"));
+}
+
+test "validatePredicate rejects null bytes" {
+    try std.testing.expectError(AuthError.InvalidPredicate, validatePredicate("n.age > 10\x00; DROP"));
+}
+
+test "validatePredicate accepts valid predicates" {
+    try validatePredicate("n.owner = $current_user");
+    try validatePredicate("n.public = true");
+    try validatePredicate("n.age > $minAge AND n.active = true");
+    try validatePredicate("(n.role = $role) OR (n.public = true)");
+}
+
+test "buildCreateRlsPolicyQuery rejects injection in predicate" {
+    var client = AuthClient.init(std.testing.allocator);
+    defer client.deinit();
+
+    var policy = try RlsPolicy.init(
+        std.testing.allocator,
+        "evil_policy",
+        "Node",
+        .select,
+        "true) ; DROP POLICY 'x",
+    );
+    defer policy.deinit();
+
+    try std.testing.expectError(AuthError.InvalidPredicate, client.buildCreateRlsPolicyQuery(policy));
 }

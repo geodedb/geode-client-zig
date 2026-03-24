@@ -47,7 +47,6 @@ include:
       zig_version: "0.15.1"
       paths: "*.zig src/*.zig tests/*.zig benchmarks/*.zig fuzz/*.zig"
       stage: lint
-      allow_failure: true
 
   # Security scanning
   - component: gitlab.com/devnw/ci-catalog/security-sast@latest
@@ -221,17 +220,25 @@ integration-tests:
         - info
   script:
     - export PATH="$PWD/zig-${ZIG_VERSION}:$PATH"
+    - apt-get install -y netcat-openbsd
     - |
       echo "Waiting for Geode service to be ready (timeout: ${STARTUP_TIMEOUT}s)..."
       ELAPSED=0
       while [ $ELAPSED -lt $STARTUP_TIMEOUT ]; do
+        if nc -z geode $SERVICE_PORT 2>/dev/null; then
+          echo "Geode service is ready after ${ELAPSED}s"
+          break
+        fi
         sleep 1
         ELAPSED=$((ELAPSED + 1))
         if [ $((ELAPSED % 10)) -eq 0 ]; then
           echo "  Still waiting... (${ELAPSED}s/${STARTUP_TIMEOUT}s)"
         fi
       done
-      echo "Service should be ready"
+      if [ $ELAPSED -ge $STARTUP_TIMEOUT ]; then
+        echo "ERROR: Geode service did not become ready within ${STARTUP_TIMEOUT}s"
+        exit 1
+      fi
     - export GEODE_SERVER="geode:${SERVICE_PORT}"
     - export GEODE_INSECURE=1
     - |

@@ -13,6 +13,10 @@ pub const WIRE_FIXED64: u3 = 1;
 pub const WIRE_BYTES: u3 = 2;
 pub const WIRE_FIXED32: u3 = 5;
 
+// Security limits for decoding
+pub const MAX_STRING_FIELD_SIZE: usize = 1024 * 1024; // 1 MB per string field
+pub const MAX_ROWS_PER_PAGE: usize = 100_000; // matches validate.zig MAX_PAGE_SIZE
+
 // =============================================================================
 // Message Types (aligned with geode.proto)
 // =============================================================================
@@ -28,9 +32,9 @@ pub const HelloRequest = struct {
 
 pub const HelloResponse = struct {
     success: bool = false,
-    session_id: []const u8 = "",
-    error_message: []const u8 = "",
-    capabilities: std.ArrayListUnmanaged([]const u8) = .{},
+    session_id: []u8 = &.{},
+    error_message: []u8 = &.{},
+    capabilities: std.ArrayListUnmanaged([]u8) = .{},
 
     pub fn deinit(self: *HelloResponse, allocator: std.mem.Allocator) void {
         for (self.capabilities.items) |cap| {
@@ -38,10 +42,10 @@ pub const HelloResponse = struct {
         }
         self.capabilities.deinit(allocator);
         if (self.session_id.len > 0) {
-            allocator.free(@constCast(self.session_id));
+            allocator.free(self.session_id);
         }
         if (self.error_message.len > 0) {
-            allocator.free(@constCast(self.error_message));
+            allocator.free(self.error_message);
         }
     }
 };
@@ -57,8 +61,7 @@ pub const ExecuteRequest = struct {
     request_id: []const u8 = "",
     params: std.ArrayListUnmanaged(Param) = .{},
 
-    pub fn init(allocator: std.mem.Allocator) ExecuteRequest {
-        _ = allocator;
+    pub fn init() ExecuteRequest {
         return .{};
     }
 
@@ -461,8 +464,7 @@ fn encodePullRequest(allocator: std.mem.Allocator, req: PullRequest) ![]u8 {
     return buf.toOwnedSlice(allocator);
 }
 
-fn encodePingRequest(allocator: std.mem.Allocator, _: PingRequest) ![]u8 {
-    _ = allocator;
+fn encodePingRequest(_: PingRequest) []u8 {
     return &[_]u8{};
 }
 
@@ -532,8 +534,7 @@ pub fn encodeQuicClientMessage(allocator: std.mem.Allocator, msg: QuicClientMess
         try encodeSubmessage(writer, 3, pull_data);
     }
     if (msg.ping) |ping| {
-        const ping_data = try encodePingRequest(allocator, ping);
-        defer if (ping_data.len > 0) allocator.free(ping_data);
+        const ping_data = encodePingRequest(ping);
         try encodeSubmessage(writer, 4, ping_data);
     }
     if (msg.begin) |begin| {
@@ -619,6 +620,9 @@ pub fn skipField(data: []const u8, pos: *usize, wire_type: u3) !void {
 
 pub fn decodeString(allocator: std.mem.Allocator, data: []const u8, pos: *usize) ![]u8 {
     const length: usize = @intCast(try decodeVarint(data, pos));
+    if (length > MAX_STRING_FIELD_SIZE) {
+        return error.StringTooLarge;
+    }
     if (pos.* + length > data.len) {
         return error.Truncated;
     }
@@ -809,11 +813,16 @@ fn decodeRow(allocator: std.mem.Allocator, data: []const u8) !Row {
 
 fn decodeDataPage(allocator: std.mem.Allocator, data: []const u8) !DataPage {
     var page = DataPage{};
+    errdefer page.rows.deinit(allocator);
+    errdefer page.order_keys.deinit(allocator);
     var pos: usize = 0;
     while (pos < data.len) {
         const tag = try decodeTag(data, &pos);
         switch (tag.field_num) {
             1 => if (tag.wire_type == WIRE_BYTES) {
+                if (page.rows.items.len >= MAX_ROWS_PER_PAGE) {
+                    return error.TooManyRows;
+                }
                 const row_data = try decodeBytesField(data, &pos);
                 const row = try decodeRow(allocator, row_data);
                 try page.rows.append(allocator, row);
@@ -1245,7 +1254,7 @@ test "QuicClientMessage with ping encodes" {
 
 test "ExecuteRequest with params encodes" {
     const allocator = std.testing.allocator;
-    var execute = ExecuteRequest.init(allocator);
+    var execute = ExecuteRequest.init();
     defer execute.deinit(allocator);
     execute.session_id = "session123";
     execute.query = "RETURN $x AS result";
@@ -1276,4 +1285,36 @@ test "PullRequest encodes" {
 test "DataPage.lastPage returns final" {
     const page = DataPage{ .final = true };
     try std.testing.expect(page.lastPage());
+}
+
+test "decodeString rejects oversized string field" {
+    // Craft a varint encoding of MAX_STRING_FIELD_SIZE + 1
+    const oversized_len: u64 = MAX_STRING_FIELD_SIZE + 1;
+    var len_buf: [10]u8 = undefined;
+    var len_fbs = std.io.fixedBufferStream(&len_buf);
+    encodeVarint(len_fbs.writer(), oversized_len) catch unreachable;
+    const varint_bytes = len_fbs.getWritten();
+
+    var pos: usize = 0;
+    const result = decodeString(std.testing.allocator, varint_bytes, &pos);
+    try std.testing.expectError(error.StringTooLarge, result);
+}
+
+test "decodeDataPage rejects too many rows" {
+    // Build a protobuf payload with MAX_ROWS_PER_PAGE + 1 row fields.
+    // Each row is an empty submessage: tag(field=1, wire=WIRE_BYTES) + varint(0).
+    const allocator = std.testing.allocator;
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(allocator);
+    const writer = buf.writer(allocator);
+
+    // Each empty row: tag byte 0x0A (field 1, wire type 2) + length 0
+    const row_count = MAX_ROWS_PER_PAGE + 1;
+    for (0..row_count) |_| {
+        try encodeTag(writer, 1, WIRE_BYTES);
+        try encodeVarint(writer, 0); // empty row submessage
+    }
+
+    const result = decodeDataPage(allocator, buf.items);
+    try std.testing.expectError(error.TooManyRows, result);
 }

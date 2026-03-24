@@ -41,30 +41,37 @@ pub const GeodeClient = struct {
     last_request_id: ?[]const u8 = null,
 
     /// Initialize a QUIC client (backward compatible).
-    pub fn init(allocator: std.mem.Allocator, host: []const u8, port: u16, insecure: bool, username: []const u8, password: []const u8) GeodeClient {
+    pub fn init(allocator: std.mem.Allocator, host: []const u8, port: u16, insecure: bool, username: []const u8, password: []const u8) !GeodeClient {
         return initWithTransport(allocator, host, port, insecure, username, password, .quic);
     }
 
     /// Initialize a client with explicit transport selection.
-    pub fn initWithTransport(allocator: std.mem.Allocator, host: []const u8, port: u16, insecure: bool, username: []const u8, password: []const u8, transport: Transport) GeodeClient {
+    pub fn initWithTransport(allocator: std.mem.Allocator, host: []const u8, port: u16, insecure: bool, username: []const u8, password: []const u8, transport: Transport) !GeodeClient {
+        const owned_username = try allocator.dupe(u8, username);
+        errdefer allocator.free(owned_username);
+        const owned_password = try allocator.dupe(u8, password);
+        errdefer {
+            std.crypto.secureZero(u8, owned_password);
+            allocator.free(owned_password);
+        }
         return .{
             .allocator = allocator,
             .host = host,
             .port = port,
             .insecure = insecure,
-            .username = username,
-            .password = password,
+            .username = owned_username,
+            .password = owned_password,
             .transport = transport,
             .endpoint = null,
             .conn = null,
             .stream_id = null,
-            .recv_buffer = std.ArrayList(u8).initCapacity(allocator, 0) catch unreachable,
+            .recv_buffer = try std.ArrayList(u8).initCapacity(allocator, 4096),
             .grpc_client = null,
         };
     }
 
     /// Initialize a client from a Config struct.
-    pub fn initFromConfig(allocator: std.mem.Allocator, cfg: config.Config) GeodeClient {
+    pub fn initFromConfig(allocator: std.mem.Allocator, cfg: config.Config) !GeodeClient {
         return initWithTransport(
             allocator,
             cfg.host,
@@ -78,6 +85,25 @@ pub const GeodeClient = struct {
 
     pub fn deinit(self: *GeodeClient) void {
         self.recv_buffer.deinit(self.allocator);
+
+        // Securely zero and free sensitive credentials (always owned copies)
+        if (self.password.len > 0) {
+            std.crypto.secureZero(u8, @constCast(self.password));
+        }
+        self.allocator.free(self.password);
+        self.password = "";
+
+        if (self.username.len > 0) {
+            std.crypto.secureZero(u8, @constCast(self.username));
+        }
+        self.allocator.free(self.username);
+        self.username = "";
+
+        if (self.session_id.len > 0) {
+            std.crypto.secureZero(u8, @constCast(self.session_id));
+            self.allocator.free(self.session_id);
+            self.session_id = "";
+        }
 
         // Clean up request ID
         if (self.last_request_id) |rid| {
@@ -406,11 +432,16 @@ pub const GeodeClient = struct {
         try self.sendProto(msg);
 
         // Wait for hello response
-        const response = try self.receiveProto(5000);
+        var response = try self.receiveProto(5000);
+        defer response.deinit(self.allocator);
         if (response.hello) |hello| {
             if (hello.success) {
-                // Store session ID
+                // Store session ID, freeing any previous one first
                 if (hello.session_id.len > 0) {
+                    if (self.session_id.len > 0) {
+                        std.crypto.secureZero(u8, @constCast(self.session_id));
+                        self.allocator.free(self.session_id);
+                    }
                     self.session_id = try self.allocator.dupe(u8, hello.session_id);
                 }
             } else {
@@ -450,7 +481,8 @@ pub const GeodeClient = struct {
         try self.sendProto(msg);
 
         // Receive response
-        const response = try self.receiveProto(30000);
+        var response = try self.receiveProto(30000);
+        defer response.deinit(self.allocator);
         return try self.parseExecutionResponse(response);
     }
 
@@ -503,7 +535,8 @@ pub const GeodeClient = struct {
         };
         try self.sendProto(msg);
 
-        const response = try self.receiveProto(5000);
+        var response = try self.receiveProto(5000);
+        defer response.deinit(self.allocator);
         if (response.begin) |begin_resp| {
             if (begin_resp.tx_id.len > 0) {
                 return try self.allocator.dupe(u8, begin_resp.tx_id);
@@ -519,7 +552,8 @@ pub const GeodeClient = struct {
         };
         try self.sendProto(msg);
 
-        const response = try self.receiveProto(5000);
+        var response = try self.receiveProto(5000);
+        defer response.deinit(self.allocator);
         if (response.commit) |commit_resp| {
             if (!commit_resp.success) {
                 return error.CommitFailed;
@@ -536,7 +570,8 @@ pub const GeodeClient = struct {
         };
         try self.sendProto(msg);
 
-        const response = try self.receiveProto(5000);
+        var response = try self.receiveProto(5000);
+        defer response.deinit(self.allocator);
         if (response.rollback) |rollback_resp| {
             if (!rollback_resp.success) {
                 return error.RollbackFailed;
@@ -553,7 +588,8 @@ pub const GeodeClient = struct {
         };
         try self.sendProto(msg);
 
-        const response = try self.receiveProto(5000);
+        var response = try self.receiveProto(5000);
+        defer response.deinit(self.allocator);
         if (response.ping) |ping_resp| {
             return ping_resp.ok;
         }
@@ -600,7 +636,7 @@ pub fn executeQuery(
     username: []const u8,
     password: []const u8,
 ) !QueryResult {
-    var client = GeodeClient.init(allocator, host, port, insecure, username, password);
+    var client = try GeodeClient.init(allocator, host, port, insecure, username, password);
     defer client.deinit();
 
     try client.connect();
@@ -635,7 +671,7 @@ test "proto encoding: HelloRequest encodes correctly" {
 
 test "proto encoding: ExecuteRequest encodes query correctly" {
     const allocator = std.testing.allocator;
-    var execute = proto.ExecuteRequest.init(allocator);
+    var execute = proto.ExecuteRequest.init();
     defer execute.deinit(allocator);
     execute.session_id = "session123";
     execute.query = "RETURN 1 AS x";
@@ -685,7 +721,7 @@ test "MAX_RECV_BUFFER_SIZE is 16MB" {
 
 test "GeodeClient.init creates QUIC transport by default" {
     const allocator = std.testing.allocator;
-    var client = GeodeClient.init(allocator, "localhost", 3141, false, "", "");
+    var client = try GeodeClient.init(allocator, "localhost", 3141, false, "", "");
     defer client.deinit();
 
     try std.testing.expectEqual(Transport.quic, client.transport);
@@ -695,12 +731,12 @@ test "GeodeClient.initWithTransport creates correct transport" {
     const allocator = std.testing.allocator;
 
     // QUIC transport
-    var quic_client = GeodeClient.initWithTransport(allocator, "localhost", 3141, false, "", "", .quic);
+    var quic_client = try GeodeClient.initWithTransport(allocator, "localhost", 3141, false, "", "", .quic);
     defer quic_client.deinit();
     try std.testing.expectEqual(Transport.quic, quic_client.transport);
 
     // gRPC transport
-    var grpc_client = GeodeClient.initWithTransport(allocator, "localhost", 50051, false, "", "", .grpc);
+    var grpc_client = try GeodeClient.initWithTransport(allocator, "localhost", 50051, false, "", "", .grpc);
     defer grpc_client.deinit();
     try std.testing.expectEqual(Transport.grpc, grpc_client.transport);
 }
@@ -714,7 +750,7 @@ test "GeodeClient.initFromConfig creates client from Config" {
     quic_cfg.port = 3141;
     quic_cfg.transport = .quic;
 
-    var quic_client = GeodeClient.initFromConfig(allocator, quic_cfg);
+    var quic_client = try GeodeClient.initFromConfig(allocator, quic_cfg);
     defer quic_client.deinit();
 
     try std.testing.expectEqualStrings("db.example.com", quic_client.host);
@@ -729,7 +765,7 @@ test "GeodeClient.initFromConfig creates client from Config" {
     grpc_cfg.username = "admin";
     grpc_cfg.password = "secret";
 
-    var grpc_client = GeodeClient.initFromConfig(allocator, grpc_cfg);
+    var grpc_client = try GeodeClient.initFromConfig(allocator, grpc_cfg);
     defer grpc_client.deinit();
 
     try std.testing.expectEqualStrings("grpc.example.com", grpc_client.host);

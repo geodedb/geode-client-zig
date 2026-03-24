@@ -136,8 +136,22 @@ pub const Config = struct {
     /// Set credentials by allocating copies.
     /// SECURITY: Allocates owned copies to ensure safe cleanup in deinit() (CWE-590).
     /// The Config takes ownership of the allocated credentials.
+    /// Safe to call multiple times; previous values are securely freed.
     pub fn withCredentials(self: *Config, allocator: std.mem.Allocator, username: []const u8, password: []const u8) !*Config {
+        // Free previous credentials if they exist to prevent memory leaks (Q-006)
+        if (self.password) |old_pass| {
+            std.crypto.secureZero(u8, @constCast(old_pass));
+            allocator.free(old_pass);
+        }
+        if (self.username) |old_user| {
+            allocator.free(old_user);
+        }
+
         self.username = try allocator.dupe(u8, username);
+        errdefer {
+            allocator.free(self.username.?);
+            self.username = null;
+        }
         self.password = try allocator.dupe(u8, password);
         return self;
     }
@@ -203,7 +217,7 @@ pub const Config = struct {
     pub fn deinit(self: *Config, allocator: std.mem.Allocator) void {
         // SECURITY: Zero sensitive password data before freeing (CWE-316, CWE-226)
         if (self.password) |pass| {
-            @memset(@constCast(pass), 0);
+            std.crypto.secureZero(u8, @constCast(pass));
             allocator.free(pass);
             self.password = null;
         }
@@ -223,7 +237,7 @@ pub const Config = struct {
         }
         // SECURITY: Zero client key before freeing
         if (self.client_key) |v| {
-            @memset(@constCast(v), 0);
+            std.crypto.secureZero(u8, @constCast(v));
             allocator.free(v);
             self.client_key = null;
         }

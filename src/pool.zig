@@ -425,7 +425,7 @@ pub fn Pool(comptime ConnectionType: type) type {
                 if (self.connections.items[i].isIdleExpired(self.config.idle_timeout_ms)) {
                     // Keep minimum connections
                     if (self.connections.items.len > self.config.min_size) {
-                        _ = self.connections.orderedRemove(i);
+                        _ = self.connections.swapRemove(i);
                         self.stats.idle_connections -= 1;
                         removed += 1;
                         continue;

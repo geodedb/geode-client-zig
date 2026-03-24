@@ -21,7 +21,7 @@ pub fn main() !void {
         }
     };
 
-    var client = GeodeClient.init(allocator, host, port, insecure);
+    var client = try GeodeClient.init(allocator, host, port, insecure, "", "");
     defer client.deinit();
 
     if (insecure) {
