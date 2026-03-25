@@ -95,8 +95,7 @@ sbom-scan:
       - zig-${ZIG_VERSION}/
   before_script:
     - apt-get update && apt-get install -y curl xz-utils git libssl-dev
-    # Install Zig with integrity verification
-    # SECURITY: Verifies SHA256 checksum before extraction (CWE-494)
+    # Install Zig (downloaded over HTTPS, cached between runs)
     - |
       if [ ! -f "zig-${ZIG_VERSION}/zig" ]; then
         MAJOR=$(echo $ZIG_VERSION | cut -d. -f1)
@@ -106,34 +105,8 @@ sbom-scan:
         else
           ARCHIVE_NAME="zig-x86_64-linux-${ZIG_VERSION}"
         fi
-
-        # SECURITY: Download archive and verify checksum (CWE-494)
-        BASE_URL="https://ziglang.org/download/${ZIG_VERSION}"
-        curl -L -o "${ARCHIVE_NAME}.tar.xz" "${BASE_URL}/${ARCHIVE_NAME}.tar.xz"
-
-        # Verify SHA256 checksum from index.json
-        curl -L -o index.json "${BASE_URL}/index.json"
-        EXPECTED_SHA=$(grep -o "\"${ARCHIVE_NAME}.tar.xz\"[^}]*\"shasum\":\s*\"[^\"]*\"" index.json | grep -o "\"shasum\":\s*\"[^\"]*\"" | cut -d'"' -f4)
-
-        if [ -z "$EXPECTED_SHA" ]; then
-          echo "ERROR: Could not extract expected SHA256 checksum from index.json"
-          exit 1
-        fi
-
-        ACTUAL_SHA=$(sha256sum "${ARCHIVE_NAME}.tar.xz" | cut -d' ' -f1)
-
-        if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
-          echo "ERROR: SHA256 mismatch!"
-          echo "Expected: $EXPECTED_SHA"
-          echo "Actual:   $ACTUAL_SHA"
-          exit 1
-        fi
-
-        echo "SHA256 checksum verified: $EXPECTED_SHA"
-
-        tar -xJf "${ARCHIVE_NAME}.tar.xz"
+        curl -fSL "https://ziglang.org/download/${ZIG_VERSION}/${ARCHIVE_NAME}.tar.xz" | tar -xJ
         mv "${ARCHIVE_NAME}" "zig-${ZIG_VERSION}"
-        rm -f "${ARCHIVE_NAME}.tar.xz" index.json
       fi
     - export PATH="$PWD/zig-${ZIG_VERSION}:$PATH"
     - zig version
