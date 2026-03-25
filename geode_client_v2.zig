@@ -41,6 +41,9 @@ pub const GeodeClient = struct {
     // Request tracking
     last_request_id: ?[]const u8 = null,
 
+    // Graph binding from DSN or config
+    graph: ?[]const u8 = null,
+
     /// Initialize a QUIC client (backward compatible).
     pub fn init(allocator: std.mem.Allocator, host: []const u8, port: u16, insecure: bool, username: []const u8, password: []const u8) !GeodeClient {
         return initWithTransport(allocator, host, port, insecure, username, password, .quic);
@@ -73,7 +76,7 @@ pub const GeodeClient = struct {
 
     /// Initialize a client from a Config struct.
     pub fn initFromConfig(allocator: std.mem.Allocator, cfg: config.Config) !GeodeClient {
-        return initWithTransport(
+        var client = try initWithTransport(
             allocator,
             cfg.host,
             cfg.port,
@@ -82,6 +85,10 @@ pub const GeodeClient = struct {
             cfg.password orelse "",
             cfg.transport,
         );
+        if (cfg.graph) |g| {
+            client.graph = try allocator.dupe(u8, g);
+        }
+        return client;
     }
 
     pub fn deinit(self: *GeodeClient) void {
@@ -110,6 +117,12 @@ pub const GeodeClient = struct {
         if (self.last_request_id) |rid| {
             self.allocator.free(rid);
             self.last_request_id = null;
+        }
+
+        // Clean up graph binding
+        if (self.graph) |g| {
+            self.allocator.free(g);
+            self.graph = null;
         }
 
         // Clean up QUIC resources
@@ -474,6 +487,7 @@ pub const GeodeClient = struct {
                 .username = self.username,
                 .password = self.password,
                 .tenant_id = "",
+                .graph = self.graph,
             },
         };
         try self.sendProto(msg);

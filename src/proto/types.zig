@@ -27,6 +27,7 @@ pub const HelloRequest = struct {
     client_name: []const u8 = "geode-zig",
     client_version: []const u8 = "0.1.0",
     wanted_conformance: []const u8 = "minimum",
+    graph: ?[]const u8 = null,
 };
 
 pub const HelloResponse = struct {
@@ -34,6 +35,8 @@ pub const HelloResponse = struct {
     session_id: []u8 = &.{},
     error_message: []u8 = &.{},
     capabilities: std.ArrayListUnmanaged([]u8) = .{},
+    password_reset_required: bool = false,
+    graph: ?[]const u8 = null,
 
     pub fn deinit(self: *HelloResponse, allocator: std.mem.Allocator) void {
         for (self.capabilities.items) |cap| {

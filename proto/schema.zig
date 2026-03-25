@@ -10,11 +10,13 @@ pub const HelloRequest = struct {
     username: []const u8 = "",
     password: []const u8 = "",
     tenant_id: ?[]const u8 = null,
+    graph: ?[]const u8 = null,
 
     pub const _desc_table = .{
         .username = fd(1, .{ .scalar = .string }),
         .password = fd(2, .{ .scalar = .string }),
         .tenant_id = fd(3, .{ .scalar = .string }),
+        .graph = fd(7, .{ .scalar = .string }),
     };
 
     pub fn deinit(self: *HelloRequest, allocator: std.mem.Allocator) void {
@@ -27,12 +29,16 @@ pub const HelloResponse = struct {
     session_id: []const u8 = "",
     error_message: []const u8 = "",
     capabilities: std.ArrayList([]const u8),
+    password_reset_required: bool = false,
+    graph: ?[]const u8 = null,
 
     pub const _desc_table = .{
         .success = fd(1, .{ .scalar = .bool }),
         .session_id = fd(2, .{ .scalar = .string }),
         .error_message = fd(3, .{ .scalar = .string }),
         .capabilities = fd(4, .{ .repeated = .{ .scalar = .string } }),
+        .password_reset_required = fd(5, .{ .scalar = .bool }),
+        .graph = fd(6, .{ .scalar = .string }),
     };
 
     pub fn deinit(self: *HelloResponse, allocator: std.mem.Allocator) void {

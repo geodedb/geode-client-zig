@@ -340,13 +340,14 @@ pub const GrpcClient = struct {
     }
 
     /// Perform Hello handshake
-    pub fn hello(self: *Self, username: ?[]const u8, password: ?[]const u8) !void {
+    pub fn hello(self: *Self, username: ?[]const u8, password: ?[]const u8, graph: ?[]const u8) !void {
         const hello_req = proto.HelloRequest{
             .username = username orelse "",
             .password = password orelse "",
             .client_name = "geode-zig-grpc",
             .client_version = "0.1.0",
             .wanted_conformance = "minimum",
+            .graph = graph,
         };
 
         const msg = proto.QuicClientMessage{ .hello = hello_req };

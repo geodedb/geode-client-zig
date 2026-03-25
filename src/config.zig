@@ -92,6 +92,8 @@ pub const Config = struct {
     client_key: ?[]const u8,
     /// SNI server name (optional)
     server_name: ?[]const u8,
+    /// Graph name for DSN graph binding (optional)
+    graph: ?[]const u8 = null,
 
     /// Initialize with default values (QUIC transport)
     pub fn init() Config {
@@ -113,6 +115,7 @@ pub const Config = struct {
             .client_cert = null,
             .client_key = null,
             .server_name = null,
+            .graph = null,
         };
     }
 
@@ -153,6 +156,14 @@ pub const Config = struct {
             self.username = null;
         }
         self.password = try allocator.dupe(u8, password);
+        return self;
+    }
+
+    /// Set graph name for DSN graph binding.
+    /// Takes an owned copy of the graph name string.
+    pub fn withGraph(self: *Config, allocator: std.mem.Allocator, graph: []const u8) !*Config {
+        if (self.graph) |old| allocator.free(old);
+        self.graph = try allocator.dupe(u8, graph);
         return self;
     }
 
@@ -244,6 +255,10 @@ pub const Config = struct {
         if (self.server_name) |v| {
             allocator.free(v);
             self.server_name = null;
+        }
+        if (self.graph) |v| {
+            allocator.free(v);
+            self.graph = null;
         }
     }
 };
@@ -352,7 +367,7 @@ fn parseSimpleFormat(allocator: std.mem.Allocator, dsn: []const u8, config: *Con
     return parseHostPortParams(allocator, dsn, config, strict);
 }
 
-/// Parse host[:port][?params]
+/// Parse host[:port][/graph][?params]
 fn parseHostPortParams(allocator: std.mem.Allocator, input: []const u8, config: *Config, strict: bool) !Config {
     var remaining = input;
 
@@ -361,6 +376,33 @@ fn parseHostPortParams(allocator: std.mem.Allocator, input: []const u8, config: 
     if (std.mem.indexOf(u8, remaining, "?")) |q_pos| {
         params_str = remaining[q_pos + 1 ..];
         remaining = remaining[0..q_pos];
+    }
+
+    // Extract graph from URL path (everything after first / not inside brackets)
+    // Only look for slash outside of IPv6 brackets
+    if (!std.mem.startsWith(u8, remaining, "[")) {
+        if (std.mem.indexOf(u8, remaining, "/")) |slash_idx| {
+            const path = remaining[slash_idx + 1 ..];
+            if (path.len > 0) {
+                if (config.graph) |old| allocator.free(old);
+                config.graph = try allocator.dupe(u8, path);
+            }
+            remaining = remaining[0..slash_idx];
+        }
+    } else {
+        // IPv6: find closing bracket first, then look for slash after it
+        if (std.mem.indexOf(u8, remaining, "]")) |bracket_end| {
+            const after_bracket = remaining[bracket_end + 1 ..];
+            // after_bracket could be ":port/graph" or "/graph" or ":port"
+            if (std.mem.indexOf(u8, after_bracket, "/")) |slash_in_after| {
+                const path = after_bracket[slash_in_after + 1 ..];
+                if (path.len > 0) {
+                    if (config.graph) |old| allocator.free(old);
+                    config.graph = try allocator.dupe(u8, path);
+                }
+                remaining = remaining[0 .. bracket_end + 1 + slash_in_after];
+            }
+        }
     }
 
     // Check for IPv6 address [host]:port
@@ -468,6 +510,9 @@ fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *C
                 config.client_key = try urlDecode(allocator, value);
             } else if (std.mem.eql(u8, key, "server_name")) {
                 config.server_name = try urlDecode(allocator, value);
+            } else if (std.mem.eql(u8, key, "graph")) {
+                if (config.graph) |old| allocator.free(old);
+                config.graph = try urlDecode(allocator, value);
             }
         }
     }
