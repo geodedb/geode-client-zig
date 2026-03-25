@@ -30,20 +30,6 @@ pub fn build(b: *std.Build) void {
     });
     const quic_mod = quic_dep.module("quic");
 
-    // Protocol Buffers - same as geode server
-    const protobuf_dep = b.dependency("protobuf", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const protobuf_mod = protobuf_dep.module("protobuf");
-
-    // gRPC for Zig - same as geode server
-    const grpc_zig_dep = b.dependency("grpc_zig", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const grpc_client_mod = grpc_zig_dep.module("grpc-client");
-
     // UUID - RFC 9562 compliant (V1-V8)
     const uuid_dep = b.dependency("uuid", .{
         .target = target,
@@ -186,7 +172,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    proto_mod.addImport("protobuf", protobuf_mod);
 
     // gRPC transport module
     const grpc_mod = b.createModule(.{
@@ -195,7 +180,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     grpc_mod.addImport("proto", proto_mod);
-    grpc_mod.addImport("grpc_zig", grpc_client_mod);
+
+    // Encryption module (client-side field-level encryption config)
+    const encryption_mod = b.createModule(.{
+        .root_source_file = b.path("src/encryption.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
 
     // ========================================================================
     // Geode Client Module
@@ -214,6 +205,7 @@ pub fn build(b: *std.Build) void {
     geode_client_mod.addImport("proto", proto_mod);
     geode_client_mod.addImport("config", cfg_mod);
     geode_client_mod.addImport("grpc", grpc_mod);
+    geode_client_mod.addImport("encryption", encryption_mod);
 
     // Export geode_client module for dependents
     _ = b.addModule("geode_client", .{
@@ -224,6 +216,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "proto", .module = proto_mod },
             .{ .name = "config", .module = cfg_mod },
             .{ .name = "grpc", .module = grpc_mod },
+            .{ .name = "encryption", .module = encryption_mod },
         },
     });
 
@@ -427,6 +420,17 @@ pub fn build(b: *std.Build) void {
     client_metrics_tests.root_module.addImport("metrics", metrics_mod);
     const run_client_metrics_tests = b.addRunArtifact(client_metrics_tests);
     test_step.dependOn(&run_client_metrics_tests.step);
+
+    // Test encryption module
+    const encryption_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/encryption.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_encryption_tests = b.addRunArtifact(encryption_tests);
+    test_step.dependOn(&run_encryption_tests.step);
 
     // Test proto module
     const proto_tests = b.addTest(.{

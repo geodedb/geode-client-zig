@@ -28,17 +28,6 @@
             .url = "git+https://gitlab.com/devnw/zig/tls.git#0929ceb8beaa11a0650cb2d164a8418596a6580e",
             .hash = "tls-0.1.0-mtEaLHPLEgD7ulluN9vsG7kzhkYx54baqhK8taaYW0Y5",
         },
-        // Protocol Buffers - wire format encoding/decoding
-        .protobuf = .{
-            .url = "git+https://gitlab.com/devnw/zig/protobuf.git#53ece58213b7c212d63ba95cf923ddaf1eb3cf4c",
-            .hash = "protobuf-3.0.0-0e82alVdKQAeG_KZQVDXKUNSeMH2vbT1c-ceP6Iz5g10",
-        },
-        // gRPC for Zig - alternate transport
-        .grpc_zig = .{
-            .url = "git+https://gitlab.com/devnw/zig/grpc-zig.git#8d019736ae1ae016eae3183bdeb319c4c524057f",
-            .hash = "grpc_zig-0.1.0-7FnvpLe5AQB55BMGuoZVuPYg3JGT8Gj1tSRfhmDqQGQe",
-        },
-
         // =======================================================================
         // Foundation Libraries
         // =======================================================================
@@ -112,11 +101,6 @@
         .concurrency = .{
             .url = "git+https://gitlab.com/devnw/zig/concurrency.git#fb0aa99f05edca429c02e39cc69905f1a59d97f7",
             .hash = "concurrency-0.1.0-MDWSwkvAAABjTnaUeUKLgjhjT3tpcmxY0XNWKzBDZutH",
-        },
-        // FLE - Field-level encryption with AEAD, HKDF, blind indices
-        .fle = .{
-            .url = "git+https://gitlab.com/devnw/zig/fle.git#b99ddd1b5f3778fa4383142fffd7eeb89d5df25e",
-            .hash = "fle-0.1.0-1CfwlRtJAQCWR5DkJpmPvXZTZGfL0pufl40-yxv24uGK",
         },
     },
 }

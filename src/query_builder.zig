@@ -44,37 +44,68 @@ const validate = @import("validate");
 
 /// Builder for constructing GQL queries with a fluent API.
 ///
+/// Uses a single shared buffer (`ArrayListUnmanaged(u8)`) for all clause text,
+/// avoiding per-clause allocations. Clauses are appended directly to the buffer
+/// with space separators, and `build()` returns an owned copy of the final query.
+///
 /// **SECURITY**: Clause methods (match, where, create, etc.) directly interpolate
 /// their string arguments without escaping. Always use the `param()` method to
 /// safely bind user-provided values. See module header for examples.
 pub const QueryBuilder = struct {
     allocator: std.mem.Allocator,
-    clauses: std.ArrayListUnmanaged([]const u8),
+    /// Shared buffer for all clause text, space-separated.
+    buf: std.ArrayListUnmanaged(u8),
+    /// Number of clauses appended (used to detect empty queries).
+    clause_count: usize,
     params: std.StringHashMapUnmanaged(Value),
 
     /// Initialize a new QueryBuilder
     pub fn init(allocator: std.mem.Allocator) QueryBuilder {
         return .{
             .allocator = allocator,
-            .clauses = .{},
+            .buf = .{},
+            .clause_count = 0,
             .params = .{},
         };
     }
 
     /// Free all resources
     pub fn deinit(self: *QueryBuilder) void {
-        for (self.clauses.items) |clause| {
-            self.allocator.free(clause);
-        }
-        self.clauses.deinit(self.allocator);
+        self.buf.deinit(self.allocator);
         self.params.deinit(self.allocator);
+    }
+
+    /// Append a clause to the shared buffer. Inserts a space separator between clauses.
+    fn appendClause(self: *QueryBuilder, keyword: []const u8, arg: ?[]const u8) !void {
+        if (self.clause_count > 0) {
+            try self.buf.append(self.allocator, ' ');
+        }
+        try self.buf.appendSlice(self.allocator, keyword);
+        if (arg) |a| {
+            try self.buf.append(self.allocator, ' ');
+            try self.buf.appendSlice(self.allocator, a);
+        }
+        self.clause_count += 1;
+    }
+
+    /// Append a clause with an integer argument formatted to the buffer.
+    fn appendClauseInt(self: *QueryBuilder, keyword: []const u8, value: u64) !void {
+        if (self.clause_count > 0) {
+            try self.buf.append(self.allocator, ' ');
+        }
+        try self.buf.appendSlice(self.allocator, keyword);
+        try self.buf.append(self.allocator, ' ');
+        // Format the integer into a stack buffer, then append.
+        var int_buf: [20]u8 = undefined; // u64 max is 20 digits
+        const int_str = std.fmt.bufPrint(&int_buf, "{d}", .{value}) catch unreachable;
+        try self.buf.appendSlice(self.allocator, int_str);
+        self.clause_count += 1;
     }
 
     /// Add a MATCH clause.
     /// **SECURITY**: Pattern is interpolated directly. Use param() for user values.
     pub fn match(self: *QueryBuilder, pattern: []const u8) !*QueryBuilder {
-        const clause = try std.fmt.allocPrint(self.allocator, "MATCH {s}", .{pattern});
-        try self.clauses.append(self.allocator, clause);
+        try self.appendClause("MATCH", pattern);
         return self;
     }
 
@@ -88,16 +119,14 @@ pub const QueryBuilder = struct {
     /// Add an OPTIONAL MATCH clause.
     /// **SECURITY**: Pattern is interpolated directly. Use param() for user values.
     pub fn optionalMatch(self: *QueryBuilder, pattern: []const u8) !*QueryBuilder {
-        const clause = try std.fmt.allocPrint(self.allocator, "OPTIONAL MATCH {s}", .{pattern});
-        try self.clauses.append(self.allocator, clause);
+        try self.appendClause("OPTIONAL MATCH", pattern);
         return self;
     }
 
     /// Add a WHERE clause.
     /// **SECURITY**: Condition is interpolated directly. Use param() for user values.
     pub fn where(self: *QueryBuilder, condition: []const u8) !*QueryBuilder {
-        const clause = try std.fmt.allocPrint(self.allocator, "WHERE {s}", .{condition});
-        try self.clauses.append(self.allocator, clause);
+        try self.appendClause("WHERE", condition);
         return self;
     }
 
@@ -110,91 +139,85 @@ pub const QueryBuilder = struct {
 
     /// Add a WITH clause
     pub fn with(self: *QueryBuilder, expressions: []const u8) !*QueryBuilder {
-        const clause = try std.fmt.allocPrint(self.allocator, "WITH {s}", .{expressions});
-        try self.clauses.append(self.allocator, clause);
+        try self.appendClause("WITH", expressions);
         return self;
     }
 
     /// Add a RETURN clause
     pub fn ret(self: *QueryBuilder, expressions: []const u8) !*QueryBuilder {
-        const clause = try std.fmt.allocPrint(self.allocator, "RETURN {s}", .{expressions});
-        try self.clauses.append(self.allocator, clause);
+        try self.appendClause("RETURN", expressions);
         return self;
     }
 
     /// Add an ORDER BY clause
     pub fn orderBy(self: *QueryBuilder, expressions: []const u8) !*QueryBuilder {
-        const clause = try std.fmt.allocPrint(self.allocator, "ORDER BY {s}", .{expressions});
-        try self.clauses.append(self.allocator, clause);
+        try self.appendClause("ORDER BY", expressions);
         return self;
     }
 
     /// Add an ORDER BY DESC clause
     pub fn orderByDesc(self: *QueryBuilder, expressions: []const u8) !*QueryBuilder {
-        const clause = try std.fmt.allocPrint(self.allocator, "ORDER BY {s} DESC", .{expressions});
-        try self.clauses.append(self.allocator, clause);
+        if (self.clause_count > 0) {
+            try self.buf.append(self.allocator, ' ');
+        }
+        try self.buf.appendSlice(self.allocator, "ORDER BY ");
+        try self.buf.appendSlice(self.allocator, expressions);
+        try self.buf.appendSlice(self.allocator, " DESC");
+        self.clause_count += 1;
         return self;
     }
 
     /// Add a LIMIT clause
     pub fn limit(self: *QueryBuilder, count: u64) !*QueryBuilder {
-        const clause = try std.fmt.allocPrint(self.allocator, "LIMIT {d}", .{count});
-        try self.clauses.append(self.allocator, clause);
+        try self.appendClauseInt("LIMIT", count);
         return self;
     }
 
     /// Add a SKIP clause
     pub fn skip(self: *QueryBuilder, count: u64) !*QueryBuilder {
-        const clause = try std.fmt.allocPrint(self.allocator, "SKIP {d}", .{count});
-        try self.clauses.append(self.allocator, clause);
+        try self.appendClauseInt("SKIP", count);
         return self;
     }
 
     /// Add a CREATE clause.
     /// **SECURITY**: Pattern is interpolated directly. Use param() for user values.
     pub fn create(self: *QueryBuilder, pattern: []const u8) !*QueryBuilder {
-        const clause = try std.fmt.allocPrint(self.allocator, "CREATE {s}", .{pattern});
-        try self.clauses.append(self.allocator, clause);
+        try self.appendClause("CREATE", pattern);
         return self;
     }
 
     /// Add a MERGE clause.
     /// **SECURITY**: Pattern is interpolated directly. Use param() for user values.
     pub fn merge(self: *QueryBuilder, pattern: []const u8) !*QueryBuilder {
-        const clause = try std.fmt.allocPrint(self.allocator, "MERGE {s}", .{pattern});
-        try self.clauses.append(self.allocator, clause);
+        try self.appendClause("MERGE", pattern);
         return self;
     }
 
     /// Add a DELETE clause.
     /// **SECURITY**: Variables are interpolated directly. Use param() for user values.
     pub fn delete(self: *QueryBuilder, variables: []const u8) !*QueryBuilder {
-        const clause = try std.fmt.allocPrint(self.allocator, "DELETE {s}", .{variables});
-        try self.clauses.append(self.allocator, clause);
+        try self.appendClause("DELETE", variables);
         return self;
     }
 
     /// Add a DETACH DELETE clause.
     /// **SECURITY**: Variables are interpolated directly. Use param() for user values.
     pub fn detachDelete(self: *QueryBuilder, variables: []const u8) !*QueryBuilder {
-        const clause = try std.fmt.allocPrint(self.allocator, "DETACH DELETE {s}", .{variables});
-        try self.clauses.append(self.allocator, clause);
+        try self.appendClause("DETACH DELETE", variables);
         return self;
     }
 
     /// Add a SET clause.
     /// **SECURITY**: Assignments are interpolated directly. Use param() for user values.
     pub fn set(self: *QueryBuilder, assignments: []const u8) !*QueryBuilder {
-        const clause = try std.fmt.allocPrint(self.allocator, "SET {s}", .{assignments});
-        try self.clauses.append(self.allocator, clause);
+        try self.appendClause("SET", assignments);
         return self;
     }
 
     /// Add a REMOVE clause.
     /// **SECURITY**: Items are interpolated directly. Use param() for user values.
     pub fn remove(self: *QueryBuilder, items: []const u8) !*QueryBuilder {
-        const clause = try std.fmt.allocPrint(self.allocator, "REMOVE {s}", .{items});
-        try self.clauses.append(self.allocator, clause);
+        try self.appendClause("REMOVE", items);
         return self;
     }
 
@@ -202,8 +225,7 @@ pub const QueryBuilder = struct {
     /// **SECURITY WARNING**: This method provides NO protection against injection.
     /// Never pass untrusted user input to this method.
     pub fn raw(self: *QueryBuilder, clause: []const u8) !*QueryBuilder {
-        const owned = try self.allocator.dupe(u8, clause);
-        try self.clauses.append(self.allocator, owned);
+        try self.appendClause(clause, null);
         return self;
     }
 
@@ -217,33 +239,14 @@ pub const QueryBuilder = struct {
         return self;
     }
 
-    /// Build the final query string
+    /// Build the final query string.
+    /// Returns an owned copy of the query; the caller must free it.
     pub fn build(self: *QueryBuilder) ![]const u8 {
-        if (self.clauses.items.len == 0) {
+        if (self.clause_count == 0) {
             return error.EmptyQuery;
         }
 
-        var total_len: usize = 0;
-        for (self.clauses.items, 0..) |clause, i| {
-            total_len += clause.len;
-            if (i < self.clauses.items.len - 1) {
-                total_len += 1; // space separator
-            }
-        }
-
-        var result = try self.allocator.alloc(u8, total_len);
-        var offset: usize = 0;
-
-        for (self.clauses.items, 0..) |clause, i| {
-            @memcpy(result[offset .. offset + clause.len], clause);
-            offset += clause.len;
-            if (i < self.clauses.items.len - 1) {
-                result[offset] = ' ';
-                offset += 1;
-            }
-        }
-
-        return result;
+        return try self.allocator.dupe(u8, self.buf.items);
     }
 
     /// Get the bound parameters
