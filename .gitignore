@@ -34,3 +34,6 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Vendored dependencies should not be committed
+vendor/
