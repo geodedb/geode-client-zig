@@ -12,6 +12,8 @@ DOCKER_CONTAINER_NAME ?= geode-test-server
 GEODE_HOST ?= 127.0.0.1
 GEODE_PORT ?= 3141
 GEODE_GRPC_PORT ?= 50051
+GEODE_USERNAME ?= geode
+GEODE_PASSWORD ?= GeodeTestPassword123!
 
 .PHONY: all build release test test-unit test-integration test-integration-docker \
         test-integration-docker-legacy test-integration-docker-verbose test-integration-docker-keep \
@@ -142,7 +144,8 @@ test-integration:
 	@echo "Start server first: cd ../geode && ./zig-out/bin/geode serve"
 	@echo "Or use: make test-integration-docker"
 	@echo ""
-	GEODE_SERVER=$(GEODE_HOST):$(GEODE_PORT) GEODE_INSECURE=1 $(ZIG) build test-integration $(ZIG_FLAGS)
+	GEODE_SERVER=$(GEODE_HOST):$(GEODE_PORT) GEODE_INSECURE=1 GEODE_USERNAME=$(GEODE_USERNAME) GEODE_PASSWORD=$(GEODE_PASSWORD) \
+		$(ZIG) build test-integration $(ZIG_FLAGS)
 	@echo ""
 	@echo "✓ Integration tests complete"
 
@@ -170,7 +173,8 @@ test-integration-docker-legacy: build docker-start docker-wait
 	@echo ""
 	@echo "Using Docker container: $(DOCKER_CONTAINER_NAME)"
 	@echo ""
-	GEODE_SERVER=127.0.0.1:$(GEODE_PORT) GEODE_INSECURE=1 $(ZIG) build test-integration $(ZIG_FLAGS) || ($(MAKE) docker-stop && exit 1)
+	GEODE_SERVER=127.0.0.1:$(GEODE_PORT) GEODE_INSECURE=1 GEODE_USERNAME=$(GEODE_USERNAME) GEODE_PASSWORD=$(GEODE_PASSWORD) \
+		$(ZIG) build test-integration $(ZIG_FLAGS) || ($(MAKE) docker-stop && exit 1)
 	@echo ""
 	@echo "✓ Docker integration tests complete"
 	$(MAKE) docker-stop
@@ -178,11 +182,12 @@ test-integration-docker-legacy: build docker-start docker-wait
 # Run test executables (legacy)
 test-connection: build
 	@echo "Running test_connection..."
-	GEODE_SERVER=$(GEODE_HOST):$(GEODE_PORT) ./zig-out/bin/test_connection
+	GEODE_SERVER=$(GEODE_HOST):$(GEODE_PORT) GEODE_USERNAME=$(GEODE_USERNAME) GEODE_PASSWORD=$(GEODE_PASSWORD) ./zig-out/bin/test_connection
 
 test-connection-v2: build
 	@echo "Running test_connection_v2..."
-	GEODE_SERVER=$(GEODE_HOST):$(GEODE_PORT) GEODE_INSECURE=1 ./zig-out/bin/test_connection_v2
+	GEODE_SERVER=$(GEODE_HOST):$(GEODE_PORT) GEODE_INSECURE=1 GEODE_USERNAME=$(GEODE_USERNAME) GEODE_PASSWORD=$(GEODE_PASSWORD) \
+		./zig-out/bin/test_connection_v2
 
 test-integration-grpc:
 	@echo "Running gRPC integration tests..."
@@ -191,7 +196,7 @@ test-integration-grpc:
 	@echo "Start server first: cd ../geode && ./zig-out/bin/geode serve --listen-grpc 0.0.0.0:50051"
 	@echo "Or use: make docker-start"
 	@echo ""
-	GEODE_TRANSPORT=grpc GEODE_SERVER=$(GEODE_HOST):$(GEODE_GRPC_PORT) GEODE_INSECURE=1 \
+	GEODE_TRANSPORT=grpc GEODE_SERVER=$(GEODE_HOST):$(GEODE_GRPC_PORT) GEODE_INSECURE=1 GEODE_USERNAME=$(GEODE_USERNAME) GEODE_PASSWORD=$(GEODE_PASSWORD) \
 		$(ZIG) build test-integration $(ZIG_FLAGS)
 	@echo ""
 	@echo "✓ gRPC integration tests complete"
@@ -247,6 +252,9 @@ docker-start:
 	else \
 		docker run -d --rm \
 			--name $(DOCKER_CONTAINER_NAME) \
+			-e GEODE_DEFAULT_PASSWORD=$(GEODE_PASSWORD) \
+			-e GEODE_ADMIN_PASSWORD=$(GEODE_PASSWORD) \
+			-e GEODE_DISABLE_AUDIT=1 \
 			-p $(GEODE_PORT):3141/udp \
 			-p $(GEODE_GRPC_PORT):50051/tcp \
 			$(DOCKER_IMAGE) \

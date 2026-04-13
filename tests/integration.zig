@@ -31,6 +31,8 @@ const TestConfig = struct {
     insecure: bool,
     timeout_ms: u64,
     transport: Transport,
+    username: []const u8,
+    password: []const u8,
 
     fn fromEnv() TestConfig {
         // Determine transport first (affects default port)
@@ -45,6 +47,11 @@ const TestConfig = struct {
             break :blk if (transport == .grpc) "127.0.0.1:50051" else "127.0.0.1:3141";
         };
         const insecure = std.posix.getenv("GEODE_INSECURE") != null;
+        const username = std.posix.getenv("GEODE_USERNAME") orelse std.posix.getenv("GEODE_USER") orelse "geode";
+        const password = std.posix.getenv("GEODE_PASSWORD") orelse
+            std.posix.getenv("GEODE_DEFAULT_PASSWORD") orelse
+            std.posix.getenv("GEODE_ADMIN_PASSWORD") orelse
+            "GeodeTestPassword123!";
 
         var host: []const u8 = "127.0.0.1";
         var port: u16 = default_port;
@@ -62,6 +69,8 @@ const TestConfig = struct {
             .insecure = insecure,
             .timeout_ms = 5000,
             .transport = transport,
+            .username = username,
+            .password = password,
         };
     }
 };
@@ -111,8 +120,8 @@ const TestContext = struct {
             resolved_host,
             config.port,
             config.insecure,
-            "", // username
-            "", // password
+            config.username,
+            config.password,
             config.transport,
         );
 
