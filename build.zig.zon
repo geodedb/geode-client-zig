@@ -89,8 +89,8 @@
         },
         // GQL - ISO/IEC 39075:2024 Graph Query Language front-end (lexer, parser, AST)
         .gql = .{
-            .url = "git+https://gitlab.com/devnw/zig/gql.git#2d26491c14d677694c7c6273f2df4cd2ad83e623",
-            .hash = "gql-0.1.0-T1ANDSpCCADgAzBT9hd8r00U0lpMbvZ2TmuFfgllEF26",
+            .url = "git+https://gitlab.com/devnw/zig/gql.git#c9145b8aae3a57eb3436a380f332deb60aea753c",
+            .hash = "gql-0.1.0-T1ANDYqLCAAJHOhJBVqrV_KBvQwXsobgpLIGoiBRFqCV",
         },
         // Metrics - Counters, gauges, histograms, Prometheus export
         .metrics = .{
