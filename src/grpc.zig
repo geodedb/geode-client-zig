@@ -253,17 +253,23 @@ pub const GrpcClient = struct {
         return false;
     }
 
+    /// Obtain the global single-threaded Io instance.
+    fn getIo() std.Io {
+        return std.Io.Threaded.global_single_threaded.io();
+    }
+
     /// Write all bytes to the connection.
     fn writeAll(self: *Self, data: []const u8) !void {
         if (self.tcp_stream) |tcp_stream| {
-            var remaining = data;
-            while (remaining.len > 0) {
-                const n = std.posix.write(tcp_stream.socket.handle, remaining) catch {
-                    return GrpcError.ConnectionFailed;
-                };
-                if (n == 0) return GrpcError.ConnectionFailed;
-                remaining = remaining[n..];
-            }
+            const io = getIo();
+            var write_buf: [4096]u8 = undefined;
+            var w = tcp_stream.writer(io, &write_buf);
+            w.interface.writeAll(data) catch {
+                return GrpcError.ConnectionFailed;
+            };
+            w.interface.flush() catch {
+                return GrpcError.ConnectionFailed;
+            };
         } else {
             return GrpcError.ConnectionFailed;
         }
@@ -272,17 +278,13 @@ pub const GrpcClient = struct {
     /// Read exactly `buf.len` bytes from the connection.
     fn readExact(self: *Self, buf: []u8) !void {
         if (self.tcp_stream) |tcp_stream| {
-            // Plain TCP: loop to handle partial reads
-            var total: usize = 0;
-            while (total < buf.len) {
-                const n = std.posix.read(tcp_stream.socket.handle, buf[total..]) catch {
-                    return GrpcError.ConnectionFailed;
-                };
-                if (n == 0) {
-                    return GrpcError.StreamClosed;
-                }
-                total += n;
-            }
+            const io = getIo();
+            var read_buf: [4096]u8 = undefined;
+            var r = tcp_stream.reader(io, &read_buf);
+            var bufs = [_][]u8{buf};
+            r.interface.readVecAll(&bufs) catch {
+                return GrpcError.ConnectionFailed;
+            };
         } else {
             return GrpcError.ConnectionFailed;
         }
