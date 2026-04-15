@@ -186,7 +186,7 @@ pub const GrpcClient = struct {
     session_id: ?[]const u8,
 
     /// Underlying TCP socket
-    tcp_stream: ?std.net.Stream,
+    tcp_stream: ?std.Io.net.Stream,
 
     const Self = @This();
 
@@ -226,11 +226,12 @@ pub const GrpcClient = struct {
         }
 
         // Resolve server address
-        const address = try std.net.Address.resolveIp(self.config.host, self.config.port);
+        const address = try std.Io.net.IpAddress.parse(self.config.host, self.config.port);
+        const io = std.Io.Threaded.global_single_threaded.io();
 
         // Connect TCP stream (plaintext only when tls=false)
-        const tcp_stream = try std.net.tcpConnectToAddress(address);
-        errdefer tcp_stream.close();
+        const tcp_stream = try std.Io.net.IpAddress.connect(&address, io, .{ .mode = .stream });
+        errdefer tcp_stream.close(io);
 
         self.tcp_stream = tcp_stream;
         self.connected = true;
@@ -239,7 +240,7 @@ pub const GrpcClient = struct {
     /// Disconnect from the server
     pub fn disconnect(self: *Self) void {
         if (self.tcp_stream) |tcp_stream| {
-            tcp_stream.close();
+            tcp_stream.close(std.Io.Threaded.global_single_threaded.io());
             self.tcp_stream = null;
         }
         self.connected = false;
@@ -255,9 +256,14 @@ pub const GrpcClient = struct {
     /// Write all bytes to the connection.
     fn writeAll(self: *Self, data: []const u8) !void {
         if (self.tcp_stream) |tcp_stream| {
-            _ = tcp_stream.write(data) catch {
-                return GrpcError.ConnectionFailed;
-            };
+            var remaining = data;
+            while (remaining.len > 0) {
+                const n = std.posix.write(tcp_stream.socket.handle, remaining) catch {
+                    return GrpcError.ConnectionFailed;
+                };
+                if (n == 0) return GrpcError.ConnectionFailed;
+                remaining = remaining[n..];
+            }
         } else {
             return GrpcError.ConnectionFailed;
         }
@@ -269,7 +275,7 @@ pub const GrpcClient = struct {
             // Plain TCP: loop to handle partial reads
             var total: usize = 0;
             while (total < buf.len) {
-                const n = tcp_stream.read(buf[total..]) catch {
+                const n = std.posix.read(tcp_stream.socket.handle, buf[total..]) catch {
                     return GrpcError.ConnectionFailed;
                 };
                 if (n == 0) {
