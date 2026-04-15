@@ -229,6 +229,7 @@ fn decodeValue(allocator: std.mem.Allocator, data: []const u8, pos: *usize) !Val
             2 => if (tag.wire_type == WIRE_BYTES) {
                 // IntValue submessage
                 const int_data = try decodeBytesField(val_data, &val_pos);
+                val.int_val = 0;
                 var int_pos: usize = 0;
                 while (int_pos < int_data.len) {
                     const int_tag = try decodeTag(int_data, &int_pos);
@@ -242,6 +243,7 @@ fn decodeValue(allocator: std.mem.Allocator, data: []const u8, pos: *usize) !Val
             3 => if (tag.wire_type == WIRE_BYTES) {
                 // DoubleValue submessage
                 const dbl_data = try decodeBytesField(val_data, &val_pos);
+                val.double_val = 0;
                 var dbl_pos: usize = 0;
                 while (dbl_pos < dbl_data.len) {
                     const dbl_tag = try decodeTag(dbl_data, &dbl_pos);
@@ -259,20 +261,90 @@ fn decodeValue(allocator: std.mem.Allocator, data: []const u8, pos: *usize) !Val
             5 => if (tag.wire_type == WIRE_BYTES) {
                 // StringValue submessage - allocate copy to avoid dangling slice
                 const str_data = try decodeBytesField(val_data, &val_pos);
+                val.string_val = try allocator.dupe(u8, "");
                 var str_pos: usize = 0;
                 while (str_pos < str_data.len) {
                     const str_tag = try decodeTag(str_data, &str_pos);
                     if (str_tag.field_num == 1 and str_tag.wire_type == WIRE_BYTES) {
+                        if (val.string_val) |s| allocator.free(s);
                         val.string_val = try decodeString(allocator, str_data, &str_pos);
                     } else {
                         try skipField(str_data, &str_pos, str_tag.wire_type);
                     }
                 }
             } else try skipField(val_data, &val_pos, tag.wire_type),
+            6 => if (tag.wire_type == WIRE_BYTES) {
+                const dec_data = try decodeBytesField(val_data, &val_pos);
+                val.double_val = try decodeDecimalAsFloat(allocator, dec_data);
+            } else try skipField(val_data, &val_pos, tag.wire_type),
             else => try skipField(val_data, &val_pos, tag.wire_type),
         }
     }
     return val;
+}
+
+fn decodeDecimalAsFloat(allocator: std.mem.Allocator, data: []const u8) !f64 {
+    var coeff: ?[]u8 = null;
+    defer if (coeff) |buf| allocator.free(buf);
+
+    var orig_repr: ?[]u8 = null;
+    defer if (orig_repr) |buf| allocator.free(buf);
+
+    var scale: u32 = 0;
+    var pos: usize = 0;
+    while (pos < data.len) {
+        const tag = try decodeTag(data, &pos);
+        switch (tag.field_num) {
+            1 => if (tag.wire_type == WIRE_BYTES) {
+                coeff = try decodeString(allocator, data, &pos);
+            } else try skipField(data, &pos, tag.wire_type),
+            2 => if (tag.wire_type == WIRE_VARINT) {
+                scale = try decodeUint32(data, &pos);
+            } else try skipField(data, &pos, tag.wire_type),
+            3 => if (tag.wire_type == WIRE_VARINT) {
+                _ = try decodeUint32(data, &pos);
+            } else try skipField(data, &pos, tag.wire_type),
+            4 => if (tag.wire_type == WIRE_BYTES) {
+                orig_repr = try decodeString(allocator, data, &pos);
+            } else try skipField(data, &pos, tag.wire_type),
+            else => try skipField(data, &pos, tag.wire_type),
+        }
+    }
+
+    if (orig_repr) |repr| {
+        return try std.fmt.parseFloat(f64, repr);
+    }
+
+    const coeff_str = coeff orelse return 0;
+    if (scale == 0) {
+        return try std.fmt.parseFloat(f64, coeff_str);
+    }
+
+    const negative = coeff_str.len > 0 and coeff_str[0] == '-';
+    const digits = if (negative) coeff_str[1..] else coeff_str;
+    const split = if (digits.len > scale) digits.len - scale else 0;
+
+    var text = std.ArrayList(u8).initCapacity(allocator, digits.len + 4) catch return error.OutOfMemory;
+    defer text.deinit(allocator);
+
+    if (negative) {
+        try text.append(allocator, '-');
+    }
+
+    if (split == 0) {
+        try text.appendSlice(allocator, "0.");
+        const zeros = scale - @as(u32, @intCast(digits.len));
+        for (0..zeros) |_| {
+            try text.append(allocator, '0');
+        }
+        try text.appendSlice(allocator, digits);
+    } else {
+        try text.appendSlice(allocator, digits[0..split]);
+        try text.append(allocator, '.');
+        try text.appendSlice(allocator, digits[split..]);
+    }
+
+    return try std.fmt.parseFloat(f64, text.items);
 }
 
 fn decodeRow(allocator: std.mem.Allocator, data: []const u8) !Row {

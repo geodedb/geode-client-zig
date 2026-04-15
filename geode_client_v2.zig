@@ -23,6 +23,10 @@ pub const GeodeClient = struct {
     host: []const u8,
     port: u16,
     insecure: bool,
+    ca_cert_path: ?[]const u8 = null,
+    client_cert_path: ?[]const u8 = null,
+    client_key_path: ?[]const u8 = null,
+    server_name: ?[]const u8 = null,
     username: []const u8,
     password: []const u8,
     transport: Transport,
@@ -51,6 +55,8 @@ pub const GeodeClient = struct {
 
     /// Initialize a client with explicit transport selection.
     pub fn initWithTransport(allocator: std.mem.Allocator, host: []const u8, port: u16, insecure: bool, username: []const u8, password: []const u8, transport: Transport) !GeodeClient {
+        const owned_host = try allocator.dupe(u8, host);
+        errdefer allocator.free(owned_host);
         const owned_username = try allocator.dupe(u8, username);
         errdefer allocator.free(owned_username);
         const owned_password = try allocator.dupe(u8, password);
@@ -60,7 +66,7 @@ pub const GeodeClient = struct {
         }
         return .{
             .allocator = allocator,
-            .host = host,
+            .host = owned_host,
             .port = port,
             .insecure = insecure,
             .username = owned_username,
@@ -88,11 +94,28 @@ pub const GeodeClient = struct {
         if (cfg.graph) |g| {
             client.graph = try allocator.dupe(u8, g);
         }
+        if (cfg.ca_cert) |path| {
+            client.ca_cert_path = try allocator.dupe(u8, path);
+        }
+        if (cfg.client_cert) |path| {
+            client.client_cert_path = try allocator.dupe(u8, path);
+        }
+        if (cfg.client_key) |path| {
+            client.client_key_path = try allocator.dupe(u8, path);
+        }
+        if (cfg.server_name) |name| {
+            client.server_name = try allocator.dupe(u8, name);
+        }
         return client;
     }
 
     pub fn deinit(self: *GeodeClient) void {
         self.recv_buffer.deinit(self.allocator);
+
+        if (self.host.len > 0) {
+            self.allocator.free(self.host);
+            self.host = "";
+        }
 
         // Securely zero and free sensitive credentials (always owned copies)
         if (self.password.len > 0) {
@@ -125,10 +148,40 @@ pub const GeodeClient = struct {
             self.graph = null;
         }
 
-        // Clean up QUIC resources
+        if (self.ca_cert_path) |path| {
+            self.allocator.free(path);
+            self.ca_cert_path = null;
+        }
+        if (self.client_cert_path) |path| {
+            self.allocator.free(path);
+            self.client_cert_path = null;
+        }
+        if (self.client_key_path) |path| {
+            std.crypto.secureZero(u8, @constCast(path));
+            self.allocator.free(path);
+            self.client_key_path = null;
+        }
+        if (self.server_name) |name| {
+            self.allocator.free(name);
+            self.server_name = null;
+        }
+
+        // Clean up QUIC resources. Flush the endpoint after close so the server
+        // sees stream/connection shutdown instead of carrying half-dead test
+        // connections forward until idle timeout.
         if (self.conn) |c| {
+            if (self.stream_id) |sid| {
+                quic.closeStream(c, sid, 0) catch {};
+                self.stream_id = null;
+            }
+            if (self.endpoint) |ep| {
+                quic.flush(ep, 2);
+            }
             quic.closeConnection(c, 0) catch {};
-            if (self.endpoint) |ep| quic.destroy(ep, c);
+            if (self.endpoint) |ep| {
+                quic.flush(ep, 8);
+                quic.destroy(ep, c);
+            }
             self.conn = null;
         }
         if (self.endpoint) |ep| {
@@ -183,9 +236,9 @@ pub const GeodeClient = struct {
             .max_datagram_size = 1200,
             .max_idle_timeout_ms = 30000,
             .max_udp_payload = 1350,
-            .cert_path = null,
-            .key_path = null,
-            .ca_path = null,
+            .cert_path = self.client_cert_path,
+            .key_path = self.client_key_path,
+            .ca_path = self.ca_cert_path,
             .allow_insecure = self.insecure,
             .aead_confidentiality_limit_override = null,
             .aead_integrity_limit_override = null,
@@ -213,7 +266,7 @@ pub const GeodeClient = struct {
 
         // When skipping verification, empty server_name is acceptable; otherwise pass host for SNI.
         // Always provide SNI; allow_insecure disables verification when requested.
-        self.conn = try quic.connect(ep, server_addr, self.host);
+        self.conn = try quic.connect(ep, server_addr, self.server_name orelse self.host);
 
         // Wait for handshake confirmation using poll()-based blocking.
         // poll() blocks on epoll/kqueue until packets arrive, so there is no
@@ -251,6 +304,24 @@ pub const GeodeClient = struct {
 
         const sid = try quic.openStream(self.conn.?, true);
         self.stream_id = sid;
+    }
+
+    /// Close the current QUIC stream so the next send opens a fresh stream.
+    pub fn closeStream(self: *GeodeClient) void {
+        if (self.transport == .grpc) return;
+        if (self.conn) |conn| {
+            if (self.stream_id) |sid| {
+                quic.closeStream(conn, sid, 0) catch {};
+                self.stream_id = null;
+            }
+        }
+        self.recv_buffer.items.len = 0;
+        self.recv_offset = 0;
+    }
+
+    /// Expose transport polling for callers that need to drive keepalives.
+    pub fn pollTransport(self: *GeodeClient, timeout_ms: u32) void {
+        self.poll(timeout_ms);
     }
 
     fn poll(self: *GeodeClient, timeout_ms: u32) void {
@@ -329,6 +400,13 @@ pub const GeodeClient = struct {
         }
     }
 
+    /// Send an already-framed QUIC packet payload over the active QUIC stream.
+    pub fn sendRawFramed(self: *GeodeClient, data: []const u8) !void {
+        if (self.transport != .quic) return error.UnsupportedTransport;
+        if (self.stream_id == null) try self.openStream();
+        try self.writeAll(data, false);
+    }
+
     /// Receive a protobuf message with 4-byte big-endian length prefix.
     pub fn receiveProto(self: *GeodeClient, timeout_ms: u64) !proto.QuicServerMessage {
         switch (self.transport) {
@@ -340,6 +418,59 @@ pub const GeodeClient = struct {
                     return error.NotConnected;
                 }
             },
+        }
+    }
+
+    /// Receive a raw QUIC frame body (without the 4-byte length prefix).
+    pub fn receiveRawFrame(self: *GeodeClient, allocator: std.mem.Allocator, timeout_ms: u64) ![]u8 {
+        if (self.transport != .quic) return error.UnsupportedTransport;
+        const framed = try self.receiveFramedPayloadQuic(timeout_ms);
+        defer self.finishReceiveFramedPayload(framed.total_len);
+        return try allocator.dupe(u8, framed.payload);
+    }
+
+    /// Read raw bytes from the active QUIC stream without interpreting a length
+    /// prefix. This is used by administrative flows like remote backups that
+    /// switch from framed protobuf control messages to raw byte streaming.
+    pub fn receiveRawBytes(self: *GeodeClient, dest: []u8, timeout_ms: u64) !usize {
+        if (self.transport != .quic) return error.UnsupportedTransport;
+        if (self.conn == null or self.stream_id == null) return error.NoStream;
+        if (dest.len == 0) return 0;
+
+        if (self.recv_offset > self.recv_buffer.items.len / 2) {
+            self.compactRecvBuffer();
+        }
+
+        if (self.recvAvailable() > 0) {
+            const available = self.recv_buffer.items[self.recv_offset..];
+            const copied = @min(dest.len, available.len);
+            @memcpy(dest[0..copied], available[0..copied]);
+            self.recv_offset += copied;
+            if (self.recv_offset == self.recv_buffer.items.len) {
+                self.recv_buffer.items.len = 0;
+                self.recv_offset = 0;
+            }
+            return copied;
+        }
+
+        const timeout_ns: u64 = timeout_ms * std.time.ns_per_ms;
+        const start = std.time.nanoTimestamp();
+
+        while (true) {
+            const remaining = remainingMs(start, timeout_ns);
+            if (remaining == 0) return error.ReceiveTimeout;
+
+            const n = quic.readStream(self.conn.?, self.stream_id.?, dest) catch |err| switch (err) {
+                error.WouldBlock => blk: {
+                    self.poll(@min(remaining, 100));
+                    break :blk 0;
+                },
+                error.InvalidStream => return error.NoStream,
+                else => return err,
+            };
+
+            if (n > 0) return n;
+            self.poll(@min(remaining, 100));
         }
     }
 
@@ -362,6 +493,15 @@ pub const GeodeClient = struct {
 
     /// Receive a protobuf message using QUIC transport.
     fn receiveProtoQuic(self: *GeodeClient, timeout_ms: u64) !proto.QuicServerMessage {
+        const framed = try self.receiveFramedPayloadQuic(timeout_ms);
+        defer self.finishReceiveFramedPayload(framed.total_len);
+        return try proto.decodeQuicServerMessage(self.allocator, framed.payload);
+    }
+
+    fn receiveFramedPayloadQuic(self: *GeodeClient, timeout_ms: u64) !struct {
+        payload: []const u8,
+        total_len: usize,
+    } {
         if (self.conn == null or self.stream_id == null) return error.NoStream;
 
         // PERF-007: Compact only when offset exceeds half the buffer length (amortized O(1)).
@@ -440,9 +580,13 @@ pub const GeodeClient = struct {
         }
 
         // Decode the protobuf message
-        const msg_data = self.recv_buffer.items[self.recv_offset + 4 .. self.recv_offset + total_len];
-        const msg = try proto.decodeQuicServerMessage(self.allocator, msg_data);
+        return .{
+            .payload = self.recv_buffer.items[self.recv_offset + 4 .. self.recv_offset + total_len],
+            .total_len = total_len,
+        };
+    }
 
+    fn finishReceiveFramedPayload(self: *GeodeClient, total_len: usize) void {
         // PERF-007: Advance read cursor instead of shifting data.
         self.recv_offset += total_len;
 
@@ -451,8 +595,6 @@ pub const GeodeClient = struct {
             self.recv_buffer.items.len = 0;
             self.recv_offset = 0;
         }
-
-        return msg;
     }
 
     /// Attempt to read a complete buffered protobuf message without waiting for more data.
@@ -493,7 +635,7 @@ pub const GeodeClient = struct {
         try self.sendProto(msg);
 
         // Wait for hello response
-        var response = try self.receiveProto(5000);
+        var response = try self.receiveProto(30000);
         defer response.deinit(self.allocator);
         if (response.hello) |hello| {
             if (hello.success) {
@@ -541,62 +683,91 @@ pub const GeodeClient = struct {
         };
         try self.sendProto(msg);
 
-        // Receive response
-        var response = try self.receiveProto(30000);
-        defer response.deinit(self.allocator);
-        return try self.parseExecutionResponse(response);
+        var result = QueryResult{
+            .allocator = self.allocator,
+            .columns = .{},
+            .rows = .{},
+            .err = null,
+        };
+        errdefer result.deinit();
+
+        var timeout_ms: u64 = 30000;
+        while (true) {
+            var response = try self.receiveProto(timeout_ms);
+            defer response.deinit(self.allocator);
+
+            const expect_more = try self.appendQueryResponse(&result, response);
+            if (!expect_more) {
+                return result;
+            }
+
+            // Follow-up frames for the same query should already be queued or
+            // arrive quickly after the initial schema response.
+            timeout_ms = 5000;
+        }
     }
 
-    fn parseExecutionResponse(self: *GeodeClient, response: proto.QuicServerMessage) !QueryResult {
+    fn appendQueryResponse(self: *GeodeClient, result: *QueryResult, response: proto.QuicServerMessage) !bool {
         if (response.execute) |exec| {
-            if (exec.err) |err| {
-                return QueryResult{
-                    .allocator = self.allocator,
-                    .columns = .{},
-                    .rows = .{},
-                    .err = err,
-                };
+            return try self.appendExecutionResponse(result, exec);
+        }
+
+        if (response.pull) |pull| {
+            if (pull.response) |exec| {
+                return try self.appendExecutionResponse(result, exec);
             }
-
-            var result = QueryResult{
-                .allocator = self.allocator,
-                .columns = .{},
-                .rows = .{},
-                .err = null,
-            };
-
-            // Parse schema columns
-            if (exec.schema) |schema| {
-                for (schema.columns.items) |col| {
-                    try result.columns.append(self.allocator, col.name);
-                }
-            }
-
-            // Parse data page rows
-            if (exec.page) |page| {
-                for (page.rows.items) |row| {
-                    var row_values: std.ArrayListUnmanaged(proto.Value) = .{};
-                    for (row.values.items) |val| {
-                        try row_values.append(self.allocator, val);
-                    }
-                    try result.rows.append(self.allocator, row_values);
-                }
-            }
-
-            return result;
+            return false;
         }
 
         return error.InvalidResponse;
     }
 
+    fn appendExecutionResponse(self: *GeodeClient, result: *QueryResult, exec: proto.ExecutionResponse) !bool {
+        if (exec.err) |err| {
+            result.err = try copyProtoError(self.allocator, err);
+            return false;
+        }
+
+        if (exec.schema) |schema| {
+            for (schema.columns.items) |col| {
+                try result.columns.append(self.allocator, try self.allocator.dupe(u8, col.name));
+            }
+        }
+
+        if (exec.page) |page| {
+            for (page.rows.items) |row| {
+                var row_values: std.ArrayListUnmanaged(proto.Value) = .{};
+                errdefer {
+                    for (row_values.items) |*value| {
+                        value.deinit(self.allocator);
+                    }
+                    row_values.deinit(self.allocator);
+                }
+
+                for (row.values.items) |val| {
+                    try row_values.append(self.allocator, try copyValue(self.allocator, val));
+                }
+                try result.rows.append(self.allocator, row_values);
+            }
+            return !page.final;
+        }
+
+        // Status-only responses (e.g. CREATE/UPDATE) complete on the first
+        // frame. A schema-only response expects at least one follow-up page.
+        return exec.schema != null;
+    }
+
     /// Begin a transaction.
     pub fn begin(self: *GeodeClient) ![]const u8 {
         const msg = proto.QuicClientMessage{
-            .begin = proto.BeginRequest{ .read_only = false },
+            .begin = proto.BeginRequest{
+                .read_only = false,
+                .session_id = self.session_id,
+            },
         };
         try self.sendProto(msg);
 
-        var response = try self.receiveProto(5000);
+        var response = try self.receiveProto(30000);
         defer response.deinit(self.allocator);
         if (response.begin) |begin_resp| {
             if (begin_resp.tx_id.len > 0) {
@@ -609,11 +780,11 @@ pub const GeodeClient = struct {
     /// Commit the current transaction.
     pub fn commit(self: *GeodeClient) !void {
         const msg = proto.QuicClientMessage{
-            .commit = proto.CommitRequest{},
+            .commit = proto.CommitRequest{ .session_id = self.session_id },
         };
         try self.sendProto(msg);
 
-        var response = try self.receiveProto(5000);
+        var response = try self.receiveProto(30000);
         defer response.deinit(self.allocator);
         if (response.commit) |commit_resp| {
             if (!commit_resp.success) {
@@ -627,11 +798,11 @@ pub const GeodeClient = struct {
     /// Rollback the current transaction.
     pub fn rollback(self: *GeodeClient) !void {
         const msg = proto.QuicClientMessage{
-            .rollback = proto.RollbackRequest{},
+            .rollback = proto.RollbackRequest{ .session_id = self.session_id },
         };
         try self.sendProto(msg);
 
-        var response = try self.receiveProto(5000);
+        var response = try self.receiveProto(30000);
         defer response.deinit(self.allocator);
         if (response.rollback) |rollback_resp| {
             if (!rollback_resp.success) {
@@ -649,7 +820,7 @@ pub const GeodeClient = struct {
         };
         try self.sendProto(msg);
 
-        var response = try self.receiveProto(5000);
+        var response = try self.receiveProto(30000);
         defer response.deinit(self.allocator);
         if (response.ping) |ping_resp| {
             return ping_resp.ok;
@@ -667,10 +838,19 @@ pub const QueryResult = struct {
 
     pub fn deinit(self: *QueryResult) void {
         for (self.rows.items) |*row| {
+            for (row.items) |*value| {
+                value.deinit(self.allocator);
+            }
             row.deinit(self.allocator);
         }
         self.rows.deinit(self.allocator);
+        for (self.columns.items) |col| {
+            self.allocator.free(col);
+        }
         self.columns.deinit(self.allocator);
+        if (self.err) |*err| {
+            err.deinit(self.allocator);
+        }
     }
 
     pub fn hasError(self: *const QueryResult) bool {
@@ -684,6 +864,23 @@ pub const QueryResult = struct {
         return null;
     }
 };
+
+fn copyValue(allocator: std.mem.Allocator, value: proto.Value) !proto.Value {
+    var copy = value;
+    if (value.string_val) |s| {
+        copy.string_val = try allocator.dupe(u8, s);
+    }
+    return copy;
+}
+
+fn copyProtoError(allocator: std.mem.Allocator, err: proto.ProtoError) !proto.ProtoError {
+    return .{
+        .code = try allocator.dupe(u8, err.code),
+        .message = try allocator.dupe(u8, err.message),
+        .error_type = try allocator.dupe(u8, err.error_type),
+        .anchor = try allocator.dupe(u8, err.anchor),
+    };
+}
 
 /// Helper function to execute a query.
 /// Opens a connection, sends HELLO, executes the query, and returns the result.

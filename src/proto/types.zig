@@ -49,6 +49,9 @@ pub const HelloResponse = struct {
         if (self.error_message.len > 0) {
             allocator.free(self.error_message);
         }
+        if (self.graph) |graph| {
+            allocator.free(graph);
+        }
     }
 };
 
@@ -85,12 +88,20 @@ pub const PullRequest = struct {
 pub const ColumnDefinition = struct {
     name: []const u8 = "",
     col_type: []const u8 = "",
+
+    pub fn deinit(self: *ColumnDefinition, allocator: std.mem.Allocator) void {
+        if (self.name.len > 0) allocator.free(self.name);
+        if (self.col_type.len > 0) allocator.free(self.col_type);
+    }
 };
 
 pub const SchemaDefinition = struct {
     columns: std.ArrayListUnmanaged(ColumnDefinition) = .{},
 
     pub fn deinit(self: *SchemaDefinition, allocator: std.mem.Allocator) void {
+        for (self.columns.items) |*col| {
+            col.deinit(allocator);
+        }
         self.columns.deinit(allocator);
     }
 };
@@ -147,12 +158,22 @@ pub const Value = struct {
     pub fn isString(self: Value) bool {
         return self.string_val != null;
     }
+
+    pub fn deinit(self: *Value, allocator: std.mem.Allocator) void {
+        if (self.string_val) |s| {
+            allocator.free(s);
+            self.string_val = null;
+        }
+    }
 };
 
 pub const Row = struct {
     values: std.ArrayListUnmanaged(Value) = .{},
 
     pub fn deinit(self: *Row, allocator: std.mem.Allocator) void {
+        for (self.values.items) |*value| {
+            value.deinit(allocator);
+        }
         self.values.deinit(allocator);
     }
 };
@@ -182,6 +203,13 @@ pub const ProtoError = struct {
     message: []const u8 = "",
     error_type: []const u8 = "",
     anchor: []const u8 = "",
+
+    pub fn deinit(self: *ProtoError, allocator: std.mem.Allocator) void {
+        if (self.code.len > 0) allocator.free(self.code);
+        if (self.message.len > 0) allocator.free(self.message);
+        if (self.error_type.len > 0) allocator.free(self.error_type);
+        if (self.anchor.len > 0) allocator.free(self.anchor);
+    }
 };
 
 pub const Status = struct {
@@ -191,7 +219,15 @@ pub const Status = struct {
     flagger_findings: std.ArrayListUnmanaged([]const u8) = .{},
 
     pub fn deinit(self: *Status, allocator: std.mem.Allocator) void {
+        if (self.status_class.len > 0) allocator.free(self.status_class);
+        if (self.status_subclass.len > 0) allocator.free(self.status_subclass);
+        for (self.additional_statuses.items) |status| {
+            allocator.free(status);
+        }
         self.additional_statuses.deinit(allocator);
+        for (self.flagger_findings.items) |finding| {
+            allocator.free(finding);
+        }
         self.flagger_findings.deinit(allocator);
     }
 };
@@ -214,11 +250,16 @@ pub const ExecutionResponse = struct {
         if (self.status) |*s| s.deinit(allocator);
         if (self.schema) |*s| s.deinit(allocator);
         if (self.page) |*p| p.deinit(allocator);
+        if (self.err) |*e| e.deinit(allocator);
     }
 };
 
 pub const PullResponse = struct {
     response: ?ExecutionResponse = null,
+
+    pub fn deinit(self: *PullResponse, allocator: std.mem.Allocator) void {
+        if (self.response) |*response| response.deinit(allocator);
+    }
 };
 
 pub const PingRequest = struct {};
@@ -234,6 +275,11 @@ pub const BeginRequest = struct {
 pub const BeginResponse = struct {
     session_id: []const u8 = "",
     tx_id: []const u8 = "",
+
+    pub fn deinit(self: *BeginResponse, allocator: std.mem.Allocator) void {
+        if (self.session_id.len > 0) allocator.free(self.session_id);
+        if (self.tx_id.len > 0) allocator.free(self.tx_id);
+    }
 };
 
 pub const CommitRequest = struct {
@@ -298,6 +344,8 @@ pub const QuicServerMessage = struct {
     pub fn deinit(self: *QuicServerMessage, allocator: std.mem.Allocator) void {
         if (self.hello) |*h| h.deinit(allocator);
         if (self.execute) |*e| e.deinit(allocator);
+        if (self.pull) |*pull| pull.deinit(allocator);
+        if (self.begin) |*begin| begin.deinit(allocator);
     }
 };
 

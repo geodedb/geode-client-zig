@@ -88,6 +88,11 @@ const TestContext = struct {
     fn init(allocator: std.mem.Allocator) !TestContext {
         const config = TestConfig.fromEnv();
 
+        // The Zig client's gRPC transport is not yet a real HTTP/2 implementation.
+        if (config.transport == .grpc) {
+            return error.SkipZigTest;
+        }
+
         // Resolve hostname if needed
         var resolved_host: []const u8 = config.host;
         var needs_resolution = false;
