@@ -2,16 +2,16 @@ const std = @import("std");
 
 /// Link system libraries required by QUIC/TLS transport.
 fn linkSystemDeps(step: *std.Build.Step.Compile, target: std.Build.ResolvedTarget) void {
-    step.linkLibC();
+    step.root_module.link_libc = true;
     if (target.result.os.tag != .windows) {
-        step.linkSystemLibrary("ssl");
-        step.linkSystemLibrary("crypto");
+        step.root_module.linkSystemLibrary("ssl", .{});
+        step.root_module.linkSystemLibrary("crypto", .{});
     }
     if (target.result.os.tag == .linux) {
-        step.linkSystemLibrary("dl");
+        step.root_module.linkSystemLibrary("dl", .{});
     }
     if (target.result.os.tag == .windows) {
-        step.linkSystemLibrary("ws2_32");
+        step.root_module.linkSystemLibrary("ws2_32", .{});
     }
 }
 
