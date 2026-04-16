@@ -20,8 +20,8 @@
 
         // QUIC v1/v2 protocol implementation (RFC 9000) - primary transport
         .quic = .{
-            .url = "git+https://gitlab.com/devnw/zig/quic.git#948f001b955da7c277742bd28a0312ac8d5656ca",
-            .hash = "quic-0.1.11-gBIqUVY0NgCb-Uc5VXaQY5fnUDcs4ZWS7GiQod99bdio",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git#22f46c83a74492aa6220abec85290f245653348c",
+            .hash = "quic-0.1.11-gBIqUVY0NgDB9OBmTs44O8EGHSh9vQYZiCRRXL1jWmT2",
         },
         // TLS 1.3 library for QUIC
         .tls = .{
