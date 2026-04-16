@@ -34,8 +34,8 @@
 
         // DNS resolution - RFC 1035 compliant with caching and DoT/DoH/DoQ
         .dns = .{
-            .url = "git+https://gitlab.com/devnw/zig/dns.git#394883190e2b0eab326b8a12f78f8a2a971518c7",
-            .hash = "dns-0.1.0-x4U-zalRDAB_AzP3BWzD_pFniX_3vYu6MNffJgv7uYPg",
+            .url = "git+https://gitlab.com/devnw/zig/dns.git#16d46e6dfb2f6832dc2b18f4b391abefcb9113c2",
+            .hash = "dns-0.1.0-x4U-zWrTEACPWb8pOxs1aVVNJjhc3-EpiS9w9ISCJTBM",
         },
         // JSON parser/encoder - RFC 8259 compliant
         .json = .{
