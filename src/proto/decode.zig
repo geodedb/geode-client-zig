@@ -665,22 +665,38 @@ test "decodeString rejects oversized string field" {
     // Craft a varint encoding of MAX_STRING_FIELD_SIZE + 1
     const oversized_len: u64 = MAX_STRING_FIELD_SIZE + 1;
     var len_buf: [10]u8 = undefined;
-    var len_fbs = std.Io.fixedBufferStream(&len_buf);
-    encode.encodeVarint(len_fbs.writer(), oversized_len) catch unreachable;
-    const varint_bytes = len_fbs.getWritten();
+    var len_w = std.Io.Writer.fixed(&len_buf);
+    encode.encodeVarint(&len_w, oversized_len) catch unreachable;
+    const varint_bytes = len_w.buffered();
 
     var pos: usize = 0;
     const result = decodeString(std.testing.allocator, varint_bytes, &pos);
     try std.testing.expectError(error.StringTooLarge, result);
 }
 
+/// Minimal writer adapter for `std.ArrayListUnmanaged(u8)` used by tests.
+/// Mirrors the adapter in encode.zig: `ArrayList.writer()` was removed in
+/// Zig 0.16, so we expose `writeByte` and `writeAll` directly.
+const TestListWriter = struct {
+    buf: *std.ArrayListUnmanaged(u8),
+    allocator: std.mem.Allocator,
+
+    pub fn writeByte(self: TestListWriter, byte: u8) !void {
+        try self.buf.append(self.allocator, byte);
+    }
+
+    pub fn writeAll(self: TestListWriter, bytes: []const u8) !void {
+        try self.buf.appendSlice(self.allocator, bytes);
+    }
+};
+
 test "decodeDataPage rejects too many rows" {
     // Build a protobuf payload with MAX_ROWS_PER_PAGE + 1 row fields.
     // Each row is an empty submessage: tag(field=1, wire=WIRE_BYTES) + varint(0).
     const allocator = std.testing.allocator;
-    var buf: std.ArrayListUnmanaged(u8) = .{};
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
     defer buf.deinit(allocator);
-    const writer = buf.writer(allocator);
+    const writer = TestListWriter{ .buf = &buf, .allocator = allocator };
 
     // Each empty row: tag byte 0x0A (field 1, wire type 2) + length 0
     const row_count = MAX_ROWS_PER_PAGE + 1;

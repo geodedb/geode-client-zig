@@ -26,6 +26,47 @@ const Param = types.Param;
 const Value = types.Value;
 
 // =============================================================================
+// ArrayList writer adapter (Zig 0.16: ArrayList no longer has .writer())
+// =============================================================================
+
+/// Minimal writer adapter for `std.ArrayListUnmanaged(u8)`.
+///
+/// In Zig 0.16, `std.ArrayList.writer()` was removed. The generic encoding
+/// helpers in this file use `writer: anytype`, so we just need a tiny type
+/// that exposes `writeByte`, `writeAll`, and `print` to satisfy duck-typing.
+///
+/// The adapter holds a pointer to the underlying list plus the allocator.
+/// Operations append directly to the list; the list's `items.len` continues
+/// to reflect the encoded byte count for callers that use backpatching.
+const ArrayListWriter = struct {
+    buf: *std.ArrayListUnmanaged(u8),
+    allocator: std.mem.Allocator,
+
+    pub fn writeByte(self: ArrayListWriter, byte: u8) !void {
+        try self.buf.append(self.allocator, byte);
+    }
+
+    pub fn writeAll(self: ArrayListWriter, bytes: []const u8) !void {
+        try self.buf.appendSlice(self.allocator, bytes);
+    }
+
+    pub fn print(self: ArrayListWriter, comptime fmt: []const u8, args: anytype) !void {
+        // Route formatted output through a temporary std.Io.Writer.Allocating
+        // would reallocate; instead, size the formatted output and append.
+        const needed = std.fmt.count(fmt, args);
+        try self.buf.ensureUnusedCapacity(self.allocator, needed);
+        const start = self.buf.items.len;
+        self.buf.items.len = start + needed;
+        var fw = std.Io.Writer.fixed(self.buf.items[start..]);
+        try fw.print(fmt, args);
+    }
+};
+
+fn arrayListWriter(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator) ArrayListWriter {
+    return .{ .buf = buf, .allocator = allocator };
+}
+
+// =============================================================================
 // Encoding helpers (low-level protobuf primitives)
 // =============================================================================
 
@@ -100,12 +141,11 @@ const LEAF_SUBMESSAGE_STACK_BUF_SIZE = 32;
 /// where the encoded size is bounded and small.
 fn writeLeafSubmessage(writer: anytype, field_num: u32, encode_fn: anytype, args: anytype) !void {
     var stack_buf: [LEAF_SUBMESSAGE_STACK_BUF_SIZE]u8 = undefined;
-    var fbs = std.Io.fixedBufferStream(&stack_buf);
-    const sub_writer = fbs.writer();
+    var sub_writer = std.Io.Writer.fixed(&stack_buf);
 
-    try @call(.auto, encode_fn, .{sub_writer} ++ args);
+    try @call(.auto, encode_fn, .{&sub_writer} ++ args);
 
-    const sub_data = fbs.getWritten();
+    const sub_data = sub_writer.buffered();
     if (sub_data.len == 0) return;
 
     try encodeTag(writer, field_num, WIRE_BYTES);
@@ -131,7 +171,7 @@ fn writeSubmessageToList(
     // Record starting position before we write anything
     const start_pos = buf.items.len;
 
-    const writer = buf.writer(allocator);
+    const writer = arrayListWriter(buf, allocator);
 
     // Write the tag
     try encodeTag(writer, field_num, WIRE_BYTES);
@@ -156,18 +196,19 @@ fn writeSubmessageToList(
 
     // Compute actual varint length encoding
     var varint_buf: [5]u8 = undefined;
-    var varint_fbs = std.Io.fixedBufferStream(&varint_buf);
-    encodeVarint(varint_fbs.writer(), data_len) catch unreachable;
-    const varint_len = varint_fbs.getWritten().len;
+    var varint_w = std.Io.Writer.fixed(&varint_buf);
+    encodeVarint(&varint_w, data_len) catch unreachable;
+    const varint_written = varint_w.buffered();
+    const varint_len = varint_written.len;
 
     if (varint_len == 5) {
         // Perfect fit, just overwrite the reserved bytes
-        @memcpy(buf.items[len_pos..][0..5], varint_fbs.getWritten());
+        @memcpy(buf.items[len_pos..][0..5], varint_written);
     } else {
         // Need to shift data left to close the gap
         const gap = 5 - varint_len;
         // Write the actual varint at len_pos
-        @memcpy(buf.items[len_pos..][0..varint_len], varint_fbs.getWritten());
+        @memcpy(buf.items[len_pos..][0..varint_len], varint_written);
         // Shift the data left by 'gap' bytes
         const dest_start = len_pos + varint_len;
         std.mem.copyForwards(u8, buf.items[dest_start..], buf.items[data_start..buf.items.len]);
@@ -176,7 +217,7 @@ fn writeSubmessageToList(
 }
 
 fn writeValueTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, val: Value) !void {
-    const writer = buf.writer(allocator);
+    const writer = arrayListWriter(buf, allocator);
     // Value uses oneof, so only one field should be set
     if (val.null_val) {
         // NullValue is an empty message, encode as field 1
@@ -201,16 +242,17 @@ fn writeValueTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, 
         // For field 1 with WIRE_BYTES, the tag is always 1 byte (0x0A).
         // Varint of s.len is 1-5 bytes. Total inner = 1 + varint_len(s.len) + s.len.
         var inner_len_buf: [5]u8 = undefined;
-        var inner_len_fbs = std.Io.fixedBufferStream(&inner_len_buf);
-        encodeVarint(inner_len_fbs.writer(), s.len) catch unreachable;
-        const str_varint_len = inner_len_fbs.getWritten().len;
+        var inner_len_w = std.Io.Writer.fixed(&inner_len_buf);
+        encodeVarint(&inner_len_w, s.len) catch unreachable;
+        const inner_len_written = inner_len_w.buffered();
+        const str_varint_len = inner_len_written.len;
         const inner_total = 1 + str_varint_len + s.len; // tag + varint + data
 
         try encodeTag(writer, 5, WIRE_BYTES);
         try encodeVarint(writer, inner_total);
         // Inner: field 1, WIRE_BYTES
         try writer.writeByte(0x0A); // tag for field 1, wire type 2
-        try writer.writeAll(inner_len_fbs.getWritten());
+        try writer.writeAll(inner_len_written);
         try writer.writeAll(s);
     }
 }
@@ -224,14 +266,14 @@ fn writeDoubleValue(writer: anytype, val: f64) !void {
 }
 
 fn writeParamTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, param: Param) !void {
-    const writer = buf.writer(allocator);
+    const writer = arrayListWriter(buf, allocator);
     try encodeString(writer, 1, param.name);
     // Encode value as submessage via backpatch
     try writeSubmessageToList(buf, allocator, 2, writeValueTo, .{param.value});
 }
 
 fn writeHelloRequestTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, req: HelloRequest) !void {
-    const writer = buf.writer(allocator);
+    const writer = arrayListWriter(buf, allocator);
     try encodeString(writer, 1, req.username);
     try encodeString(writer, 2, req.password);
     if (req.tenant_id) |tid| {
@@ -243,7 +285,7 @@ fn writeHelloRequestTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allo
 }
 
 fn writeExecuteRequestTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, req: ExecuteRequest) !void {
-    const writer = buf.writer(allocator);
+    const writer = arrayListWriter(buf, allocator);
     try encodeString(writer, 1, req.session_id);
     try encodeString(writer, 2, req.query);
 
@@ -254,19 +296,19 @@ fn writeExecuteRequestTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Al
 
     // Encode optional request_id for request tracing
     if (req.request_id.len > 0) {
-        try encodeString(buf.writer(allocator), 4, req.request_id);
+        try encodeString(arrayListWriter(buf, allocator), 4, req.request_id);
     }
 }
 
 fn writePullRequestTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, req: PullRequest) !void {
-    const writer = buf.writer(allocator);
+    const writer = arrayListWriter(buf, allocator);
     try encodeUint64(writer, 1, req.request_id);
     try encodeUint32(writer, 2, req.page_size);
     try encodeString(writer, 3, req.session_id);
 }
 
 fn writeBeginRequestTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, req: BeginRequest) !void {
-    const writer = buf.writer(allocator);
+    const writer = arrayListWriter(buf, allocator);
     try encodeBool(writer, 1, req.read_only);
     try encodeString(writer, 2, req.session_id);
 }
@@ -274,7 +316,7 @@ fn writeBeginRequestTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allo
 /// Shared encoder for messages with up to two string fields.
 /// field1 is encoded as protobuf field 1, field2 (if non-empty) as field 2.
 fn writeTwoStringFieldsTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, field1: []const u8, field2: []const u8) !void {
-    const writer = buf.writer(allocator);
+    const writer = arrayListWriter(buf, allocator);
     try encodeString(writer, 1, field1);
     try encodeString(writer, 2, field2);
 }
@@ -315,7 +357,7 @@ fn writeQuicClientMessageToList(buf: *std.ArrayListUnmanaged(u8), allocator: std
         // Ping is an empty submessage. Write tag + zero length to indicate
         // the field is present in the oneof. The server detects ping by the
         // presence of field 4 in QuicClientMessage.
-        const writer = buf.writer(allocator);
+        const writer = arrayListWriter(buf, allocator);
         try encodeTag(writer, 4, WIRE_BYTES);
         try encodeVarint(writer, 0);
     }
@@ -375,16 +417,16 @@ pub fn encodeWithLengthPrefix(allocator: std.mem.Allocator, msg: QuicClientMessa
 
 test "encodeVarint encodes small values" {
     var buf: [16]u8 = undefined;
-    var fbs = std.Io.fixedBufferStream(&buf);
-    try encodeVarint(fbs.writer(), 1);
-    try std.testing.expectEqualSlices(u8, &[_]u8{0x01}, fbs.getWritten());
+    var w = std.Io.Writer.fixed(&buf);
+    try encodeVarint(&w, 1);
+    try std.testing.expectEqualSlices(u8, &[_]u8{0x01}, w.buffered());
 }
 
 test "encodeVarint encodes large values" {
     var buf: [16]u8 = undefined;
-    var fbs = std.Io.fixedBufferStream(&buf);
-    try encodeVarint(fbs.writer(), 300);
-    try std.testing.expectEqualSlices(u8, &[_]u8{ 0xAC, 0x02 }, fbs.getWritten());
+    var w = std.Io.Writer.fixed(&buf);
+    try encodeVarint(&w, 300);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0xAC, 0x02 }, w.buffered());
 }
 
 test "HelloRequest encodes with all fields" {

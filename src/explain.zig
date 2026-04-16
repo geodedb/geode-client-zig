@@ -332,10 +332,10 @@ test "QueryProfile format" {
     profile.rows_returned = 100;
 
     var buf: [1024]u8 = undefined;
-    var stream = std.Io.fixedBufferStream(&buf);
-    try profile.format(stream.writer());
+    var stream = std.Io.Writer.fixed(&buf);
+    try profile.format(&stream);
 
-    const output = stream.getWritten();
+    const output = stream.buffered();
     try std.testing.expect(std.mem.indexOf(u8, output, "Query Profile for:") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "Total Time:") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "Rows Returned: 100") != null);
