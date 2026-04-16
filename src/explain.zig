@@ -332,7 +332,7 @@ test "QueryProfile format" {
     profile.rows_returned = 100;
 
     var buf: [1024]u8 = undefined;
-    var stream = std.io.fixedBufferStream(&buf);
+    var stream = std.Io.fixedBufferStream(&buf);
     try profile.format(stream.writer());
 
     const output = stream.getWritten();

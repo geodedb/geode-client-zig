@@ -7,7 +7,7 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     // Read server address from environment, with defaults
-    const env_server = std.posix.getenv("GEODE_SERVER") orelse "127.0.0.1:8443";
+    const env_server = if (std.c.getenv("GEODE_SERVER")) |v| std.mem.span(v) else null orelse "127.0.0.1:8443";
     var host: []const u8 = "127.0.0.1";
     var port: u16 = 8443;
 
@@ -19,9 +19,9 @@ pub fn main() !void {
         host = env_server;
     }
 
-    const insecure = std.posix.getenv("GEODE_INSECURE") != null;
-    const username = std.posix.getenv("GEODE_USER") orelse "";
-    const password = std.posix.getenv("GEODE_PASSWORD") orelse "";
+    const insecure = if (std.c.getenv("GEODE_INSECURE")) |v| std.mem.span(v) else null != null;
+    const username = if (std.c.getenv("GEODE_USER")) |v| std.mem.span(v) else null orelse "";
+    const password = if (std.c.getenv("GEODE_PASSWORD")) |v| std.mem.span(v) else null orelse "";
 
     // Resolve hostname to IP address if needed (QUIC library requires numeric IP)
     var resolved_host: []const u8 = host;

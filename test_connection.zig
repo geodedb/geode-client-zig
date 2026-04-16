@@ -9,8 +9,8 @@ pub fn main() !void {
     std.debug.print("Creating Geode client...\n", .{});
     var host: []const u8 = "127.0.0.1";
     var port: u16 = 3141;
-    const username: []const u8 = std.posix.getenv("GEODE_USER") orelse "";
-    const password: []const u8 = std.posix.getenv("GEODE_PASSWORD") orelse "";
+    const username: []const u8 = if (std.c.getenv("GEODE_USER")) |v| std.mem.span(v) else null orelse "";
+    const password: []const u8 = if (std.c.getenv("GEODE_PASSWORD")) |v| std.mem.span(v) else null orelse "";
 
     if (std.process.getEnvVarOwned(allocator, "GEODE_SERVER")) |env_addr| {
         defer allocator.free(env_addr);

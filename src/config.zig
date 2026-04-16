@@ -526,7 +526,7 @@ fn urlDecode(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
         return error.InputTooLong;
     }
 
-    var result: std.ArrayListUnmanaged(u8) = .{};
+    var result: std.ArrayListUnmanaged(u8) = .empty;
     errdefer result.deinit(allocator);
 
     var i: usize = 0;

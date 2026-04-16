@@ -100,7 +100,7 @@ const LEAF_SUBMESSAGE_STACK_BUF_SIZE = 32;
 /// where the encoded size is bounded and small.
 fn writeLeafSubmessage(writer: anytype, field_num: u32, encode_fn: anytype, args: anytype) !void {
     var stack_buf: [LEAF_SUBMESSAGE_STACK_BUF_SIZE]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&stack_buf);
+    var fbs = std.Io.fixedBufferStream(&stack_buf);
     const sub_writer = fbs.writer();
 
     try @call(.auto, encode_fn, .{sub_writer} ++ args);
@@ -156,7 +156,7 @@ fn writeSubmessageToList(
 
     // Compute actual varint length encoding
     var varint_buf: [5]u8 = undefined;
-    var varint_fbs = std.io.fixedBufferStream(&varint_buf);
+    var varint_fbs = std.Io.fixedBufferStream(&varint_buf);
     encodeVarint(varint_fbs.writer(), data_len) catch unreachable;
     const varint_len = varint_fbs.getWritten().len;
 
@@ -201,7 +201,7 @@ fn writeValueTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, 
         // For field 1 with WIRE_BYTES, the tag is always 1 byte (0x0A).
         // Varint of s.len is 1-5 bytes. Total inner = 1 + varint_len(s.len) + s.len.
         var inner_len_buf: [5]u8 = undefined;
-        var inner_len_fbs = std.io.fixedBufferStream(&inner_len_buf);
+        var inner_len_fbs = std.Io.fixedBufferStream(&inner_len_buf);
         encodeVarint(inner_len_fbs.writer(), s.len) catch unreachable;
         const str_varint_len = inner_len_fbs.getWritten().len;
         const inner_total = 1 + str_varint_len + s.len; // tag + varint + data
@@ -375,14 +375,14 @@ pub fn encodeWithLengthPrefix(allocator: std.mem.Allocator, msg: QuicClientMessa
 
 test "encodeVarint encodes small values" {
     var buf: [16]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
+    var fbs = std.Io.fixedBufferStream(&buf);
     try encodeVarint(fbs.writer(), 1);
     try std.testing.expectEqualSlices(u8, &[_]u8{0x01}, fbs.getWritten());
 }
 
 test "encodeVarint encodes large values" {
     var buf: [16]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
+    var fbs = std.Io.fixedBufferStream(&buf);
     try encodeVarint(fbs.writer(), 300);
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0xAC, 0x02 }, fbs.getWritten());
 }

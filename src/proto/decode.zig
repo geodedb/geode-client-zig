@@ -665,7 +665,7 @@ test "decodeString rejects oversized string field" {
     // Craft a varint encoding of MAX_STRING_FIELD_SIZE + 1
     const oversized_len: u64 = MAX_STRING_FIELD_SIZE + 1;
     var len_buf: [10]u8 = undefined;
-    var len_fbs = std.io.fixedBufferStream(&len_buf);
+    var len_fbs = std.Io.fixedBufferStream(&len_buf);
     encode.encodeVarint(len_fbs.writer(), oversized_len) catch unreachable;
     const varint_bytes = len_fbs.getWritten();
 

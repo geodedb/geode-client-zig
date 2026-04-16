@@ -14,7 +14,7 @@ pub fn main() !void {
     var fba = std.heap.FixedBufferAllocator.init(&buffer);
     const allocator = fba.allocator();
 
-    const stdin = std.io.getStdIn();
+    const stdin = std.Io.getStdIn();
     const input = stdin.readToEndAlloc(allocator, 1024 * 1024) catch return;
 
     // Try to parse as JSON and convert to Value
@@ -141,7 +141,7 @@ test "property: date formatting is consistent" {
     for (dates) |d| {
         const date = Value.Date.init(d.year, d.month, d.day);
         var buf: [16]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
+        var fbs = std.Io.fixedBufferStream(&buf);
         date.format("", .{}, fbs.writer()) catch unreachable;
         try std.testing.expectEqualStrings(d.expected, fbs.getWritten());
     }
@@ -157,7 +157,7 @@ test "property: time formatting is consistent" {
     for (times) |t| {
         const time = Value.Time.init(t.hour, t.minute, t.second);
         var buf: [32]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
+        var fbs = std.Io.fixedBufferStream(&buf);
         time.format("", .{}, fbs.writer()) catch unreachable;
         try std.testing.expectEqualStrings(t.expected, fbs.getWritten());
     }

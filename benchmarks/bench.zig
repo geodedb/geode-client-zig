@@ -645,7 +645,7 @@ fn benchValidateSanitize(allocator: std.mem.Allocator) void {
 fn benchDateFormat() void {
     const d = Value.Date.init(2025, 1, 24);
     var buf: [16]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
+    var fbs = std.Io.fixedBufferStream(&buf);
     d.format("", .{}, fbs.writer()) catch unreachable;
     std.mem.doNotOptimizeAway(&buf);
 }
@@ -653,7 +653,7 @@ fn benchDateFormat() void {
 fn benchTimeFormat() void {
     const t = Value.Time.withNanos(14, 30, 45, 123456789);
     var buf: [32]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
+    var fbs = std.Io.fixedBufferStream(&buf);
     t.format("", .{}, fbs.writer()) catch unreachable;
     std.mem.doNotOptimizeAway(&buf);
 }
@@ -664,7 +664,7 @@ fn benchTimestampFormat() void {
         Value.Time.withNanos(14, 30, 45, 123456789),
     );
     var buf: [48]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
+    var fbs = std.Io.fixedBufferStream(&buf);
     ts.format("", .{}, fbs.writer()) catch unreachable;
     std.mem.doNotOptimizeAway(&buf);
 }

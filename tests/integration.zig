@@ -36,21 +36,21 @@ const TestConfig = struct {
 
     fn fromEnv() TestConfig {
         // Determine transport first (affects default port)
-        const transport_env = std.posix.getenv("GEODE_TRANSPORT");
+        const transport_env = if (std.c.getenv("GEODE_TRANSPORT")) |v| std.mem.span(v) else null;
         const transport: Transport = if (transport_env) |t|
             Transport.fromString(t) orelse .quic
         else
             .quic;
 
         const default_port: u16 = transport.defaultPort();
-        const server = std.posix.getenv("GEODE_SERVER") orelse blk: {
+        const server = if (std.c.getenv("GEODE_SERVER")) |v| std.mem.span(v) else null orelse blk: {
             break :blk if (transport == .grpc) "127.0.0.1:50051" else "127.0.0.1:3141";
         };
-        const insecure = std.posix.getenv("GEODE_INSECURE") != null;
-        const username = std.posix.getenv("GEODE_USERNAME") orelse std.posix.getenv("GEODE_USER") orelse "geode";
-        const password = std.posix.getenv("GEODE_PASSWORD") orelse
-            std.posix.getenv("GEODE_DEFAULT_PASSWORD") orelse
-            std.posix.getenv("GEODE_ADMIN_PASSWORD") orelse
+        const insecure = if (std.c.getenv("GEODE_INSECURE")) |v| std.mem.span(v) else null != null;
+        const username = if (std.c.getenv("GEODE_USERNAME")) |v| std.mem.span(v) else null orelse if (std.c.getenv("GEODE_USER")) |v| std.mem.span(v) else null orelse "geode";
+        const password = if (std.c.getenv("GEODE_PASSWORD")) |v| std.mem.span(v) else null orelse
+            if (std.c.getenv("GEODE_DEFAULT_PASSWORD")) |v| std.mem.span(v) else null orelse
+            if (std.c.getenv("GEODE_ADMIN_PASSWORD")) |v| std.mem.span(v) else null orelse
             "GeodeTestPassword123!";
 
         var host: []const u8 = "127.0.0.1";

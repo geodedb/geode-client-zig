@@ -10,7 +10,7 @@ pub fn main() !void {
     std.debug.print("=========================\n\n", .{});
 
     // Parse command line args
-    var args = try std.process.argsWithAllocator(allocator);
+    var args = try std.process.Args.Iterator.initAllocator(allocator);
     defer args.deinit();
 
     _ = args.skip(); // Skip program name

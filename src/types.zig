@@ -639,21 +639,21 @@ pub const Value = union(enum) {
             },
             .date => |d| blk: {
                 var buf: [16]u8 = undefined;
-                var fbs = std.io.fixedBufferStream(&buf);
+                var fbs = std.Io.fixedBufferStream(&buf);
                 d.format("", .{}, fbs.writer()) catch unreachable;
                 const str = try allocator.dupe(u8, fbs.getWritten());
                 break :blk std.json.Value{ .string = str };
             },
             .time => |t| blk: {
                 var buf: [32]u8 = undefined;
-                var fbs = std.io.fixedBufferStream(&buf);
+                var fbs = std.Io.fixedBufferStream(&buf);
                 t.format("", .{}, fbs.writer()) catch unreachable;
                 const str = try allocator.dupe(u8, fbs.getWritten());
                 break :blk std.json.Value{ .string = str };
             },
             .timestamp => |ts| blk: {
                 var buf: [48]u8 = undefined;
-                var fbs = std.io.fixedBufferStream(&buf);
+                var fbs = std.Io.fixedBufferStream(&buf);
                 ts.format("", .{}, fbs.writer()) catch unreachable;
                 const str = try allocator.dupe(u8, fbs.getWritten());
                 break :blk std.json.Value{ .string = str };
@@ -667,21 +667,21 @@ pub const Value = union(enum) {
             },
             .point => |p| blk: {
                 var buf: [64]u8 = undefined;
-                var fbs = std.io.fixedBufferStream(&buf);
+                var fbs = std.Io.fixedBufferStream(&buf);
                 p.format("", .{}, fbs.writer()) catch unreachable;
                 const str = try allocator.dupe(u8, fbs.getWritten());
                 break :blk std.json.Value{ .string = str };
             },
             .ipv4 => |addr| blk: {
                 var buf: [15]u8 = undefined;
-                var fbs = std.io.fixedBufferStream(&buf);
+                var fbs = std.Io.fixedBufferStream(&buf);
                 fbs.writer().print("{d}.{d}.{d}.{d}", .{ addr[0], addr[1], addr[2], addr[3] }) catch unreachable;
                 const str = try allocator.dupe(u8, fbs.getWritten());
                 break :blk std.json.Value{ .string = str };
             },
             .ipv6 => |addr| blk: {
                 var buf: [39]u8 = undefined;
-                var fbs = std.io.fixedBufferStream(&buf);
+                var fbs = std.Io.fixedBufferStream(&buf);
                 const w = fbs.writer();
                 var i: usize = 0;
                 while (i < 16) : (i += 2) {
@@ -836,7 +836,7 @@ test "Value.initTime creates time value" {
 test "Value.Date.format formats correctly" {
     const d = Value.Date.init(2025, 1, 24);
     var buf: [16]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
+    var fbs = std.Io.fixedBufferStream(&buf);
     d.format("", .{}, fbs.writer()) catch unreachable;
     try std.testing.expectEqualStrings("2025-01-24", fbs.getWritten());
 }
@@ -844,7 +844,7 @@ test "Value.Date.format formats correctly" {
 test "Value.Time.format formats correctly" {
     const t = Value.Time.init(14, 30, 45);
     var buf: [32]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
+    var fbs = std.Io.fixedBufferStream(&buf);
     t.format("", .{}, fbs.writer()) catch unreachable;
     try std.testing.expectEqualStrings("14:30:45", fbs.getWritten());
 }
@@ -852,7 +852,7 @@ test "Value.Time.format formats correctly" {
 test "Value.Time.format with nanoseconds" {
     const t = Value.Time.withNanos(14, 30, 45, 123456789);
     var buf: [32]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
+    var fbs = std.Io.fixedBufferStream(&buf);
     t.format("", .{}, fbs.writer()) catch unreachable;
     try std.testing.expectEqualStrings("14:30:45.123456789", fbs.getWritten());
 }
@@ -861,17 +861,17 @@ test "Value.Time.format with timezone offset" {
     var t = Value.Time.init(14, 30, 45);
     t.tz_offset_minutes = 0; // UTC
     var buf: [32]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
+    var fbs = std.Io.fixedBufferStream(&buf);
     t.format("", .{}, fbs.writer()) catch unreachable;
     try std.testing.expectEqualStrings("14:30:45Z", fbs.getWritten());
 
     t.tz_offset_minutes = 330; // +05:30
-    fbs = std.io.fixedBufferStream(&buf);
+    fbs = std.Io.fixedBufferStream(&buf);
     t.format("", .{}, fbs.writer()) catch unreachable;
     try std.testing.expectEqualStrings("14:30:45+05:30", fbs.getWritten());
 
     t.tz_offset_minutes = -480; // -08:00
-    fbs = std.io.fixedBufferStream(&buf);
+    fbs = std.Io.fixedBufferStream(&buf);
     t.format("", .{}, fbs.writer()) catch unreachable;
     try std.testing.expectEqualStrings("14:30:45-08:00", fbs.getWritten());
 }
@@ -882,7 +882,7 @@ test "Value.Timestamp.format formats correctly" {
         Value.Time.init(14, 30, 45),
     );
     var buf: [48]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
+    var fbs = std.Io.fixedBufferStream(&buf);
     ts.format("", .{}, fbs.writer()) catch unreachable;
     try std.testing.expectEqualStrings("2025-01-24T14:30:45", fbs.getWritten());
 }

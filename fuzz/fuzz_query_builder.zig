@@ -16,7 +16,7 @@ pub fn main() !void {
     var fba = std.heap.FixedBufferAllocator.init(&buffer);
     const allocator = fba.allocator();
 
-    const stdin = std.io.getStdIn();
+    const stdin = std.Io.getStdIn();
     const input = stdin.readToEndAlloc(allocator, 1024 * 1024) catch return;
 
     // Use input as various clause contents

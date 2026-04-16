@@ -17,7 +17,7 @@ pub fn main() !void {
     const allocator = fba.allocator();
 
     // Read fuzz input from stdin (AFL/libFuzzer style)
-    const stdin = std.io.getStdIn();
+    const stdin = std.Io.getStdIn();
     const input = stdin.readToEndAlloc(allocator, 1024 * 1024) catch |err| {
         // If we can't read input, just exit cleanly
         std.debug.print("Failed to read input: {}\n", .{err});

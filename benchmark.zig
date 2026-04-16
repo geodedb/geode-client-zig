@@ -123,7 +123,9 @@ fn parseArgs(allocator: std.mem.Allocator) !struct {
     var username: []const u8 = "";
     var password: []const u8 = "";
 
-    var args = try std.process.argsWithAllocator(allocator);
+    var args = try std.process.Args.Iterator.init(.{ .vector = @as(std.process.Args.Vector, @ptrCast(std.c.argv)) });
+    // skip allocator
+    _ = allocator);
     defer args.deinit();
 
     // Skip program name
