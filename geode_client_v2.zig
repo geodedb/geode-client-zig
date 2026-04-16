@@ -18,6 +18,14 @@ pub const Transport = config.Transport;
 /// See GAP_ANALYSIS.md Finding 16.
 pub const MAX_RECV_BUFFER_SIZE: usize = 16 * 1024 * 1024;
 
+// Zig 0.16: std.time.nanoTimestamp was removed. Use clock_gettime directly.
+fn nowNs() i128 {
+    var ts_tmp: std.os.linux.timespec = undefined;
+    const rc = std.os.linux.clock_gettime(.REALTIME, &ts_tmp);
+    if (rc != 0) return 0;
+    return @as(i128, ts_tmp.sec) * std.time.ns_per_s + @as(i128, ts_tmp.nsec);
+}
+
 pub const GeodeClient = struct {
     allocator: std.mem.Allocator,
     host: []const u8,
@@ -272,7 +280,7 @@ pub const GeodeClient = struct {
         // poll() blocks on epoll/kqueue until packets arrive, so there is no
         // need for an additional sleep between iterations.
         const timeout_ns: u64 = 30 * std.time.ns_per_s;
-        const start = std.time.nanoTimestamp();
+        const start = nowNs();
         while (true) {
             const remaining = remainingMs(start, timeout_ns);
             if (remaining == 0) break;
@@ -333,7 +341,7 @@ pub const GeodeClient = struct {
     /// Compute the remaining timeout in milliseconds from a start timestamp and total timeout.
     /// Returns 0 when the deadline has already passed.
     fn remainingMs(start: i128, timeout_ns: u64) u32 {
-        const elapsed_ns = std.time.nanoTimestamp() - start;
+        const elapsed_ns = nowNs() - start;
         if (elapsed_ns < 0) return 0;
         const elapsed: u64 = @intCast(elapsed_ns);
         if (elapsed >= timeout_ns) return 0;
@@ -353,7 +361,7 @@ pub const GeodeClient = struct {
         // quic.poll() uses epoll/kqueue internally, so it returns as soon as
         // the transport is ready rather than sleeping a fixed duration.
         const write_timeout_ns: u64 = 30 * std.time.ns_per_s;
-        const start = std.time.nanoTimestamp();
+        const start = nowNs();
 
         while (written < data.len or (fin and data.len == 0)) {
             const remaining = remainingMs(start, write_timeout_ns);
@@ -454,7 +462,7 @@ pub const GeodeClient = struct {
         }
 
         const timeout_ns: u64 = timeout_ms * std.time.ns_per_ms;
-        const start = std.time.nanoTimestamp();
+        const start = nowNs();
 
         while (true) {
             const remaining = remainingMs(start, timeout_ns);
@@ -510,7 +518,7 @@ pub const GeodeClient = struct {
         }
 
         const timeout_ns: u64 = timeout_ms * std.time.ns_per_ms;
-        const start = std.time.nanoTimestamp();
+        const start = nowNs();
 
         var temp_buf: [4096]u8 = undefined;
 
