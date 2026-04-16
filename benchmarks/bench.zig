@@ -61,12 +61,12 @@ fn benchmark(name: []const u8, comptime func: fn (std.mem.Allocator) void, alloc
     }
 
     // Estimate iterations needed
-    var timer = std.time.Timer.start() catch unreachable;
+    var timer: std.os.linux.timespec = blk: { var ts: std.os.linux.timespec = undefined; _ = std.os.linux.clock_gettime(.MONOTONIC, &ts); break :blk ts; };
     i = 0;
     while (i < 100) : (i += 1) {
         func(allocator);
     }
-    const estimate_ns = timer.read();
+    const estimate_ns = blk: { var now: std.os.linux.timespec = undefined; _ = std.os.linux.clock_gettime(.MONOTONIC, &now); break :blk @as(u64, @intCast(now.sec - timer.sec)) * 1_000_000_000 + @as(u64, @intCast(now.nsec - timer.nsec)); };
     const estimate_per_op = estimate_ns / 100;
     const estimated_iterations = if (estimate_per_op > 0) target_time_ns / estimate_per_op else min_iterations;
     const iterations = @max(min_iterations, estimated_iterations);
@@ -78,9 +78,9 @@ fn benchmark(name: []const u8, comptime func: fn (std.mem.Allocator) void, alloc
 
     i = 0;
     while (i < iterations) : (i += 1) {
-        timer = std.time.Timer.start() catch unreachable;
+        timer = blk: { var ts: std.os.linux.timespec = undefined; _ = std.os.linux.clock_gettime(.MONOTONIC, &ts); break :blk ts; };
         func(allocator);
-        const elapsed = timer.read();
+        const elapsed = blk: { var now: std.os.linux.timespec = undefined; _ = std.os.linux.clock_gettime(.MONOTONIC, &now); break :blk @as(u64, @intCast(now.sec - timer.sec)) * 1_000_000_000 + @as(u64, @intCast(now.nsec - timer.nsec)); };
         total_ns += elapsed;
         min_ns = @min(min_ns, elapsed);
         max_ns = @max(max_ns, elapsed);
@@ -116,12 +116,12 @@ fn benchmarkSimple(name: []const u8, comptime func: fn () void) BenchmarkResult 
     }
 
     // Estimate iterations needed
-    var timer = std.time.Timer.start() catch unreachable;
+    var timer: std.os.linux.timespec = blk: { var ts: std.os.linux.timespec = undefined; _ = std.os.linux.clock_gettime(.MONOTONIC, &ts); break :blk ts; };
     i = 0;
     while (i < 100) : (i += 1) {
         func();
     }
-    const estimate_ns = timer.read();
+    const estimate_ns = blk: { var now: std.os.linux.timespec = undefined; _ = std.os.linux.clock_gettime(.MONOTONIC, &now); break :blk @as(u64, @intCast(now.sec - timer.sec)) * 1_000_000_000 + @as(u64, @intCast(now.nsec - timer.nsec)); };
     const estimate_per_op = estimate_ns / 100;
     const estimated_iterations = if (estimate_per_op > 0) target_time_ns / estimate_per_op else min_iterations;
     const iterations = @max(min_iterations, estimated_iterations);
@@ -133,9 +133,9 @@ fn benchmarkSimple(name: []const u8, comptime func: fn () void) BenchmarkResult 
 
     i = 0;
     while (i < iterations) : (i += 1) {
-        timer = std.time.Timer.start() catch unreachable;
+        timer = blk: { var ts: std.os.linux.timespec = undefined; _ = std.os.linux.clock_gettime(.MONOTONIC, &ts); break :blk ts; };
         func();
-        const elapsed = timer.read();
+        const elapsed = blk: { var now: std.os.linux.timespec = undefined; _ = std.os.linux.clock_gettime(.MONOTONIC, &now); break :blk @as(u64, @intCast(now.sec - timer.sec)) * 1_000_000_000 + @as(u64, @intCast(now.nsec - timer.nsec)); };
         total_ns += elapsed;
         min_ns = @min(min_ns, elapsed);
         max_ns = @max(max_ns, elapsed);
@@ -521,7 +521,7 @@ fn benchConfigInit() void {
 }
 
 fn benchConfigBuilder() void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -775,7 +775,7 @@ fn benchProtoDecodeVarint() void {
 // =============================================================================
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

@@ -588,7 +588,7 @@ pub const Value = union(enum) {
                 values = &[_]Value{};
                 break :blk Value.initArray(values);
             },
-            .object => |_| blk: {
+            .object => blk: {
                 // Simplified - real implementation would iterate over object
                 break :blk Value.initNull();
             },
