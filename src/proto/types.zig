@@ -34,7 +34,7 @@ pub const HelloResponse = struct {
     success: bool = false,
     session_id: []u8 = &.{},
     error_message: []u8 = &.{},
-    capabilities: std.ArrayListUnmanaged([]u8) = .{},
+    capabilities: std.ArrayListUnmanaged([]u8) = .empty,
     password_reset_required: bool = false,
     graph: ?[]const u8 = null,
 
@@ -64,7 +64,7 @@ pub const ExecuteRequest = struct {
     session_id: []const u8 = "",
     query: []const u8 = "",
     request_id: []const u8 = "",
-    params: std.ArrayListUnmanaged(Param) = .{},
+    params: std.ArrayListUnmanaged(Param) = .empty,
 
     pub fn init() ExecuteRequest {
         return .{};
@@ -96,7 +96,7 @@ pub const ColumnDefinition = struct {
 };
 
 pub const SchemaDefinition = struct {
-    columns: std.ArrayListUnmanaged(ColumnDefinition) = .{},
+    columns: std.ArrayListUnmanaged(ColumnDefinition) = .empty,
 
     pub fn deinit(self: *SchemaDefinition, allocator: std.mem.Allocator) void {
         for (self.columns.items) |*col| {
@@ -168,7 +168,7 @@ pub const Value = struct {
 };
 
 pub const Row = struct {
-    values: std.ArrayListUnmanaged(Value) = .{},
+    values: std.ArrayListUnmanaged(Value) = .empty,
 
     pub fn deinit(self: *Row, allocator: std.mem.Allocator) void {
         for (self.values.items) |*value| {
@@ -179,10 +179,10 @@ pub const Row = struct {
 };
 
 pub const DataPage = struct {
-    rows: std.ArrayListUnmanaged(Row) = .{},
+    rows: std.ArrayListUnmanaged(Row) = .empty,
     final: bool = false, // 'final' in proto, not 'last_page'
     ordered: bool = false,
-    order_keys: std.ArrayListUnmanaged([]const u8) = .{},
+    order_keys: std.ArrayListUnmanaged([]const u8) = .empty,
 
     pub fn deinit(self: *DataPage, allocator: std.mem.Allocator) void {
         for (self.rows.items) |*row| {
@@ -215,8 +215,8 @@ pub const ProtoError = struct {
 pub const Status = struct {
     status_class: []const u8 = "",
     status_subclass: []const u8 = "",
-    additional_statuses: std.ArrayListUnmanaged([]const u8) = .{},
-    flagger_findings: std.ArrayListUnmanaged([]const u8) = .{},
+    additional_statuses: std.ArrayListUnmanaged([]const u8) = .empty,
+    flagger_findings: std.ArrayListUnmanaged([]const u8) = .empty,
 
     pub fn deinit(self: *Status, allocator: std.mem.Allocator) void {
         if (self.status_class.len > 0) allocator.free(self.status_class);

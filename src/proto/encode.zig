@@ -350,11 +350,11 @@ pub fn encodeQuicClientMessage(allocator: std.mem.Allocator, msg: QuicClientMess
 /// Encode message with 4-byte big-endian length prefix (single allocation).
 /// Reserves 4 bytes, encodes the message directly, then backpatches the length.
 pub fn encodeWithLengthPrefix(allocator: std.mem.Allocator, msg: QuicClientMessage) ![]u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
 
     // Reserve 4 bytes for the length prefix (will be backpatched)
-    try buf.writer(allocator).writeAll(&[4]u8{ 0, 0, 0, 0 });
+    try buf.appendSlice(allocator, &[4]u8{ 0, 0, 0, 0 });
 
     // Encode message directly into the same buffer
     try writeQuicClientMessageToList(&buf, allocator, msg);

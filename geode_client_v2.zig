@@ -474,7 +474,6 @@ pub const GeodeClient = struct {
                     break :blk 0;
                 },
                 error.InvalidStream => return error.NoStream,
-                else => return err,
             };
 
             if (n > 0) return n;
@@ -539,7 +538,6 @@ pub const GeodeClient = struct {
                     break :blk 0;
                 },
                 error.InvalidStream => return error.NoStream,
-                else => return err,
             };
 
             if (n > 0) {
@@ -574,7 +572,6 @@ pub const GeodeClient = struct {
                     break :blk 0;
                 },
                 error.InvalidStream => return error.NoStream,
-                else => return err,
             };
 
             if (n > 0) {
