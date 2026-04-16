@@ -690,8 +690,8 @@ pub const GeodeClient = struct {
 
         var result = QueryResult{
             .allocator = self.allocator,
-            .columns = .{},
-            .rows = .{},
+            .columns = .empty,
+            .rows = .empty,
             .err = null,
         };
         errdefer result.deinit();
@@ -741,7 +741,7 @@ pub const GeodeClient = struct {
 
         if (exec.page) |page| {
             for (page.rows.items) |row| {
-                var row_values: std.ArrayListUnmanaged(proto.Value) = .{};
+                var row_values: std.ArrayListUnmanaged(proto.Value) = .empty;
                 errdefer {
                     for (row_values.items) |*value| {
                         value.deinit(self.allocator);
@@ -837,8 +837,8 @@ pub const GeodeClient = struct {
 /// Result of a query execution.
 pub const QueryResult = struct {
     allocator: std.mem.Allocator,
-    columns: std.ArrayListUnmanaged([]const u8) = .{},
-    rows: std.ArrayListUnmanaged(std.ArrayListUnmanaged(proto.Value)) = .{},
+    columns: std.ArrayListUnmanaged([]const u8) = .empty,
+    rows: std.ArrayListUnmanaged(std.ArrayListUnmanaged(proto.Value)) = .empty,
     err: ?proto.ProtoError,
 
     pub fn deinit(self: *QueryResult) void {

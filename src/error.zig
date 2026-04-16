@@ -252,15 +252,7 @@ pub const GeodeError = struct {
     }
 
     /// Format the error for display
-    pub fn format(
-        self: GeodeError,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
-
+    pub fn format(self: GeodeError, writer: anytype) !void {
         try writer.print("GeodeError({s})", .{@tagName(self.kind)});
         if (self.iso_code) |code| {
             try writer.print(" [{s}]", .{code});

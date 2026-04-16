@@ -20,6 +20,16 @@ const Transport = geode_client.config.Transport;
 const proto = geode_client.proto;
 const QueryResult = geode_client.QueryResult;
 
+fn getEnvOr(name: [*:0]const u8, default: []const u8) []const u8 {
+    if (std.c.getenv(name)) |v| return std.mem.span(v);
+    return default;
+}
+
+fn getEnvOpt(name: [*:0]const u8) ?[]const u8 {
+    if (std.c.getenv(name)) |v| return std.mem.span(v);
+    return null;
+}
+
 // =============================================================================
 // Test Configuration
 // =============================================================================
@@ -36,22 +46,19 @@ const TestConfig = struct {
 
     fn fromEnv() TestConfig {
         // Determine transport first (affects default port)
-        const transport_env = if (std.c.getenv("GEODE_TRANSPORT")) |v| std.mem.span(v) else null;
-        const transport: Transport = if (transport_env) |t|
+        const transport: Transport = if (getEnvOpt("GEODE_TRANSPORT")) |t|
             Transport.fromString(t) orelse .quic
         else
             .quic;
 
         const default_port: u16 = transport.defaultPort();
-        const server = if (std.c.getenv("GEODE_SERVER")) |v| std.mem.span(v) else null orelse blk: {
-            break :blk if (transport == .grpc) "127.0.0.1:50051" else "127.0.0.1:3141";
-        };
-        const insecure = if (std.c.getenv("GEODE_INSECURE")) |v| std.mem.span(v) else null != null;
-        const username = if (std.c.getenv("GEODE_USERNAME")) |v| std.mem.span(v) else null orelse if (std.c.getenv("GEODE_USER")) |v| std.mem.span(v) else null orelse "geode";
-        const password = if (std.c.getenv("GEODE_PASSWORD")) |v| std.mem.span(v) else null orelse
-            if (std.c.getenv("GEODE_DEFAULT_PASSWORD")) |v| std.mem.span(v) else null orelse
-            if (std.c.getenv("GEODE_ADMIN_PASSWORD")) |v| std.mem.span(v) else null orelse
-            "GeodeTestPassword123!";
+        const server = getEnvOpt("GEODE_SERVER") orelse
+            (if (transport == .grpc) "127.0.0.1:50051" else "127.0.0.1:3141");
+        const insecure = std.c.getenv("GEODE_INSECURE") != null;
+        const username = getEnvOpt("GEODE_USERNAME") orelse getEnvOr("GEODE_USER", "geode");
+        const password = getEnvOpt("GEODE_PASSWORD") orelse
+            getEnvOpt("GEODE_DEFAULT_PASSWORD") orelse
+            getEnvOr("GEODE_ADMIN_PASSWORD", "GeodeTestPassword123!");
 
         var host: []const u8 = "127.0.0.1";
         var port: u16 = default_port;
@@ -104,20 +111,26 @@ const TestContext = struct {
         }
 
         if (needs_resolution) {
-            const list = std.net.getAddressList(allocator, config.host, config.port) catch {
-                return error.DnsResolutionFailed;
-            };
-            defer list.deinit();
+            // Resolve hostname via libc getaddrinfo (std.net was removed in zig 0.16.0).
+            const host_z = try allocator.dupeZ(u8, config.host);
+            defer allocator.free(host_z);
 
-            if (list.addrs.len > 0) {
-                var buf: [64]u8 = undefined;
-                const addr = list.addrs[0];
-                const ip_bytes = @as(*const [4]u8, @ptrCast(&addr.in.sa.addr)).*;
-                const result = std.fmt.bufPrint(&buf, "{d}.{d}.{d}.{d}", .{
-                    ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3],
-                }) catch return error.InvalidAddress;
-                resolved_host = allocator.dupe(u8, result) catch return error.OutOfMemory;
-            }
+            var hints: std.c.addrinfo = std.mem.zeroes(std.c.addrinfo);
+            hints.family = std.c.AF.INET;
+            hints.socktype = std.c.SOCK.STREAM;
+
+            var res: ?*std.c.addrinfo = null;
+            const rc = std.c.getaddrinfo(host_z.ptr, null, &hints, &res);
+            if (@intFromEnum(rc) != 0 or res == null) return error.DnsResolutionFailed;
+            defer std.c.freeaddrinfo(res.?);
+
+            const sa: *const std.c.sockaddr.in = @ptrCast(@alignCast(res.?.addr.?));
+            const ip_bytes: [4]u8 = @bitCast(sa.addr);
+            var buf: [64]u8 = undefined;
+            const result = std.fmt.bufPrint(&buf, "{d}.{d}.{d}.{d}", .{
+                ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3],
+            }) catch return error.InvalidAddress;
+            resolved_host = allocator.dupe(u8, result) catch return error.OutOfMemory;
         }
 
         var client = try GeodeClient.initWithTransport(

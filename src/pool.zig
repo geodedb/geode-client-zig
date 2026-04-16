@@ -5,9 +5,80 @@
 // Provides connection pooling with concurrency control.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Config = @import("config").Config;
 const GeodeError = @import("error").GeodeError;
 const concurrency = @import("concurrency");
+
+// Compat shims for APIs removed in zig 0.16.0:
+//   * std.Thread.Mutex / Condition / sleep
+//   * std.time.nanoTimestamp / milliTimestamp
+// Keeping the old call sites untouched avoids cascading API changes through
+// every Pool caller.
+fn nowNs() i128 {
+    var ts: std.os.linux.timespec = undefined;
+    const rc = std.os.linux.clock_gettime(.MONOTONIC, &ts);
+    if (rc != 0) return 0;
+    return @as(i128, ts.sec) * std.time.ns_per_s + @as(i128, ts.nsec);
+}
+
+fn nowMs() i64 {
+    return @intCast(@divFloor(nowNs(), std.time.ns_per_ms));
+}
+
+fn sleepNanos(ns: u64) void {
+    if (builtin.link_libc and @TypeOf(std.c.timespec) != void) {
+        const ts = std.c.timespec{
+            .sec = @intCast(ns / std.time.ns_per_s),
+            .nsec = @intCast(ns % std.time.ns_per_s),
+        };
+        _ = std.c.nanosleep(&ts, null);
+    } else {
+        var i: u32 = 0;
+        while (i < 1024) : (i += 1) std.atomic.spinLoopHint();
+    }
+}
+
+const Mutex = struct {
+    state: std.atomic.Value(u8) = .{ .raw = 0 },
+
+    pub fn lock(self: *Mutex) void {
+        var spins: u32 = 0;
+        while (self.state.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) {
+            if (spins < 64) {
+                std.atomic.spinLoopHint();
+                spins += 1;
+            } else {
+                sleepNanos(50_000); // 50us backoff under contention
+            }
+        }
+    }
+
+    pub fn unlock(self: *Mutex) void {
+        self.state.store(0, .release);
+    }
+};
+
+const Condition = struct {
+    epoch: std.atomic.Value(u64) = .{ .raw = 0 },
+
+    pub fn signal(self: *Condition) void {
+        _ = self.epoch.fetchAdd(1, .release);
+    }
+
+    pub fn timedWait(self: *Condition, mutex: *Mutex, timeout_ns: u64) error{Timeout}!void {
+        const initial_epoch = self.epoch.load(.acquire);
+        mutex.unlock();
+        defer mutex.lock();
+
+        const deadline: i128 = nowNs() + @as(i128, @intCast(timeout_ns));
+        while (true) {
+            if (self.epoch.load(.acquire) != initial_epoch) return;
+            if (nowNs() >= deadline) return error.Timeout;
+            sleepNanos(1_000_000); // 1ms poll
+        }
+    }
+};
 
 /// Thread pool executor for async connection pool operations.
 /// Uses the concurrency library's lock-free thread pool to offload
@@ -152,14 +223,14 @@ pub const PooledConnection = struct {
     /// Mark connection as in use
     pub fn acquire(self: *PooledConnection) void {
         self.state = .in_use;
-        self.last_used_at = std.time.milliTimestamp();
+        self.last_used_at = nowMs();
         self.use_count += 1;
     }
 
     /// Mark connection as idle (returned to pool)
     pub fn release(self: *PooledConnection) void {
         self.state = .idle;
-        self.last_used_at = std.time.milliTimestamp();
+        self.last_used_at = nowMs();
     }
 
     /// Check if connection is idle
@@ -175,7 +246,7 @@ pub const PooledConnection = struct {
     /// Check if connection has exceeded idle timeout
     pub fn isIdleExpired(self: PooledConnection, timeout_ms: u32) bool {
         if (self.state != .idle) return false;
-        const now = std.time.milliTimestamp();
+        const now = nowMs();
         const idle_time = now - self.last_used_at;
         return idle_time > timeout_ms;
     }
@@ -221,8 +292,8 @@ pub fn Pool(comptime ConnectionType: type) type {
         client_config: Config,
         connections: std.ArrayListUnmanaged(PooledConnection),
         stats: PoolStats,
-        mutex: std.Thread.Mutex,
-        condition: std.Thread.Condition,
+        mutex: Mutex,
+        condition: Condition,
         next_id: u64,
         closed: bool,
         executor: ?PoolExecutor,
@@ -244,7 +315,7 @@ pub fn Pool(comptime ConnectionType: type) type {
                 .allocator = allocator,
                 .config = pool_config,
                 .client_config = client_config,
-                .connections = .{},
+                .connections = .empty,
                 .stats = PoolStats.init(),
                 .mutex = .{},
                 .condition = .{},
@@ -441,7 +512,7 @@ pub fn Pool(comptime ConnectionType: type) type {
         // Note: stats.idle_connections is NOT incremented here because the caller
         // (acquire) will immediately mark it as in_use. Stats are managed by the caller.
         fn createConnection(self: *Self) !*PooledConnection {
-            const now = std.time.milliTimestamp();
+            const now = nowMs();
             const conn = PooledConnection{
                 .id = self.next_id,
                 .state = .idle,
@@ -720,7 +791,7 @@ test "PoolExecutor.submit executes work" {
     // Wait for completion
     var timeout: u32 = 0;
     while (counter.load(.acquire) < 1 and timeout < 1000) {
-        std.Thread.sleep(1 * std.time.ns_per_ms);
+        sleepNanos(std.time.ns_per_ms);
         timeout += 1;
     }
     try std.testing.expectEqual(@as(u32, 1), counter.load(.acquire));

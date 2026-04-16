@@ -6,6 +6,15 @@
 
 const std = @import("std");
 const pool_mod = @import("pool");
+
+// std.time.milliTimestamp was removed in zig 0.16.0.
+fn nowMs() i64 {
+    var ts: std.os.linux.timespec = undefined;
+    const rc = std.os.linux.clock_gettime(.MONOTONIC, &ts);
+    if (rc != 0) return 0;
+    return @intCast(@divFloor(@as(i128, ts.sec) * std.time.ns_per_s + @as(i128, ts.nsec), std.time.ns_per_ms));
+}
+
 const Pool = pool_mod.Pool;
 const PoolConfig = pool_mod.PoolConfig;
 const PooledConnection = pool_mod.PooledConnection;
@@ -65,8 +74,8 @@ test "property: PooledConnection state transitions" {
     var conn = PooledConnection{
         .id = 1,
         .state = .idle,
-        .created_at = std.time.milliTimestamp(),
-        .last_used_at = std.time.milliTimestamp(),
+        .created_at = nowMs(),
+        .last_used_at = nowMs(),
         .use_count = 0,
     };
 
@@ -117,10 +126,10 @@ test "property: PooledConnection updates last_used_at" {
         .use_count = 0,
     };
 
-    const before = std.time.milliTimestamp();
+    const before = nowMs();
     conn.acquire();
     const after_acquire = conn.last_used_at;
-    const after = std.time.milliTimestamp();
+    const after = nowMs();
 
     try std.testing.expect(after_acquire >= before);
     try std.testing.expect(after_acquire <= after);
@@ -134,7 +143,7 @@ test "property: PooledConnection idle expiry detection" {
         .id = 1,
         .state = .idle,
         .created_at = 0,
-        .last_used_at = std.time.milliTimestamp() - 10000, // 10 seconds ago
+        .last_used_at = nowMs() - 10000, // 10 seconds ago
         .use_count = 0,
     };
 

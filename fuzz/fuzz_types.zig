@@ -141,9 +141,9 @@ test "property: date formatting is consistent" {
     for (dates) |d| {
         const date = Value.Date.init(d.year, d.month, d.day);
         var buf: [16]u8 = undefined;
-        var fbs = std.Io.fixedBufferStream(&buf);
-        date.format("", .{}, fbs.writer()) catch unreachable;
-        try std.testing.expectEqualStrings(d.expected, fbs.getWritten());
+        var fw = std.Io.Writer.fixed(&buf);
+        date.format(&fw) catch unreachable;
+        try std.testing.expectEqualStrings(d.expected, fw.buffered());
     }
 }
 
@@ -157,9 +157,9 @@ test "property: time formatting is consistent" {
     for (times) |t| {
         const time = Value.Time.init(t.hour, t.minute, t.second);
         var buf: [32]u8 = undefined;
-        var fbs = std.Io.fixedBufferStream(&buf);
-        time.format("", .{}, fbs.writer()) catch unreachable;
-        try std.testing.expectEqualStrings(t.expected, fbs.getWritten());
+        var fw = std.Io.Writer.fixed(&buf);
+        time.format(&fw) catch unreachable;
+        try std.testing.expectEqualStrings(t.expected, fw.buffered());
     }
 }
 

@@ -256,7 +256,7 @@ pub const AuthClient = struct {
         password: []const u8,
         roles: ?[]const []const u8,
     ) ![]u8 {
-        var query: std.ArrayListUnmanaged(u8) = .{};
+        var query: std.ArrayListUnmanaged(u8) = .empty;
         errdefer query.deinit(self.allocator);
 
         try query.appendSlice(self.allocator, "CREATE USER '");
@@ -290,7 +290,7 @@ pub const AuthClient = struct {
         description: ?[]const u8,
         permissions: ?[]const []const u8,
     ) ![]u8 {
-        var query: std.ArrayListUnmanaged(u8) = .{};
+        var query: std.ArrayListUnmanaged(u8) = .empty;
         errdefer query.deinit(self.allocator);
 
         try query.appendSlice(self.allocator, "CREATE ROLE '");
@@ -327,7 +327,7 @@ pub const AuthClient = struct {
         username: []const u8,
         role: []const u8,
     ) ![]u8 {
-        var query: std.ArrayListUnmanaged(u8) = .{};
+        var query: std.ArrayListUnmanaged(u8) = .empty;
         errdefer query.deinit(self.allocator);
 
         try query.appendSlice(self.allocator, "GRANT ROLE '");
@@ -345,7 +345,7 @@ pub const AuthClient = struct {
         username: []const u8,
         role: []const u8,
     ) ![]u8 {
-        var query: std.ArrayListUnmanaged(u8) = .{};
+        var query: std.ArrayListUnmanaged(u8) = .empty;
         errdefer query.deinit(self.allocator);
 
         try query.appendSlice(self.allocator, "REVOKE ROLE '");
@@ -366,7 +366,7 @@ pub const AuthClient = struct {
         // SECURITY: Validate predicate before interpolating into GQL command (#25)
         try validatePredicate(policy.predicate);
 
-        var query: std.ArrayListUnmanaged(u8) = .{};
+        var query: std.ArrayListUnmanaged(u8) = .empty;
         errdefer query.deinit(self.allocator);
 
         try query.appendSlice(self.allocator, "CREATE POLICY '");
@@ -400,7 +400,7 @@ pub const AuthClient = struct {
         self: Self,
         policy_name: []const u8,
     ) ![]u8 {
-        var query: std.ArrayListUnmanaged(u8) = .{};
+        var query: std.ArrayListUnmanaged(u8) = .empty;
         errdefer query.deinit(self.allocator);
 
         try query.appendSlice(self.allocator, "DROP POLICY '");
@@ -468,7 +468,7 @@ pub const AuthClient = struct {
     ///
     /// Returns a GQL query string: LOGIN WITH API_KEY '<escaped_key>'
     pub fn buildApiKeyLoginQuery(self: Self, api_key: []const u8) ![]u8 {
-        var query: std.ArrayListUnmanaged(u8) = .{};
+        var query: std.ArrayListUnmanaged(u8) = .empty;
         errdefer query.deinit(self.allocator);
 
         try query.appendSlice(self.allocator, "LOGIN WITH API_KEY '");
@@ -483,7 +483,7 @@ pub const AuthClient = struct {
     ///
     /// Returns a GQL query string: CREATE API_KEY '<key_id>' FOR USER '<username>'
     pub fn buildCreateApiKeyQuery(self: Self, username: []const u8) ![]u8 {
-        var query: std.ArrayListUnmanaged(u8) = .{};
+        var query: std.ArrayListUnmanaged(u8) = .empty;
         errdefer query.deinit(self.allocator);
 
         const key_id = try uuid.newV4();
@@ -503,7 +503,7 @@ pub const AuthClient = struct {
     ///
     /// Returns a GQL query string: REVOKE API_KEY '<key_id>'
     pub fn buildRevokeApiKeyQuery(self: Self, key_id: []const u8) ![]u8 {
-        var query: std.ArrayListUnmanaged(u8) = .{};
+        var query: std.ArrayListUnmanaged(u8) = .empty;
         errdefer query.deinit(self.allocator);
 
         try query.appendSlice(self.allocator, "REVOKE API_KEY '");
@@ -817,7 +817,7 @@ test "AuthClient clearAuthentication resets api_key and auth_method" {
 // =============================================================================
 
 test "appendEscapedGqlString escapes single quotes" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
     defer buf.deinit(std.testing.allocator);
 
     try appendEscapedGqlString(std.testing.allocator, &buf, "hello'world");
@@ -825,7 +825,7 @@ test "appendEscapedGqlString escapes single quotes" {
 }
 
 test "appendEscapedGqlString escapes backslashes" {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
     defer buf.deinit(std.testing.allocator);
 
     try appendEscapedGqlString(std.testing.allocator, &buf, "path\\to\\file");

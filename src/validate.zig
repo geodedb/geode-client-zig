@@ -252,7 +252,7 @@ pub fn isIpv6(addr: []const u8) bool {
 
 /// Sanitize a string by removing control characters
 pub fn sanitize(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
-    var result: std.ArrayListUnmanaged(u8) = .{};
+    var result: std.ArrayListUnmanaged(u8) = .empty;
     errdefer result.deinit(allocator);
 
     for (input) |c| {

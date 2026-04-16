@@ -63,9 +63,9 @@ pub const QueryBuilder = struct {
     pub fn init(allocator: std.mem.Allocator) QueryBuilder {
         return .{
             .allocator = allocator,
-            .buf = .{},
+            .buf = .empty,
             .clause_count = 0,
-            .params = .{},
+            .params = .empty,
         };
     }
 
@@ -264,7 +264,7 @@ pub const PatternBuilder = struct {
     pub fn init(allocator: std.mem.Allocator) PatternBuilder {
         return .{
             .allocator = allocator,
-            .parts = .{},
+            .parts = .empty,
         };
     }
 
@@ -278,7 +278,7 @@ pub const PatternBuilder = struct {
 
     /// Add a node pattern
     pub fn node(self: *PatternBuilder, variable: ?[]const u8, labels: ?[]const []const u8, props: ?[]const u8) !*PatternBuilder {
-        var buf: std.ArrayListUnmanaged(u8) = .{};
+        var buf: std.ArrayListUnmanaged(u8) = .empty;
         defer buf.deinit(self.allocator);
 
         try buf.append(self.allocator, '(');
@@ -319,7 +319,7 @@ pub const PatternBuilder = struct {
 
     /// Add a right-directed relationship
     pub fn relRight(self: *PatternBuilder, variable: ?[]const u8, rel_type: ?[]const u8, props: ?[]const u8) !*PatternBuilder {
-        var buf: std.ArrayListUnmanaged(u8) = .{};
+        var buf: std.ArrayListUnmanaged(u8) = .empty;
         defer buf.deinit(self.allocator);
 
         try buf.appendSlice(self.allocator, "-[");
@@ -347,7 +347,7 @@ pub const PatternBuilder = struct {
 
     /// Add a left-directed relationship
     pub fn relLeft(self: *PatternBuilder, variable: ?[]const u8, rel_type: ?[]const u8, props: ?[]const u8) !*PatternBuilder {
-        var buf: std.ArrayListUnmanaged(u8) = .{};
+        var buf: std.ArrayListUnmanaged(u8) = .empty;
         defer buf.deinit(self.allocator);
 
         try buf.appendSlice(self.allocator, "<-[");
@@ -375,7 +375,7 @@ pub const PatternBuilder = struct {
 
     /// Add an undirected relationship
     pub fn relUndirected(self: *PatternBuilder, variable: ?[]const u8, rel_type: ?[]const u8, props: ?[]const u8) !*PatternBuilder {
-        var buf: std.ArrayListUnmanaged(u8) = .{};
+        var buf: std.ArrayListUnmanaged(u8) = .empty;
         defer buf.deinit(self.allocator);
 
         try buf.appendSlice(self.allocator, "-[");
@@ -444,8 +444,8 @@ pub const PredicateBuilder = struct {
     pub fn init(allocator: std.mem.Allocator) PredicateBuilder {
         return .{
             .allocator = allocator,
-            .conditions = .{},
-            .operators = .{},
+            .conditions = .empty,
+            .operators = .empty,
         };
     }
 

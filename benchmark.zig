@@ -5,6 +5,21 @@
 const std = @import("std");
 const geode = @import("geode_client");
 
+// std.time.{nanoTimestamp, timestamp} were removed in zig 0.16.0.
+fn nowNs() i128 {
+    var ts: std.os.linux.timespec = undefined;
+    const rc = std.os.linux.clock_gettime(.MONOTONIC, &ts);
+    if (rc != 0) return 0;
+    return @as(i128, ts.sec) * std.time.ns_per_s + @as(i128, ts.nsec);
+}
+
+fn nowSeconds() i64 {
+    var ts: std.os.linux.timespec = undefined;
+    const rc = std.os.linux.clock_gettime(.REALTIME, &ts);
+    if (rc != 0) return 0;
+    return @intCast(ts.sec);
+}
+
 const BenchmarkResult = struct {
     timestamp: []const u8,
     duration_seconds: f64,
@@ -37,7 +52,7 @@ fn runWorker(
     password: []const u8,
 ) WorkerResult {
     var result = WorkerResult{
-        .latencies = .{},
+        .latencies = .empty,
         .successful = 0,
         .failed = 0,
     };
@@ -66,7 +81,7 @@ fn runWorker(
 
     // Run queries
     for (0..queries) |_| {
-        const start = std.time.nanoTimestamp();
+        const start = nowNs();
 
         // Execute query using new protobuf-based API
         var query_result = client.query("RETURN 1", null) catch {
@@ -80,7 +95,7 @@ fn runWorker(
             continue;
         }
 
-        const end = std.time.nanoTimestamp();
+        const end = nowNs();
         const latency_ms = @as(f64, @floatFromInt(end - start)) / 1_000_000.0;
 
         result.latencies.append(allocator, latency_ms) catch {};
@@ -103,7 +118,7 @@ fn workerThread(
     result_ptr.* = runWorker(allocator, host, port, queries, insecure, username, password);
 }
 
-fn parseArgs(allocator: std.mem.Allocator) !struct {
+fn parseArgs(argv: []const [:0]const u8) !struct {
     host: []const u8,
     port: u16,
     workers: usize,
@@ -123,43 +138,32 @@ fn parseArgs(allocator: std.mem.Allocator) !struct {
     var username: []const u8 = "";
     var password: []const u8 = "";
 
-    var args = try std.process.Args.Iterator.init(.{ .vector = @as(std.process.Args.Vector, @ptrCast(std.c.argv)) });
-    // skip allocator
-    _ = allocator);
-    defer args.deinit();
-
-    // Skip program name
-    _ = args.skip();
-
-    while (args.next()) |arg| {
+    // Skip program name (argv[0])
+    var i: usize = 1;
+    while (i < argv.len) : (i += 1) {
+        const arg = argv[i];
         if (std.mem.eql(u8, arg, "--host")) {
-            if (args.next()) |val| {
-                host = val;
-            }
+            i += 1;
+            if (i < argv.len) host = argv[i];
         } else if (std.mem.eql(u8, arg, "--port")) {
-            if (args.next()) |val| {
-                port = std.fmt.parseInt(u16, val, 10) catch 3142;
-            }
+            i += 1;
+            if (i < argv.len) port = std.fmt.parseInt(u16, argv[i], 10) catch 3142;
         } else if (std.mem.eql(u8, arg, "--workers")) {
-            if (args.next()) |val| {
-                workers = std.fmt.parseInt(usize, val, 10) catch 10;
-            }
+            i += 1;
+            if (i < argv.len) workers = std.fmt.parseInt(usize, argv[i], 10) catch 10;
         } else if (std.mem.eql(u8, arg, "--queries")) {
-            if (args.next()) |val| {
-                queries = std.fmt.parseInt(usize, val, 10) catch 1000;
-            }
+            i += 1;
+            if (i < argv.len) queries = std.fmt.parseInt(usize, argv[i], 10) catch 1000;
         } else if (std.mem.eql(u8, arg, "--json")) {
             json = true;
         } else if (std.mem.eql(u8, arg, "--insecure")) {
             insecure = true;
         } else if (std.mem.eql(u8, arg, "--username")) {
-            if (args.next()) |val| {
-                username = val;
-            }
+            i += 1;
+            if (i < argv.len) username = argv[i];
         } else if (std.mem.eql(u8, arg, "--password")) {
-            if (args.next()) |val| {
-                password = val;
-            }
+            i += 1;
+            if (i < argv.len) password = argv[i];
         }
     }
 
@@ -175,17 +179,21 @@ fn parseArgs(allocator: std.mem.Allocator) !struct {
     };
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const args = try parseArgs(allocator);
+    const argv = try init.minimal.args.toSlice(init.arena.allocator());
+    const args = try parseArgs(argv);
 
-    const stdout = std.fs.File.stdout().deprecatedWriter();
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(init.io, &stdout_buffer);
+    const stdout = &stdout_writer.interface;
+    defer stdout.flush() catch {};
 
     // Collect results from workers in parallel using threads
-    var all_latencies: std.ArrayList(f64) = .{};
+    var all_latencies: std.ArrayList(f64) = .empty;
     defer all_latencies.deinit(allocator);
 
     var total_successful: i64 = 0;
@@ -200,7 +208,7 @@ pub fn main() !void {
     var results: [max_workers]WorkerResult = undefined;
     var threads: [max_workers]?std.Thread = [_]?std.Thread{null} ** max_workers;
 
-    const start = std.time.nanoTimestamp();
+    const start = nowNs();
 
     // Spawn all worker threads
     for (0..args.workers) |i| {
@@ -222,7 +230,7 @@ pub fn main() !void {
         total_failed += results[i].failed;
     }
 
-    const end = std.time.nanoTimestamp();
+    const end = nowNs();
     const duration = @as(f64, @floatFromInt(end - start)) / 1_000_000_000.0;
 
     // Calculate statistics
@@ -259,7 +267,7 @@ pub fn main() !void {
 
     // Get timestamp
     var timestamp_buf: [64]u8 = undefined;
-    const timestamp = std.fmt.bufPrint(&timestamp_buf, "{d}", .{std.time.timestamp()}) catch "0";
+    const timestamp = std.fmt.bufPrint(&timestamp_buf, "{d}", .{nowSeconds()}) catch "0";
 
     if (args.json) {
         try stdout.print(

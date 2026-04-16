@@ -381,7 +381,7 @@ fn writeQuicClientMessageToList(buf: *std.ArrayListUnmanaged(u8), allocator: std
 /// Encode a QuicClientMessage to protobuf bytes (single allocation).
 /// Public API preserved for backward compatibility with benchmarks and callers.
 pub fn encodeQuicClientMessage(allocator: std.mem.Allocator, msg: QuicClientMessage) ![]u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .{};
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
 
     try writeQuicClientMessageToList(&buf, allocator, msg);
@@ -438,7 +438,7 @@ test "HelloRequest encodes with all fields" {
         .client_version = "1.0.0",
         .wanted_conformance = "full",
     };
-    var buf: std.ArrayListUnmanaged(u8) = .{};
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
     defer buf.deinit(allocator);
     try writeHelloRequestTo(&buf, allocator, req);
     try std.testing.expect(buf.items.len > 0);

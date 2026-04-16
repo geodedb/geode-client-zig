@@ -99,7 +99,7 @@ pub const Batch = struct {
     pub fn init(allocator: std.mem.Allocator) Self {
         return Self{
             .allocator = allocator,
-            .queries = .{},
+            .queries = .empty,
             .stop_on_error = false,
             .transactional = false,
         };

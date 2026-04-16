@@ -1,25 +1,28 @@
 const std = @import("std");
 const GeodeClient = @import("geode_client").GeodeClient;
 
-pub fn main() !void {
-    var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+fn getEnvOr(name: [*:0]const u8, default: []const u8) []const u8 {
+    if (std.c.getenv(name)) |v| return std.mem.span(v);
+    return default;
+}
+
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
     std.debug.print("Creating Geode client...\n", .{});
     var host: []const u8 = "127.0.0.1";
     var port: u16 = 3141;
-    const username: []const u8 = if (std.c.getenv("GEODE_USER")) |v| std.mem.span(v) else null orelse "";
-    const password: []const u8 = if (std.c.getenv("GEODE_PASSWORD")) |v| std.mem.span(v) else null orelse "";
+    const username = getEnvOr("GEODE_USER", "");
+    const password = getEnvOr("GEODE_PASSWORD", "");
 
-    if (std.process.getEnvVarOwned(allocator, "GEODE_SERVER")) |env_addr| {
-        defer allocator.free(env_addr);
+    if (init.environ_map.get("GEODE_SERVER")) |env_addr| {
         if (std.mem.indexOf(u8, env_addr, ":")) |idx| {
-            // We need to duplicate the host part because env_addr will be freed
             host = try allocator.dupe(u8, env_addr[0..idx]);
             port = try std.fmt.parseInt(u16, env_addr[idx + 1 ..], 10);
+        } else {
+            host = try allocator.dupe(u8, env_addr);
         }
-    } else |_| {}
+    }
 
     var client = try GeodeClient.init(allocator, host, port, true, username, password);
     defer client.deinit();

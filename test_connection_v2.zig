@@ -1,13 +1,17 @@
 const std = @import("std");
 const GeodeClient = @import("geode_client").GeodeClient;
 
-pub fn main() !void {
-    var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+fn getEnvOr(name: [*:0]const u8, default: []const u8) []const u8 {
+    if (std.c.getenv(name)) |v| return std.mem.span(v);
+    return default;
+}
+
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    const io = init.io;
 
     // Read server address from environment, with defaults
-    const env_server = if (std.c.getenv("GEODE_SERVER")) |v| std.mem.span(v) else null orelse "127.0.0.1:8443";
+    const env_server = getEnvOr("GEODE_SERVER", "127.0.0.1:8443");
     var host: []const u8 = "127.0.0.1";
     var port: u16 = 8443;
 
@@ -19,9 +23,9 @@ pub fn main() !void {
         host = env_server;
     }
 
-    const insecure = if (std.c.getenv("GEODE_INSECURE")) |v| std.mem.span(v) else null != null;
-    const username = if (std.c.getenv("GEODE_USER")) |v| std.mem.span(v) else null orelse "";
-    const password = if (std.c.getenv("GEODE_PASSWORD")) |v| std.mem.span(v) else null orelse "";
+    const insecure = std.c.getenv("GEODE_INSECURE") != null;
+    const username = getEnvOr("GEODE_USER", "");
+    const password = getEnvOr("GEODE_PASSWORD", "");
 
     // Resolve hostname to IP address if needed (QUIC library requires numeric IP)
     var resolved_host: []const u8 = host;
@@ -38,28 +42,20 @@ pub fn main() !void {
 
     if (needs_resolution) {
         std.debug.print("Resolving hostname {s}...\n", .{host});
-        const list = std.net.getAddressList(allocator, host, port) catch |e| {
+        const ip = std.Io.net.IpAddress.resolve(io, host, port) catch |e| {
             std.debug.print("DNS resolution failed: {}\n", .{e});
             return e;
         };
-        defer list.deinit();
-
-        if (list.addrs.len > 0) {
-            const addr = list.addrs[0];
-            // Format IPv4 address from the sockaddr
-            const ip_bytes = @as(*const [4]u8, @ptrCast(&addr.in.sa.addr)).*;
-            const len = std.fmt.bufPrint(&resolved_host_buf, "{d}.{d}.{d}.{d}", .{
-                ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3],
-            }) catch {
-                std.debug.print("Failed to format IP address\n", .{});
-                return error.InvalidAddress;
-            };
-            resolved_host = resolved_host_buf[0..len.len];
-            std.debug.print("Resolved to: {s}\n", .{resolved_host});
+        var fbs = std.Io.Writer.fixed(&resolved_host_buf);
+        ip.format(&fbs) catch return error.InvalidAddress;
+        const written = fbs.buffered();
+        // Strip trailing :port suffix if present so caller can re-add port
+        if (std.mem.lastIndexOfScalar(u8, written, ':')) |colon| {
+            resolved_host = written[0..colon];
         } else {
-            std.debug.print("No addresses found\n", .{});
-            return error.AddressNotFound;
+            resolved_host = written;
         }
+        std.debug.print("Resolved to: {s}\n", .{resolved_host});
     }
 
     std.debug.print("Creating Geode client...\n", .{});

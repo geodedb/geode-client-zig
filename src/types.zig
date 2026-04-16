@@ -59,9 +59,7 @@ pub const Value = union(enum) {
             return .{ .lat = lat, .lon = lon };
         }
 
-        pub fn format(self: Point, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Point, writer: anytype) !void {
             try writer.print("POINT({d}, {d})", .{ self.lat, self.lon });
         }
 
@@ -99,9 +97,7 @@ pub const Value = union(enum) {
             return .{ .year = year, .month = month, .day = day };
         }
 
-        pub fn format(self: Date, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Date, writer: anytype) !void {
             // Format year as unsigned to avoid + sign for positive years
             if (self.year >= 0) {
                 try writer.print("{d:0>4}-{d:0>2}-{d:0>2}", .{
@@ -156,9 +152,7 @@ pub const Value = union(enum) {
             return .{ .hour = hour, .minute = minute, .second = second, .nanosecond = nanos };
         }
 
-        pub fn format(self: Time, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Time, writer: anytype) !void {
             try writer.print("{d:0>2}:{d:0>2}:{d:0>2}", .{
                 self.hour, self.minute, self.second,
             });
@@ -188,12 +182,10 @@ pub const Value = union(enum) {
             return .{ .date = date, .time = time };
         }
 
-        pub fn format(self: Timestamp, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt;
-            _ = options;
-            try self.date.format("", .{}, writer);
+        pub fn format(self: Timestamp, writer: anytype) !void {
+            try self.date.format(writer);
             try writer.writeAll("T");
-            try self.time.format("", .{}, writer);
+            try self.time.format(writer);
         }
     };
 
@@ -630,31 +622,31 @@ pub const Value = union(enum) {
                 break :blk std.json.Value{ .array = json_arr };
             },
             .object => |obj| blk: {
-                var json_obj = std.json.ObjectMap.init(allocator);
+                var json_obj: std.json.ObjectMap = .empty;
                 var iter = obj.iterator();
                 while (iter.next()) |entry| {
-                    try json_obj.put(entry.key_ptr.*, try entry.value_ptr.toJson(allocator));
+                    try json_obj.put(allocator, entry.key_ptr.*, try entry.value_ptr.toJson(allocator));
                 }
                 break :blk std.json.Value{ .object = json_obj };
             },
             .date => |d| blk: {
                 var buf: [16]u8 = undefined;
                 var fw = std.Io.Writer.fixed(&buf);
-                d.format("", .{}, &fw) catch unreachable;
+                d.format(&fw) catch unreachable;
                 const str = try allocator.dupe(u8, fw.buffered());
                 break :blk std.json.Value{ .string = str };
             },
             .time => |t| blk: {
                 var buf: [32]u8 = undefined;
                 var fw = std.Io.Writer.fixed(&buf);
-                t.format("", .{}, &fw) catch unreachable;
+                t.format(&fw) catch unreachable;
                 const str = try allocator.dupe(u8, fw.buffered());
                 break :blk std.json.Value{ .string = str };
             },
             .timestamp => |ts| blk: {
                 var buf: [48]u8 = undefined;
                 var fw = std.Io.Writer.fixed(&buf);
-                ts.format("", .{}, &fw) catch unreachable;
+                ts.format(&fw) catch unreachable;
                 const str = try allocator.dupe(u8, fw.buffered());
                 break :blk std.json.Value{ .string = str };
             },
@@ -668,7 +660,7 @@ pub const Value = union(enum) {
             .point => |p| blk: {
                 var buf: [64]u8 = undefined;
                 var fw = std.Io.Writer.fixed(&buf);
-                p.format("", .{}, &fw) catch unreachable;
+                p.format(&fw) catch unreachable;
                 const str = try allocator.dupe(u8, fw.buffered());
                 break :blk std.json.Value{ .string = str };
             },
@@ -836,7 +828,7 @@ test "Value.Date.format formats correctly" {
     const d = Value.Date.init(2025, 1, 24);
     var buf: [16]u8 = undefined;
     var fw = std.Io.Writer.fixed(&buf);
-    d.format("", .{}, &fw) catch unreachable;
+    d.format(&fw) catch unreachable;
     try std.testing.expectEqualStrings("2025-01-24", fw.buffered());
 }
 
@@ -844,7 +836,7 @@ test "Value.Time.format formats correctly" {
     const t = Value.Time.init(14, 30, 45);
     var buf: [32]u8 = undefined;
     var fw = std.Io.Writer.fixed(&buf);
-    t.format("", .{}, &fw) catch unreachable;
+    t.format(&fw) catch unreachable;
     try std.testing.expectEqualStrings("14:30:45", fw.buffered());
 }
 
@@ -852,7 +844,7 @@ test "Value.Time.format with nanoseconds" {
     const t = Value.Time.withNanos(14, 30, 45, 123456789);
     var buf: [32]u8 = undefined;
     var fw = std.Io.Writer.fixed(&buf);
-    t.format("", .{}, &fw) catch unreachable;
+    t.format(&fw) catch unreachable;
     try std.testing.expectEqualStrings("14:30:45.123456789", fw.buffered());
 }
 
@@ -861,17 +853,17 @@ test "Value.Time.format with timezone offset" {
     t.tz_offset_minutes = 0; // UTC
     var buf: [32]u8 = undefined;
     var fw = std.Io.Writer.fixed(&buf);
-    t.format("", .{}, &fw) catch unreachable;
+    t.format(&fw) catch unreachable;
     try std.testing.expectEqualStrings("14:30:45Z", fw.buffered());
 
     t.tz_offset_minutes = 330; // +05:30
     fw = std.Io.Writer.fixed(&buf);
-    t.format("", .{}, &fw) catch unreachable;
+    t.format(&fw) catch unreachable;
     try std.testing.expectEqualStrings("14:30:45+05:30", fw.buffered());
 
     t.tz_offset_minutes = -480; // -08:00
     fw = std.Io.Writer.fixed(&buf);
-    t.format("", .{}, &fw) catch unreachable;
+    t.format(&fw) catch unreachable;
     try std.testing.expectEqualStrings("14:30:45-08:00", fw.buffered());
 }
 
@@ -882,7 +874,7 @@ test "Value.Timestamp.format formats correctly" {
     );
     var buf: [48]u8 = undefined;
     var fw = std.Io.Writer.fixed(&buf);
-    ts.format("", .{}, &fw) catch unreachable;
+    ts.format(&fw) catch unreachable;
     try std.testing.expectEqualStrings("2025-01-24T14:30:45", fw.buffered());
 }
 

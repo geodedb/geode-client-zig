@@ -32,7 +32,7 @@ pub const PreparedStatement = struct {
         try validate.query(query);
 
         // Extract parameter names
-        var params = std.ArrayListUnmanaged([]const u8){};
+        var params: std.ArrayListUnmanaged([]const u8) = .empty;
         errdefer {
             for (params.items) |p| {
                 allocator.free(p);
