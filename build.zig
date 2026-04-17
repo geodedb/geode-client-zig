@@ -164,6 +164,14 @@ pub fn build(b: *std.Build) void {
     });
     client_metrics_mod.addImport("metrics", metrics_mod);
 
+    // Executor module — shared thread_pool facade.
+    const executor_mod = b.createModule(.{
+        .root_source_file = b.path("src/executor.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    executor_mod.addImport("thread_pool", thread_pool_mod);
+
     // Auth module
     const auth_mod = b.createModule(.{
         .root_source_file = b.path("src/auth.zig"),
@@ -428,6 +436,18 @@ pub fn build(b: *std.Build) void {
     client_metrics_tests.root_module.addImport("metrics", metrics_mod);
     const run_client_metrics_tests = b.addRunArtifact(client_metrics_tests);
     test_step.dependOn(&run_client_metrics_tests.step);
+
+    // Test executor module
+    const executor_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/executor.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    executor_tests.root_module.addImport("thread_pool", thread_pool_mod);
+    const run_executor_tests = b.addRunArtifact(executor_tests);
+    test_step.dependOn(&run_executor_tests.step);
 
     // Test encryption module
     const encryption_tests = b.addTest(.{
