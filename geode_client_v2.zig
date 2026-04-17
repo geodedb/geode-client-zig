@@ -698,6 +698,76 @@ pub const GeodeClient = struct {
         };
     }
 
+    /// Run N queries across the runner's blocking lane in parallel.
+    /// Returns results in submission order. On the first query failure,
+    /// returns `error.QueryFailed` (remaining queries have still run).
+    ///
+    /// LIMITATION: all tasks share `self`, which is a single connection.
+    /// If the Geode protocol does not multiplex queries on a single
+    /// stream, tasks will serialize on the stream mutex — parallelism
+    /// here is bounded by the protocol's stream semantics, NOT by the
+    /// number of blocking-lane workers. For true parallelism, use a
+    /// connection pool and call `queryAsync` per pooled client.
+    pub fn queryBatchParallel(
+        self: *GeodeClient,
+        runner: *executor_mod.Executor,
+        queries: []const []const u8,
+        results: []QueryResult,
+    ) !void {
+        if (results.len < queries.len) return error.BufferTooSmall;
+        if (queries.len == 0) return;
+
+        const Slot = struct {
+            client: *GeodeClient,
+            gql: []const u8,
+            result: *QueryResult,
+            err: std.atomic.Value(u32), // 0 = ok, 1 = error
+
+            fn run(raw: *anyopaque, _: *tp.TaskContext) void {
+                const s: *@This() = @ptrCast(@alignCast(raw));
+                const r = s.client.query(s.gql, null) catch {
+                    s.err.store(1, .release);
+                    return;
+                };
+                s.result.* = r;
+            }
+        };
+
+        const slots = try self.allocator.alloc(Slot, queries.len);
+        defer self.allocator.free(slots);
+
+        var wg = runner.waitGroup();
+
+        for (queries, 0..) |gql, i| {
+            slots[i] = .{
+                .client = self,
+                .gql = gql,
+                .result = &results[i],
+                .err = std.atomic.Value(u32).init(0),
+            };
+            _ = runner.pool.submit(Slot.run, &slots[i], .{
+                .lane = .blocking,
+                .backpressure = .block,
+                .wait_group = &wg,
+            }) catch |e| switch (e) {
+                error.BlockingLaneDisabled => {
+                    _ = try runner.pool.submit(Slot.run, &slots[i], .{
+                        .lane = .default,
+                        .backpressure = .block,
+                        .wait_group = &wg,
+                    });
+                },
+                else => return e,
+            };
+        }
+
+        wg.wait();
+
+        for (slots) |s| {
+            if (s.err.load(.acquire) != 0) return error.QueryFailed;
+        }
+    }
+
     /// Automatically generates a UUID v4 request ID for tracing.
     /// The caller may pass an explicit request_id; if null, one is generated.
     pub fn query(self: *GeodeClient, gql: []const u8, params: ?std.StringHashMapUnmanaged([]const u8)) !QueryResult {
