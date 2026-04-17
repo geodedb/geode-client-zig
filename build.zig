@@ -591,6 +591,8 @@ pub fn build(b: *std.Build) void {
 
     benchmark_exe.root_module.addImport("geode_client", geode_client_mod);
     benchmark_exe.root_module.addImport("quic", quic_mod);
+    benchmark_exe.root_module.addImport("executor", executor_mod);
+    benchmark_exe.root_module.addImport("thread_pool", thread_pool_mod);
 
     linkSystemDeps(benchmark_exe, target);
 

@@ -92,10 +92,14 @@
             .url = "git+https://gitlab.com/devnw/zig/metrics.git#3fd133e151d0e9e845b56e131a1ba9539e4149f1",
             .hash = "metrics-0.1.0-uPGXFkNmAQCerT2c-AN7OOWm8eo8H6xhrNqVZyTZVQ5M",
         },
-        // Thread Pool - direct (replaces the concurrency wrapper)
+        // Thread Pool - direct (replaces the concurrency wrapper).
+        // PINNED to the commit that transitive deps (quic, dns, gql,
+        // etc.) also resolve to so the module graph has ONE thread_pool.
+        // Otherwise zig errors with "file exists in modules
+        // build_options and build_options0".
         .thread_pool = .{
-            .url = "git+https://gitlab.com/devnw/zig/thread-pool.git#35be4666d2544bb01ddca00161beab4e1ae370e6",
-            .hash = "thread_pool-0.2.0-11B1BqkGRwCsB2udp5utPOTY1rc_Fs7qFEgRWOAdtJ13",
+            .url = "git+https://gitlab.com/devnw/zig/thread-pool.git#56c109a355eb4316450a216a74cc619b7809183b",
+            .hash = "thread_pool-0.2.0-11B1Bsw4RACrT8yj1Moe2s1sdiDixZE3LPlbj3xLYXDG",
         },
     },
 }

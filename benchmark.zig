@@ -4,6 +4,8 @@
 
 const std = @import("std");
 const geode = @import("geode_client");
+const tp = @import("thread_pool");
+const runner_mod = @import("executor");
 
 // std.time.{nanoTimestamp, timestamp} were removed in zig 0.16.0.
 fn nowNs() i128 {
@@ -105,7 +107,7 @@ fn runWorker(
     return result;
 }
 
-fn workerThread(
+const WorkerCtx = struct {
     result_ptr: *WorkerResult,
     allocator: std.mem.Allocator,
     host: []const u8,
@@ -114,9 +116,20 @@ fn workerThread(
     insecure: bool,
     username: []const u8,
     password: []const u8,
-) void {
-    result_ptr.* = runWorker(allocator, host, port, queries, insecure, username, password);
-}
+
+    fn run(raw: *anyopaque, _: *tp.TaskContext) void {
+        const self: *WorkerCtx = @ptrCast(@alignCast(raw));
+        self.result_ptr.* = runWorker(
+            self.allocator,
+            self.host,
+            self.port,
+            self.queries,
+            self.insecure,
+            self.username,
+            self.password,
+        );
+    }
+};
 
 fn parseArgs(argv: []const [:0]const u8) !struct {
     host: []const u8,
@@ -206,23 +219,43 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var results: [max_workers]WorkerResult = undefined;
-    var threads: [max_workers]?std.Thread = [_]?std.Thread{null} ** max_workers;
+    var contexts: [max_workers]WorkerCtx = undefined;
+
+    // Run each worker on its own blocking-lane thread. Blocking-lane
+    // workers are dedicated to network I/O so they don't starve CPU
+    // tasks — the client's canonical concurrency story.
+    var runner = try runner_mod.Executor.init(allocator, .{
+        .max_threads = args.workers + 2,
+        .blocking_workers = @intCast(args.workers),
+    });
+    defer runner.deinit();
+
+    var wg = runner.waitGroup();
 
     const start = nowNs();
 
-    // Spawn all worker threads
     for (0..args.workers) |i| {
-        threads[i] = try std.Thread.spawn(.{}, workerThread, .{ &results[i], allocator, args.host, args.port, args.queries, args.insecure, args.username, args.password });
+        contexts[i] = .{
+            .result_ptr = &results[i],
+            .allocator = allocator,
+            .host = args.host,
+            .port = args.port,
+            .queries = args.queries,
+            .insecure = args.insecure,
+            .username = args.username,
+            .password = args.password,
+        };
+        _ = try runner.pool.submit(WorkerCtx.run, &contexts[i], .{
+            .lane = .blocking,
+            .backpressure = .block,
+            .wait_group = &wg,
+        });
     }
 
-    // Join all worker threads and collect results
+    wg.wait();
+
     for (0..args.workers) |i| {
-        if (threads[i]) |t| {
-            t.join();
-        }
-
         defer results[i].latencies.deinit(allocator);
-
         for (results[i].latencies.items) |lat| {
             try all_latencies.append(allocator, lat);
         }
