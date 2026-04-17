@@ -24,8 +24,8 @@
         // QuicStream.readLine (handshake stall fix). Must match the geode
         // repo's quic pin so the module graph stays single-copy.
         .quic = .{
-            .url = "git+https://gitlab.com/devnw/zig/quic.git#51c1a033b73e8f80305f8cccc7f792b42206931f",
-            .hash = "quic-0.1.11-gBIqUUxlNgAHRJSmpRgg2LU_nq6vHgNYufwDZXZ2ikCh",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git#4ddabaad21e163b786002a4fe19dee361ef4835d",
+            .hash = "quic-0.1.11-gBIqUcqNNgCFFzncXjCzWbo-OZ1yDy1y4jkvaYU9iBFl",
         },
         // TLS 1.3 library for QUIC
         .tls = .{
