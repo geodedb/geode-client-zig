@@ -72,6 +72,14 @@ pub fn build(b: *std.Build) void {
     });
     const concurrency_mod = concurrency_dep.module("concurrency");
 
+    // Thread Pool - direct dependency for WaitGroup, BatchTask,
+    // sync primitives, and lane_extension scheduler.
+    const thread_pool_dep = b.dependency("thread_pool", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const thread_pool_mod = thread_pool_dep.module("thread_pool");
+
     // ========================================================================
     // Internal Modules (src/)
     // ========================================================================
@@ -474,6 +482,18 @@ pub fn build(b: *std.Build) void {
 
     const run_client_tests = b.addRunArtifact(client_tests);
     test_step.dependOn(&run_client_tests.step);
+
+    // Smoke test: thread_pool module is wired.
+    const tp_smoke = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/smoke_thread_pool.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    tp_smoke.root_module.addImport("thread_pool", thread_pool_mod);
+    const run_tp_smoke = b.addRunArtifact(tp_smoke);
+    test_step.dependOn(&run_tp_smoke.step);
 
     // ========================================================================
     // Integration Tests
