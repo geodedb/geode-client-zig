@@ -19,9 +19,13 @@
         // =======================================================================
 
         // QUIC v1/v2 protocol implementation (RFC 9000) - primary transport
+        // Updated 2026-04-16: pin forward to 51c1a03 — includes the UAF fix
+        // in Endpoint.processExpiredTimers and the 5 ms cadence port in
+        // QuicStream.readLine (handshake stall fix). Must match the geode
+        // repo's quic pin so the module graph stays single-copy.
         .quic = .{
-            .url = "git+https://gitlab.com/devnw/zig/quic.git#b91444816092757ee3105abbe3a0cb1c0cf3aff8",
-            .hash = "quic-0.1.11-gBIqUbJHNgBd6I4ICCxkuHgmEia2OWOF8B6UEQchxnVW",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git#51c1a033b73e8f80305f8cccc7f792b42206931f",
+            .hash = "quic-0.1.11-gBIqUUxlNgAHRJSmpRgg2LU_nq6vHgNYufwDZXZ2ikCh",
         },
         // TLS 1.3 library for QUIC
         .tls = .{
