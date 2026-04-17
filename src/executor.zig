@@ -150,6 +150,19 @@ pub const Executor = struct {
         });
         return .{ .submitted = result.submitted };
     }
+
+    pub const ShutdownMode = enum { drain, cancel_pending };
+
+    /// Graceful shutdown. `drain` waits for running + queued work to
+    /// complete. `cancel_pending` lets running tasks finish but cancels
+    /// queued ones. `timeout_ns` caps the wait; on timeout, workers are
+    /// force-joined (in-flight tasks may still be mid-execution).
+    pub fn shutdown(self: *Executor, mode: ShutdownMode, timeout_ns: ?u64) !void {
+        try self.pool.shutdown(switch (mode) {
+            .drain => .drain,
+            .cancel_pending => .cancel_pending,
+        }, timeout_ns);
+    }
 };
 
 test "Executor.init with no blocking lane uses work_stealing" {
@@ -296,4 +309,27 @@ test "Executor.waitGroup runs fan-out correctly" {
     wg.wait();
 
     try std.testing.expectEqual(N, counter.load(.acquire));
+}
+
+test "Executor.shutdown drain waits for in-flight tasks" {
+    var runner = try Executor.init(std.testing.allocator, .{ .max_threads = 2 });
+
+    var counter = std.atomic.Value(u32).init(0);
+    const Ctx = struct {
+        counter: *std.atomic.Value(u32),
+        fn run(raw: *anyopaque, _: *tp.TaskContext) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            tp.clock.sleep(5 * std.time.ns_per_ms);
+            _ = self.counter.fetchAdd(1, .release);
+        }
+    };
+    var ctx = Ctx{ .counter = &counter };
+
+    _ = try runner.submit(Ctx.run, &ctx, .default);
+    _ = try runner.submit(Ctx.run, &ctx, .default);
+
+    try runner.shutdown(.drain, 1 * std.time.ns_per_s);
+    try std.testing.expectEqual(@as(u32, 2), counter.load(.acquire));
+
+    runner.deinit();
 }
