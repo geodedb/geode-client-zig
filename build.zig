@@ -148,6 +148,7 @@ pub fn build(b: *std.Build) void {
     });
     batch_mod.addImport("types", types_mod);
     batch_mod.addImport("validate", validate_mod);
+    batch_mod.addImport("thread_pool", thread_pool_mod);
 
     // Client metrics module
     const client_metrics_mod = b.createModule(.{
@@ -164,6 +165,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     executor_mod.addImport("thread_pool", thread_pool_mod);
+
+    // batch_mod depends on executor_mod (Batch.runParallel) — declared
+    // after executor_mod exists.
+    batch_mod.addImport("executor", executor_mod);
 
     // Auth module
     const auth_mod = b.createModule(.{
@@ -401,6 +406,8 @@ pub fn build(b: *std.Build) void {
     });
     batch_tests.root_module.addImport("types", types_mod);
     batch_tests.root_module.addImport("validate", validate_mod);
+    batch_tests.root_module.addImport("thread_pool", thread_pool_mod);
+    batch_tests.root_module.addImport("executor", executor_mod);
     const run_batch_tests = b.addRunArtifact(batch_tests);
     test_step.dependOn(&run_batch_tests.step);
 

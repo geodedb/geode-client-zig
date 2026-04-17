@@ -13,6 +13,8 @@ const std = @import("std");
 const types = @import("types");
 const Value = types.Value;
 const validate = @import("validate");
+const runner_mod = @import("executor");
+const tp = @import("thread_pool");
 
 /// Maximum number of queries allowed in a single batch.
 /// This limit prevents resource exhaustion attacks (CWE-400).
@@ -165,6 +167,83 @@ pub const Batch = struct {
     pub fn getQueries(self: Self) []const BatchQuery {
         return self.queries.items;
     }
+
+    /// Per-query callback invoked by `runParallel`. Called concurrently
+    /// from multiple executor workers; each invocation gets its own
+    /// results slot, so the callback itself must be thread-safe with
+    /// respect to `ctx`.
+    pub const InvokeFn = *const fn (
+        ctx: *anyopaque,
+        query: []const u8,
+        params: ?std.StringHashMap(Value),
+    ) BatchResult;
+
+    /// Run every query in this batch concurrently on the runner's
+    /// blocking lane (falls back to default lane if no blocking lane
+    /// is configured). `results` must be ≥ `batch.count()` long.
+    /// Rejects transactional batches — those require sequential
+    /// execution in a single session.
+    pub fn runParallel(
+        self: *const Batch,
+        runner: *runner_mod.Executor,
+        results: []BatchResult,
+        ctx: *anyopaque,
+        invoke: InvokeFn,
+    ) !void {
+        if (results.len < self.queries.items.len) return error.BufferTooSmall;
+        if (self.queries.items.len == 0) return;
+        if (self.transactional) return error.TransactionalBatchMustBeSequential;
+
+        const Slot = struct {
+            ctx: *anyopaque,
+            query: []const u8,
+            params: ?std.StringHashMap(Value),
+            result: *BatchResult,
+            invoke: InvokeFn,
+            index: usize,
+
+            fn run(raw: *anyopaque, _: *tp.TaskContext) void {
+                const slot: *@This() = @ptrCast(@alignCast(raw));
+                var r = slot.invoke(slot.ctx, slot.query, slot.params);
+                r.index = slot.index;
+                slot.result.* = r;
+            }
+        };
+
+        const slots = try self.allocator.alloc(Slot, self.queries.items.len);
+        defer self.allocator.free(slots);
+
+        var wg = runner.waitGroup();
+
+        for (self.queries.items, 0..) |q, i| {
+            slots[i] = .{
+                .ctx = ctx,
+                .query = q.query,
+                .params = q.params,
+                .result = &results[i],
+                .invoke = invoke,
+                .index = i,
+            };
+            // Prefer blocking lane (per-query work is network I/O);
+            // fall back to default if the runner wasn't built with one.
+            _ = runner.pool.submit(Slot.run, &slots[i], .{
+                .lane = .blocking,
+                .backpressure = .block,
+                .wait_group = &wg,
+            }) catch |err| switch (err) {
+                error.BlockingLaneDisabled => {
+                    _ = try runner.pool.submit(Slot.run, &slots[i], .{
+                        .lane = .default,
+                        .backpressure = .block,
+                        .wait_group = &wg,
+                    });
+                },
+                else => return err,
+            };
+        }
+
+        wg.wait();
+    }
 };
 
 /// Builder for creating batches with a fluent API.
@@ -224,6 +303,11 @@ pub const BatchError = error{
     BatchSizeLimitExceeded,
     /// Query in batch failed validation
     InvalidQuery,
+    /// runParallel called on a transactional batch — those must be
+    /// executed sequentially in a single session.
+    TransactionalBatchMustBeSequential,
+    /// runParallel's results buffer is shorter than batch.count()
+    BufferTooSmall,
 };
 
 // =============================================================================
@@ -376,4 +460,80 @@ test "BatchBuilder query enforces size limit" {
     // Verify builder correctly passes through to batch add
     _ = try builder.query("MATCH (n) RETURN n");
     try std.testing.expectEqual(@as(usize, 1), builder.getBatch().count());
+}
+
+test "Batch.runParallel runs each query on the runner" {
+    var runner = try runner_mod.Executor.init(std.testing.allocator, .{
+        .max_threads = 4,
+    });
+    defer runner.deinit();
+
+    var batch = Batch.init(std.testing.allocator);
+    defer batch.deinit();
+    _ = try batch.add("RETURN 1");
+    _ = try batch.add("RETURN 2");
+    _ = try batch.add("RETURN 3");
+
+    var call_count = std.atomic.Value(u32).init(0);
+    const Stub = struct {
+        counter: *std.atomic.Value(u32),
+        fn invoke(self_opaque: *anyopaque, _: []const u8, _: ?std.StringHashMap(Value)) BatchResult {
+            const self: *@This() = @ptrCast(@alignCast(self_opaque));
+            _ = self.counter.fetchAdd(1, .release);
+            return BatchResult.ok(0, 0);
+        }
+    };
+    var stub_ctx = Stub{ .counter = &call_count };
+
+    var results: [3]BatchResult = undefined;
+    try batch.runParallel(&runner, &results, @ptrCast(&stub_ctx), Stub.invoke);
+
+    try std.testing.expectEqual(@as(u32, 3), call_count.load(.acquire));
+    for (results) |r| try std.testing.expect(r.success);
+}
+
+test "Batch.runParallel rejects transactional batches" {
+    var runner = try runner_mod.Executor.init(std.testing.allocator, .{ .max_threads = 2 });
+    defer runner.deinit();
+
+    var batch = Batch.init(std.testing.allocator);
+    defer batch.deinit();
+    _ = try batch.add("RETURN 1");
+    _ = batch.withTransaction(true);
+
+    var results: [1]BatchResult = undefined;
+    var dummy: u8 = 0;
+    const noop = struct {
+        fn call(_: *anyopaque, _: []const u8, _: ?std.StringHashMap(Value)) BatchResult {
+            return BatchResult.ok(0, 0);
+        }
+    }.call;
+
+    try std.testing.expectError(
+        error.TransactionalBatchMustBeSequential,
+        batch.runParallel(&runner, &results, @ptrCast(&dummy), noop),
+    );
+}
+
+test "Batch.runParallel rejects undersized results buffer" {
+    var runner = try runner_mod.Executor.init(std.testing.allocator, .{ .max_threads = 2 });
+    defer runner.deinit();
+
+    var batch = Batch.init(std.testing.allocator);
+    defer batch.deinit();
+    _ = try batch.add("RETURN 1");
+    _ = try batch.add("RETURN 2");
+
+    var results: [1]BatchResult = undefined;
+    var dummy: u8 = 0;
+    const noop = struct {
+        fn call(_: *anyopaque, _: []const u8, _: ?std.StringHashMap(Value)) BatchResult {
+            return BatchResult.ok(0, 0);
+        }
+    }.call;
+
+    try std.testing.expectError(
+        error.BufferTooSmall,
+        batch.runParallel(&runner, &results, @ptrCast(&dummy), noop),
+    );
 }
