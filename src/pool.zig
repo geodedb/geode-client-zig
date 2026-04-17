@@ -211,6 +211,7 @@ pub fn Pool(comptime ConnectionType: type) type {
         next_id: u64,
         closed: bool,
         executor: ?PoolExecutor,
+        sweeper_running: std.atomic.Value(bool),
 
         // Phantom field to track connection type
         _connection_type: ?ConnectionType = null,
@@ -236,6 +237,7 @@ pub fn Pool(comptime ConnectionType: type) type {
                 .next_id = 0,
                 .closed = false,
                 .executor = executor,
+                .sweeper_running = std.atomic.Value(bool).init(false),
             };
         }
 
@@ -248,8 +250,10 @@ pub fn Pool(comptime ConnectionType: type) type {
         }
 
         /// Close the pool and all connections.
-        /// Also stops the executor if one was configured.
+        /// Signals the sweeper loop to stop, then tears down the executor
+        /// (which joins the sweeper worker). Safe to call once.
         pub fn deinit(self: *Self) void {
+            self.stopIdleSweeper();
             if (self.executor) |*exec| exec.deinit();
 
             self.mutex.lock();
@@ -419,6 +423,46 @@ pub fn Pool(comptime ConnectionType: type) type {
                 }
             }.run;
             return self.executor.?.submit(sweep, self);
+        }
+
+        /// Start a background loop on the executor that runs
+        /// `cleanupExpired` every `health_check_interval_ms`. Idempotent
+        /// (a second call is a no-op). Requires an executor.
+        pub fn startIdleSweeper(self: *Self) !void {
+            if (self.executor == null) return error.NoExecutor;
+            if (self.sweeper_running.swap(true, .acq_rel)) return;
+
+            const loop = struct {
+                const tick_ns: u64 = 100 * std.time.ns_per_ms;
+
+                fn run(raw: *anyopaque, _: *tp.TaskContext) void {
+                    const pool: *Self = @ptrCast(@alignCast(raw));
+                    const interval_ns = @as(u64, pool.config.health_check_interval_ms) *
+                        std.time.ns_per_ms;
+                    while (pool.sweeper_running.load(.acquire)) {
+                        _ = pool.cleanupExpired();
+                        // Sleep in ≤100ms chunks so stopIdleSweeper
+                        // observes the flag promptly — bounds shutdown
+                        // latency to ~100ms regardless of interval.
+                        var remaining = interval_ns;
+                        while (remaining > 0 and pool.sweeper_running.load(.acquire)) {
+                            const step = @min(remaining, tick_ns);
+                            tp.clock.sleep(step);
+                            remaining -= step;
+                        }
+                    }
+                }
+            }.run;
+
+            _ = try self.executor.?.submit(loop, self);
+        }
+
+        /// Signal the background sweeper to stop. Returns immediately;
+        /// the sweeper exits on its next wake (bounded by
+        /// `health_check_interval_ms`). `deinit` calls this before
+        /// tearing down the executor.
+        pub fn stopIdleSweeper(self: *Self) void {
+            self.sweeper_running.store(false, .release);
         }
 
         // Internal: create a new connection entry
@@ -720,4 +764,48 @@ test "Pool.cleanupExpiredAsync returns NoExecutor without executor" {
     defer pool.deinit();
 
     try std.testing.expectError(error.NoExecutor, pool.cleanupExpiredAsync());
+}
+
+test "Pool.startIdleSweeper ticks and reaps idle connections" {
+    const TestPool = Pool(TestConnection);
+    var cfg = PoolConfig.init();
+    _ = cfg.withExecutor(.{ .num_threads = 2 });
+    cfg.idle_timeout_ms = 5;
+    cfg.health_check_interval_ms = 10;
+    cfg.min_size = 0;
+
+    var pool = try TestPool.init(std.testing.allocator, Config.init(), cfg);
+    defer pool.deinit();
+
+    // Seed an idle connection.
+    const c = try pool.acquire();
+    pool.release(c);
+    try std.testing.expect(pool.available() >= 1);
+
+    try pool.startIdleSweeper();
+
+    // Give the sweeper several intervals to run.
+    tp.clock.sleep(80 * std.time.ns_per_ms);
+
+    try std.testing.expectEqual(@as(u32, 0), pool.size());
+}
+
+test "Pool.startIdleSweeper is idempotent" {
+    const TestPool = Pool(TestConnection);
+    var cfg = PoolConfig.init();
+    _ = cfg.withExecutor(.{ .num_threads = 2 });
+
+    var pool = try TestPool.init(std.testing.allocator, Config.init(), cfg);
+    defer pool.deinit();
+
+    try pool.startIdleSweeper();
+    try pool.startIdleSweeper(); // no-op
+}
+
+test "Pool.startIdleSweeper without executor errors" {
+    const TestPool = Pool(TestConnection);
+    var pool = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    defer pool.deinit();
+
+    try std.testing.expectError(error.NoExecutor, pool.startIdleSweeper());
 }
