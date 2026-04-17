@@ -99,7 +99,6 @@ External dependencies are managed via `build.zig.zon` with git URL references:
 - **slog**: Structured logging (slog-style, multiple handlers)
 - **uri**: URI/URL parsing (RFC 3986)
 - **strings**: Unicode string library with SIMD acceleration
-- **spice**: Fork/join parallelism
 
 **Client Libraries** (aligned with Geode server):
 
