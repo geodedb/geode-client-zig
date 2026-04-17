@@ -112,6 +112,44 @@ pub const Executor = struct {
     pub fn waitGroup(self: *Executor) tp.WaitGroup {
         return self.pool.waitGroup();
     }
+
+    /// Result of a `submitBatch` call. `submitted` is the number of
+    /// tasks that were successfully enqueued; with
+    /// `backpressure = .return_error`, this may be less than
+    /// `tasks.len` if the target queue filled mid-batch.
+    pub const SubmitBatchResult = struct {
+        submitted: usize,
+    };
+
+    /// Submit N tasks as a single batch, associating each with `wg` so
+    /// the caller can `wg.wait()` for the whole fan-out without
+    /// retaining individual handles.
+    ///
+    /// IMPORTANT: thread_pool auto-calls `wg.add(1)` per submitted task
+    /// (see thread_pool/src/pool.zig `enqueuePush`). The caller MUST NOT
+    /// pre-add — doing so would leave the WaitGroup permanently non-zero
+    /// and `wg.wait()` would deadlock.
+    ///
+    /// Uses `.return_error` backpressure — if the queue fills partway
+    /// through, returns a partial result with `submitted < tasks.len`.
+    /// Tasks that were not enqueued are NOT counted against the WaitGroup
+    /// (thread_pool calls `wg.done()` on the failed-enqueue path).
+    pub fn submitBatch(
+        self: *Executor,
+        tasks: []const tp.BatchTask,
+        lane: Lane,
+        wg: *tp.WaitGroup,
+    ) !SubmitBatchResult {
+        const result = try self.pool.submitBatch(tasks, .{
+            .lane = switch (lane) {
+                .default => .default,
+                .blocking => .blocking,
+            },
+            .backpressure = .return_error,
+            .wait_group = wg,
+        });
+        return .{ .submitted = result.submitted };
+    }
 };
 
 test "Executor.init with no blocking lane uses work_stealing" {
@@ -199,6 +237,35 @@ test "Executor.submit routes to blocking lane when configured" {
     try runner.wait(handle);
 
     try std.testing.expect(completed.load(.acquire));
+}
+
+test "Executor.submitBatch submits N tasks atomically" {
+    var runner = try Executor.init(std.testing.allocator, .{ .max_threads = 4 });
+    defer runner.deinit();
+
+    var counter = std.atomic.Value(u32).init(0);
+
+    const Ctx = struct {
+        counter: *std.atomic.Value(u32),
+        fn run(raw: *anyopaque, _: *tp.TaskContext) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            _ = self.counter.fetchAdd(1, .release);
+        }
+    };
+    var ctx = Ctx{ .counter = &counter };
+
+    var batch: [8]tp.BatchTask = undefined;
+    for (&batch) |*task| {
+        task.* = .{ .task_fn = Ctx.run, .ctx = &ctx };
+    }
+
+    // submitBatch auto-adds to the WaitGroup per task — do NOT pre-add.
+    var wg = runner.waitGroup();
+    const result = try runner.submitBatch(&batch, .default, &wg);
+    try std.testing.expectEqual(@as(usize, batch.len), result.submitted);
+    wg.wait();
+
+    try std.testing.expectEqual(@as(u32, 8), counter.load(.acquire));
 }
 
 test "Executor.waitGroup runs fan-out correctly" {
