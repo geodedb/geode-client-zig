@@ -530,6 +530,22 @@ pub fn build(b: *std.Build) void {
     const run_integration_tests = b.addRunArtifact(integration_tests);
     integration_test_step.dependOn(&run_integration_tests.step);
 
+    // Executor integration test (live Geode server required)
+    const runner_integration_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/executor_integration.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    runner_integration_tests.root_module.addImport("thread_pool", thread_pool_mod);
+    runner_integration_tests.root_module.addImport("executor", executor_mod);
+    runner_integration_tests.root_module.addImport("geode_client", geode_client_mod);
+    runner_integration_tests.root_module.addImport("quic", quic_mod);
+    linkSystemDeps(runner_integration_tests, target);
+    const run_runner_integration_tests = b.addRunArtifact(runner_integration_tests);
+    integration_test_step.dependOn(&run_runner_integration_tests.step);
+
     // ========================================================================
     // Benchmarks
     // ========================================================================
