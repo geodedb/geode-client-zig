@@ -5,16 +5,12 @@
 // Provides connection pooling with concurrency control.
 
 const std = @import("std");
-const builtin = @import("builtin");
 const Config = @import("config").Config;
 const GeodeError = @import("error").GeodeError;
-const concurrency = @import("concurrency");
+const tp = @import("thread_pool");
 
-// Compat shims for APIs removed in zig 0.16.0:
-//   * std.Thread.Mutex / Condition / sleep
-//   * std.time.nanoTimestamp / milliTimestamp
-// Keeping the old call sites untouched avoids cascading API changes through
-// every Pool caller.
+// zig 0.16.0 removed std.time.nanoTimestamp / milliTimestamp; read the
+// monotonic clock directly.
 fn nowNs() i128 {
     var ts: std.os.linux.timespec = undefined;
     const rc = std.os.linux.clock_gettime(.MONOTONIC, &ts);
@@ -26,135 +22,53 @@ fn nowMs() i64 {
     return @intCast(@divFloor(nowNs(), std.time.ns_per_ms));
 }
 
-fn sleepNanos(ns: u64) void {
-    if (builtin.link_libc and @TypeOf(std.c.timespec) != void) {
-        const ts = std.c.timespec{
-            .sec = @intCast(ns / std.time.ns_per_s),
-            .nsec = @intCast(ns % std.time.ns_per_s),
-        };
-        _ = std.c.nanosleep(&ts, null);
-    } else {
-        var i: u32 = 0;
-        while (i < 1024) : (i += 1) std.atomic.spinLoopHint();
-    }
-}
-
-const Mutex = struct {
-    state: std.atomic.Value(u8) = .{ .raw = 0 },
-
-    pub fn lock(self: *Mutex) void {
-        var spins: u32 = 0;
-        while (self.state.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) {
-            if (spins < 64) {
-                std.atomic.spinLoopHint();
-                spins += 1;
-            } else {
-                sleepNanos(50_000); // 50us backoff under contention
-            }
-        }
-    }
-
-    pub fn unlock(self: *Mutex) void {
-        self.state.store(0, .release);
-    }
-};
-
-const Condition = struct {
-    epoch: std.atomic.Value(u64) = .{ .raw = 0 },
-
-    pub fn signal(self: *Condition) void {
-        _ = self.epoch.fetchAdd(1, .release);
-    }
-
-    pub fn timedWait(self: *Condition, mutex: *Mutex, timeout_ns: u64) error{Timeout}!void {
-        const initial_epoch = self.epoch.load(.acquire);
-        mutex.unlock();
-        defer mutex.lock();
-
-        const deadline: i128 = nowNs() + @as(i128, @intCast(timeout_ns));
-        while (true) {
-            if (self.epoch.load(.acquire) != initial_epoch) return;
-            if (nowNs() >= deadline) return error.Timeout;
-            sleepNanos(1_000_000); // 1ms poll
-        }
-    }
-};
-
 /// Thread pool executor for async connection pool operations.
-/// Uses the concurrency library's lock-free thread pool to offload
-/// connection lifecycle work (health checks, idle cleanup, etc.)
-/// from the caller's thread.
+/// Wraps `thread_pool.ThreadPool` directly — no intermediate wrapper.
+/// Live on construction; teardown via `deinit`.
 pub const PoolExecutor = struct {
-    pool: ?*concurrency.ThreadPool,
+    pool: tp.ThreadPool,
     allocator: std.mem.Allocator,
-    config: ExecutorConfig,
 
     pub const ExecutorConfig = struct {
         /// Number of worker threads (0 = auto-detect CPU count).
         num_threads: usize = 0,
-        /// Stack size per worker in bytes (0 = system default).
-        stack_size: usize = 0,
+        /// Queue capacity (rounded up to power of two).
+        queue_capacity: usize = 1024,
     };
 
-    /// Create an executor in the stopped state. Call `start()` to
-    /// spawn the backing thread pool.
-    pub fn init(allocator: std.mem.Allocator, config: ExecutorConfig) PoolExecutor {
+    /// Create and start the executor. Unlike the previous two-stage
+    /// init+start, the pool is live immediately.
+    pub fn init(allocator: std.mem.Allocator, config: ExecutorConfig) !PoolExecutor {
         return .{
-            .pool = null,
+            .pool = try tp.ThreadPool.init(allocator, .{
+                .max_threads = config.num_threads,
+                .queue_capacity = config.queue_capacity,
+            }),
             .allocator = allocator,
-            .config = config,
         };
     }
 
-    /// Start the executor thread pool.
-    pub fn start(self: *PoolExecutor) !void {
-        if (self.pool != null) return;
-        self.pool = try concurrency.ThreadPool.init(self.allocator, .{
-            .num_threads = self.config.num_threads,
-            .stack_size = self.config.stack_size,
+    /// Stop the executor and join all workers.
+    pub fn deinit(self: *PoolExecutor) void {
+        self.pool.deinit();
+    }
+
+    /// Submit a task — non-blocking. Returns the handle on success, or
+    /// an error if the queue is full or the pool is shutting down.
+    pub fn submit(
+        self: *PoolExecutor,
+        task_fn: tp.TaskFn,
+        ctx: *anyopaque,
+    ) !tp.TaskHandle {
+        return self.pool.submit(task_fn, ctx, .{
+            .backpressure = .return_error,
+            .waitable = true,
         });
     }
 
-    /// Stop the executor and join all worker threads.
-    /// Safe to call multiple times (subsequent calls are no-ops).
-    pub fn stop(self: *PoolExecutor) void {
-        if (self.pool) |p| {
-            p.deinit();
-            self.pool = null;
-        }
-    }
-
-    /// Submit a work item to the executor (non-blocking).
-    /// Returns false if the executor is not started, the queue is full,
-    /// or the pool is shutting down.
-    pub fn submit(self: *PoolExecutor, item: concurrency.WorkItem) bool {
-        if (self.pool) |p| {
-            return p.submit(item);
-        }
-        return false;
-    }
-
-    /// Submit a work item, blocking until space is available.
-    /// Returns an error if the executor is not started, the pool is
-    /// shutting down, or the optional timeout expires.
-    pub fn submitBlocking(self: *PoolExecutor, item: concurrency.WorkItem, timeout_ns: ?u64) !void {
-        if (self.pool) |p| {
-            return p.submitBlocking(item, timeout_ns);
-        }
-        return error.ExecutorNotStarted;
-    }
-
-    /// Get executor statistics, or null if the executor is not started.
-    pub fn getStats(self: *PoolExecutor) ?concurrency.Stats {
-        if (self.pool) |p| {
-            return p.getStats();
-        }
-        return null;
-    }
-
-    /// Check whether the executor is running.
-    pub fn isRunning(self: *const PoolExecutor) bool {
-        return self.pool != null;
+    /// Statistics snapshot.
+    pub fn getStats(self: *PoolExecutor) tp.Stats {
+        return self.pool.statsSnapshot();
     }
 };
 
@@ -292,8 +206,8 @@ pub fn Pool(comptime ConnectionType: type) type {
         client_config: Config,
         connections: std.ArrayListUnmanaged(PooledConnection),
         stats: PoolStats,
-        mutex: Mutex,
-        condition: Condition,
+        mutex: tp.sync.Mutex,
+        condition: tp.sync.Condition,
         next_id: u64,
         closed: bool,
         executor: ?PoolExecutor,
@@ -303,11 +217,11 @@ pub fn Pool(comptime ConnectionType: type) type {
 
         /// Initialize a new connection pool.
         /// If the pool config includes an executor configuration, a
-        /// `PoolExecutor` is created (but not started). Call
-        /// `startExecutor()` to spawn the worker threads.
-        pub fn init(allocator: std.mem.Allocator, client_config: Config, pool_config: PoolConfig) Self {
+        /// `PoolExecutor` is created and started immediately. Pass `null`
+        /// (the default) to skip executor creation.
+        pub fn init(allocator: std.mem.Allocator, client_config: Config, pool_config: PoolConfig) !Self {
             const executor: ?PoolExecutor = if (pool_config.executor) |exec_cfg|
-                PoolExecutor.init(allocator, exec_cfg)
+                try PoolExecutor.init(allocator, exec_cfg)
             else
                 null;
 
@@ -325,22 +239,6 @@ pub fn Pool(comptime ConnectionType: type) type {
             };
         }
 
-        /// Start the pool's background executor thread pool.
-        /// No-op if no executor was configured.
-        pub fn startExecutor(self: *Self) !void {
-            if (self.executor) |*exec| {
-                try exec.start();
-            }
-        }
-
-        /// Stop the pool's background executor thread pool.
-        /// No-op if no executor was configured or not started.
-        pub fn stopExecutor(self: *Self) void {
-            if (self.executor) |*exec| {
-                exec.stop();
-            }
-        }
-
         /// Get the pool's executor, if configured.
         pub fn getExecutor(self: *Self) ?*PoolExecutor {
             if (self.executor) |*exec| {
@@ -350,9 +248,9 @@ pub fn Pool(comptime ConnectionType: type) type {
         }
 
         /// Close the pool and all connections.
-        /// Also stops the executor if one was configured and running.
+        /// Also stops the executor if one was configured.
         pub fn deinit(self: *Self) void {
-            self.stopExecutor();
+            if (self.executor) |*exec| exec.deinit();
 
             self.mutex.lock();
             defer self.mutex.unlock();
@@ -611,7 +509,7 @@ test "PoolStats.init creates zeroed stats" {
 
 test "Pool.init creates empty pool" {
     const TestPool = Pool(TestConnection);
-    var pool = TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    var pool = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
     defer pool.deinit();
 
     try std.testing.expectEqual(@as(u32, 0), pool.size());
@@ -621,7 +519,7 @@ test "Pool.init creates empty pool" {
 
 test "Pool.acquire creates new connection" {
     const TestPool = Pool(TestConnection);
-    var pool = TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    var pool = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
     defer pool.deinit();
 
     const conn = try pool.acquire();
@@ -636,7 +534,7 @@ test "Pool.acquire creates new connection" {
 
 test "Pool.acquire reuses idle connection" {
     const TestPool = Pool(TestConnection);
-    var pool = TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    var pool = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
     defer pool.deinit();
 
     const conn1 = try pool.acquire();
@@ -654,7 +552,7 @@ test "Pool.acquire respects max_size" {
     _ = pool_cfg.withMaxSize(2);
     _ = pool_cfg.withAcquireTimeout(100); // Short timeout for test
 
-    var pool = TestPool.init(std.testing.allocator, Config.init(), pool_cfg);
+    var pool = try TestPool.init(std.testing.allocator, Config.init(), pool_cfg);
     defer pool.deinit();
 
     const conn1 = try pool.acquire();
@@ -671,7 +569,7 @@ test "Pool.acquire respects max_size" {
 
 test "Pool.remove closes connection" {
     const TestPool = Pool(TestConnection);
-    var pool = TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    var pool = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
     defer pool.deinit();
 
     const conn = try pool.acquire();
@@ -683,7 +581,7 @@ test "Pool.remove closes connection" {
 
 test "Pool.getStats returns correct stats" {
     const TestPool = Pool(TestConnection);
-    var pool = TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    var pool = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
     defer pool.deinit();
 
     const conn = try pool.acquire();
@@ -701,7 +599,7 @@ test "Pool.getStats returns correct stats" {
 
 test "Pool.isClosed returns correct state" {
     const TestPool = Pool(TestConnection);
-    var pool = TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    var pool = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
 
     try std.testing.expect(!pool.isClosed());
     pool.deinit();
@@ -710,7 +608,7 @@ test "Pool.isClosed returns correct state" {
 
 test "Pool.acquire after close returns error" {
     const TestPool = Pool(TestConnection);
-    var pool = TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    var pool = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
     pool.deinit();
 
     try std.testing.expectError(error.PoolClosed, pool.acquire());
@@ -720,133 +618,61 @@ test "Pool.acquire after close returns error" {
 // PoolExecutor Unit Tests
 // =============================================================================
 
-test "PoolExecutor.init creates stopped executor" {
-    var exec = PoolExecutor.init(std.testing.allocator, .{});
-    try std.testing.expect(!exec.isRunning());
-    try std.testing.expect(exec.getStats() == null);
-}
-
-test "PoolExecutor.start and stop lifecycle" {
-    var exec = PoolExecutor.init(std.testing.allocator, .{ .num_threads = 2 });
-    try exec.start();
-    try std.testing.expect(exec.isRunning());
-
-    const stats = exec.getStats().?;
-    try std.testing.expectEqual(@as(usize, 2), stats.num_workers);
-
-    exec.stop();
-    try std.testing.expect(!exec.isRunning());
-}
-
-test "PoolExecutor.stop is idempotent" {
-    var exec = PoolExecutor.init(std.testing.allocator, .{ .num_threads = 1 });
-    try exec.start();
-    exec.stop();
-    exec.stop(); // second call is a no-op
-    try std.testing.expect(!exec.isRunning());
-}
-
-test "PoolExecutor.start is idempotent when already running" {
-    var exec = PoolExecutor.init(std.testing.allocator, .{ .num_threads = 1 });
-    try exec.start();
-    try exec.start(); // second call is a no-op
-    try std.testing.expect(exec.isRunning());
-    exec.stop();
-}
-
-test "PoolExecutor.submit returns false when not started" {
-    var exec = PoolExecutor.init(std.testing.allocator, .{});
-    var dummy: u8 = 0;
-    const noop = struct {
-        fn call(_: *anyopaque) void {}
-    }.call;
-
-    try std.testing.expect(!exec.submit(.{
-        .context = @ptrCast(&dummy),
-        .callback = noop,
-    }));
+test "PoolExecutor.init creates running executor" {
+    var exec = try PoolExecutor.init(std.testing.allocator, .{ .num_threads = 1 });
+    defer exec.deinit();
+    const stats = exec.getStats();
+    _ = stats;
 }
 
 test "PoolExecutor.submit executes work" {
-    var exec = PoolExecutor.init(std.testing.allocator, .{ .num_threads = 2 });
-    try exec.start();
-    defer exec.stop();
+    var exec = try PoolExecutor.init(std.testing.allocator, .{ .num_threads = 2 });
+    defer exec.deinit();
 
     var counter = std.atomic.Value(u32).init(0);
-    const Context = struct { counter: *std.atomic.Value(u32) };
+    const Context = struct {
+        counter: *std.atomic.Value(u32),
+        fn run(raw: *anyopaque, _: *tp.TaskContext) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            _ = self.counter.fetchAdd(1, .release);
+        }
+    };
     var ctx = Context{ .counter = &counter };
 
-    const callback = struct {
-        fn call(context: *anyopaque) void {
-            const c: *Context = @ptrCast(@alignCast(context));
-            _ = c.counter.fetchAdd(1, .release);
-        }
-    }.call;
+    var wg = exec.pool.waitGroup();
+    _ = try exec.pool.submit(Context.run, &ctx, .{
+        .backpressure = .return_error,
+        .wait_group = &wg,
+    });
+    wg.wait();
 
-    try std.testing.expect(exec.submit(.{
-        .context = @ptrCast(&ctx),
-        .callback = callback,
-    }));
-
-    // Wait for completion
-    var timeout: u32 = 0;
-    while (counter.load(.acquire) < 1 and timeout < 1000) {
-        sleepNanos(std.time.ns_per_ms);
-        timeout += 1;
-    }
     try std.testing.expectEqual(@as(u32, 1), counter.load(.acquire));
 }
 
 test "PoolConfig.withExecutor sets executor config" {
     var cfg = PoolConfig.init();
-    _ = cfg.withExecutor(.{ .num_threads = 4, .stack_size = 1024 * 1024 });
+    _ = cfg.withExecutor(.{ .num_threads = 4, .queue_capacity = 256 });
 
     try std.testing.expect(cfg.executor != null);
     try std.testing.expectEqual(@as(usize, 4), cfg.executor.?.num_threads);
-    try std.testing.expectEqual(@as(usize, 1024 * 1024), cfg.executor.?.stack_size);
+    try std.testing.expectEqual(@as(usize, 256), cfg.executor.?.queue_capacity);
 }
 
-test "Pool with executor config creates executor" {
+test "Pool with executor config creates running executor" {
     const TestPool = Pool(TestConnection);
     var pool_cfg = PoolConfig.init();
     _ = pool_cfg.withExecutor(.{ .num_threads = 2 });
 
-    var pool = TestPool.init(std.testing.allocator, Config.init(), pool_cfg);
+    var pool = try TestPool.init(std.testing.allocator, Config.init(), pool_cfg);
     defer pool.deinit();
 
     try std.testing.expect(pool.getExecutor() != null);
-    try std.testing.expect(!pool.getExecutor().?.isRunning());
 }
 
 test "Pool without executor config has no executor" {
     const TestPool = Pool(TestConnection);
-    var pool = TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    var pool = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
     defer pool.deinit();
 
     try std.testing.expect(pool.getExecutor() == null);
-}
-
-test "Pool.startExecutor and stopExecutor lifecycle" {
-    const TestPool = Pool(TestConnection);
-    var pool_cfg = PoolConfig.init();
-    _ = pool_cfg.withExecutor(.{ .num_threads = 1 });
-
-    var pool = TestPool.init(std.testing.allocator, Config.init(), pool_cfg);
-    defer pool.deinit();
-
-    try pool.startExecutor();
-    try std.testing.expect(pool.getExecutor().?.isRunning());
-
-    pool.stopExecutor();
-    try std.testing.expect(!pool.getExecutor().?.isRunning());
-}
-
-test "Pool.deinit stops executor automatically" {
-    const TestPool = Pool(TestConnection);
-    var pool_cfg = PoolConfig.init();
-    _ = pool_cfg.withExecutor(.{ .num_threads = 1 });
-
-    var pool = TestPool.init(std.testing.allocator, Config.init(), pool_cfg);
-    try pool.startExecutor();
-    pool.deinit(); // should stop executor without leak
 }

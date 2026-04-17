@@ -65,13 +65,6 @@ pub fn build(b: *std.Build) void {
     });
     const metrics_mod = metrics_dep.module("metrics");
 
-    // Concurrency - Thread pool and bounded MPMC queue
-    const concurrency_dep = b.dependency("concurrency", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const concurrency_mod = concurrency_dep.module("concurrency");
-
     // Thread Pool - direct dependency for WaitGroup, BatchTask,
     // sync primitives, and lane_extension scheduler.
     const thread_pool_dep = b.dependency("thread_pool", .{
@@ -135,7 +128,7 @@ pub fn build(b: *std.Build) void {
     });
     pool_mod.addImport("config", cfg_mod);
     pool_mod.addImport("error", error_mod);
-    pool_mod.addImport("concurrency", concurrency_mod);
+    pool_mod.addImport("thread_pool", thread_pool_mod);
     pool_mod.addImport("metrics", metrics_mod);
 
     // Prepared statement module
@@ -369,7 +362,7 @@ pub fn build(b: *std.Build) void {
     });
     pool_tests.root_module.addImport("config", cfg_mod);
     pool_tests.root_module.addImport("error", error_mod);
-    pool_tests.root_module.addImport("concurrency", concurrency_mod);
+    pool_tests.root_module.addImport("thread_pool", thread_pool_mod);
     pool_tests.root_module.addImport("metrics", metrics_mod);
     const run_pool_tests = b.addRunArtifact(pool_tests);
     test_step.dependOn(&run_pool_tests.step);

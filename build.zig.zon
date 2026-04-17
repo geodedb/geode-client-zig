@@ -92,11 +92,7 @@
             .url = "git+https://gitlab.com/devnw/zig/metrics.git#3fd133e151d0e9e845b56e131a1ba9539e4149f1",
             .hash = "metrics-0.1.0-uPGXFkNmAQCerT2c-AN7OOWm8eo8H6xhrNqVZyTZVQ5M",
         },
-        // Concurrency - Thread pool and bounded MPMC queue
-        .concurrency = .{
-            .url = "git+https://gitlab.com/devnw/zig/concurrency.git#b97b643efd271f00ced191c4679f5ef511cdb557",
-            .hash = "concurrency-0.1.0-MDWSwkd2AABlmMqznOeVNRslD74AhEwPbSxdoDoPiVmS",
-        },
+        // Thread Pool - direct (replaces the concurrency wrapper)
         .thread_pool = .{
             .url = "git+https://gitlab.com/devnw/zig/thread-pool.git#35be4666d2544bb01ddca00161beab4e1ae370e6",
             .hash = "thread_pool-0.2.0-11B1BqkGRwCsB2udp5utPOTY1rc_Fs7qFEgRWOAdtJ13",

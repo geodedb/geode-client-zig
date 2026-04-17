@@ -591,14 +591,14 @@ const TestConnection = struct {
 
 fn benchPoolCreate(allocator: std.mem.Allocator) void {
     const TestPool = Pool(TestConnection);
-    var pool = TestPool.init(allocator, Config.init(), PoolConfig.init());
+    var pool = TestPool.init(allocator, Config.init(), PoolConfig.init()) catch unreachable;
     defer pool.deinit();
     std.mem.doNotOptimizeAway(&pool);
 }
 
 fn benchPoolAcquireRelease(allocator: std.mem.Allocator) void {
     const TestPool = Pool(TestConnection);
-    var pool = TestPool.init(allocator, Config.init(), PoolConfig.init());
+    var pool = TestPool.init(allocator, Config.init(), PoolConfig.init()) catch unreachable;
     defer pool.deinit();
 
     const conn = pool.acquire() catch unreachable;
@@ -608,7 +608,7 @@ fn benchPoolAcquireRelease(allocator: std.mem.Allocator) void {
 
 fn benchPoolReuseConnection(allocator: std.mem.Allocator) void {
     const TestPool = Pool(TestConnection);
-    var pool = TestPool.init(allocator, Config.init(), PoolConfig.init());
+    var pool = TestPool.init(allocator, Config.init(), PoolConfig.init()) catch unreachable;
     defer pool.deinit();
 
     // Acquire, release, and reacquire to test connection reuse
@@ -621,7 +621,7 @@ fn benchPoolReuseConnection(allocator: std.mem.Allocator) void {
 
 fn benchPoolStats(allocator: std.mem.Allocator) void {
     const TestPool = Pool(TestConnection);
-    var pool = TestPool.init(allocator, Config.init(), PoolConfig.init());
+    var pool = TestPool.init(allocator, Config.init(), PoolConfig.init()) catch unreachable;
     defer pool.deinit();
 
     const conn = pool.acquire() catch unreachable;

@@ -163,7 +163,7 @@ test "property: PooledConnection idle expiry detection" {
 // =============================================================================
 
 test "property: new pool is empty" {
-    var p = TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    var p = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
     defer p.deinit();
 
     try std.testing.expectEqual(@as(u32, 0), p.size());
@@ -173,7 +173,7 @@ test "property: new pool is empty" {
 }
 
 test "property: acquire creates connection when pool is empty" {
-    var p = TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    var p = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
     defer p.deinit();
 
     const conn = try p.acquire();
@@ -185,7 +185,7 @@ test "property: acquire creates connection when pool is empty" {
 }
 
 test "property: release returns connection to pool" {
-    var p = TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    var p = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
     defer p.deinit();
 
     const conn = try p.acquire();
@@ -198,7 +198,7 @@ test "property: release returns connection to pool" {
 }
 
 test "property: acquire reuses released connection" {
-    var p = TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    var p = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
     defer p.deinit();
 
     const conn1 = try p.acquire();
@@ -219,7 +219,7 @@ test "property: pool respects max_size" {
     _ = pool_cfg.withMaxSize(2);
     _ = pool_cfg.withAcquireTimeout(50); // Short timeout
 
-    var p = TestPool.init(std.testing.allocator, Config.init(), pool_cfg);
+    var p = try TestPool.init(std.testing.allocator, Config.init(), pool_cfg);
     defer p.deinit();
 
     const conn1 = try p.acquire();
@@ -236,7 +236,7 @@ test "property: pool respects max_size" {
 }
 
 test "property: pool stats are accurate" {
-    var p = TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    var p = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
     defer p.deinit();
 
     // Initial stats
@@ -262,7 +262,7 @@ test "property: pool stats are accurate" {
 }
 
 test "property: remove updates stats correctly" {
-    var p = TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    var p = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
     defer p.deinit();
 
     const conn = try p.acquire();
@@ -274,7 +274,7 @@ test "property: remove updates stats correctly" {
 }
 
 test "property: closed pool rejects acquire" {
-    var p = TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    var p = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
     p.deinit();
 
     try std.testing.expect(p.isClosed());
@@ -282,7 +282,7 @@ test "property: closed pool rejects acquire" {
 }
 
 test "property: double release is safe" {
-    var p = TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    var p = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
     defer p.deinit();
 
     const conn = try p.acquire();
@@ -298,7 +298,7 @@ test "property: double release is safe" {
 // =============================================================================
 
 test "stress: rapid acquire/release cycles" {
-    var p = TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    var p = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
     defer p.deinit();
 
     for (0..1000) |_| {
@@ -316,7 +316,7 @@ test "stress: multiple connections" {
     var pool_cfg = PoolConfig.init();
     _ = pool_cfg.withMaxSize(5);
 
-    var p = TestPool.init(std.testing.allocator, Config.init(), pool_cfg);
+    var p = try TestPool.init(std.testing.allocator, Config.init(), pool_cfg);
     defer p.deinit();
 
     // Acquire and release connections sequentially to avoid pointer issues
@@ -338,7 +338,7 @@ test "edge: pool with min_size 0" {
     var pool_cfg = PoolConfig.init();
     _ = pool_cfg.withMinSize(0);
 
-    var p = TestPool.init(std.testing.allocator, Config.init(), pool_cfg);
+    var p = try TestPool.init(std.testing.allocator, Config.init(), pool_cfg);
     defer p.deinit();
 
     // Should still work
@@ -351,7 +351,7 @@ test "edge: pool with max_size 1" {
     _ = pool_cfg.withMaxSize(1);
     _ = pool_cfg.withAcquireTimeout(50);
 
-    var p = TestPool.init(std.testing.allocator, Config.init(), pool_cfg);
+    var p = try TestPool.init(std.testing.allocator, Config.init(), pool_cfg);
     defer p.deinit();
 
     const conn = try p.acquire();
@@ -367,7 +367,7 @@ test "edge: pool with max_size 1" {
 }
 
 test "edge: cleanup expired with no connections" {
-    var p = TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    var p = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
     defer p.deinit();
 
     const removed = p.cleanupExpired();
