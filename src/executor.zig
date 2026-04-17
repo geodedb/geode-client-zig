@@ -21,6 +21,12 @@ pub const Config = struct {
     /// Workers carved out of `max_threads` for the blocking lane. Must be
     /// strictly less than `max_threads`. Zero means no blocking lane
     /// (runner falls back to `work_stealing`).
+    ///
+    /// FOOTGUN: when `> 0`, you must also pass a non-zero `max_threads`
+    /// explicitly — relying on CPU auto-detect can produce
+    /// `blocking_workers >= max_threads` on small machines (1–2 CPUs)
+    /// and will fail `thread_pool.Config.validate()` with
+    /// `error.InvalidBlockingWorkers`.
     blocking_workers: u32 = 0,
     /// Default-lane queue capacity (rounded up to power of two by thread_pool).
     queue_capacity: usize = 1024,
@@ -60,7 +66,8 @@ test "Executor.init with no blocking lane uses work_stealing" {
     var runner = try Executor.init(std.testing.allocator, .{ .max_threads = 2 });
     defer runner.deinit();
     const stats = runner.pool.statsSnapshot();
-    _ = stats;
+    // Fresh pool: nothing submitted yet.
+    try std.testing.expectEqual(@as(u64, 0), stats.submitted);
 }
 
 test "Executor.init with blocking lane uses lane_extension" {
@@ -69,5 +76,18 @@ test "Executor.init with blocking lane uses lane_extension" {
         .blocking_workers = 2,
     });
     defer runner.deinit();
-    _ = runner.pool.statsSnapshot();
+    const stats = runner.pool.statsSnapshot();
+    // Fresh pool: no tasks active or completed.
+    try std.testing.expectEqual(@as(u64, 0), stats.active_tasks);
+    try std.testing.expectEqual(@as(u64, 0), stats.completed);
+}
+
+test "Executor.init rejects blocking_workers >= max_threads" {
+    try std.testing.expectError(
+        error.InvalidBlockingWorkers,
+        Executor.init(std.testing.allocator, .{
+            .max_threads = 2,
+            .blocking_workers = 2,
+        }),
+    );
 }
