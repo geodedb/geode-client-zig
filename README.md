@@ -496,6 +496,25 @@ The client is optimized for high performance:
 
 Run benchmarks with `make bench` for detailed performance metrics.
 
+### Concurrency Model
+
+Concurrency is provided by `src/executor.zig`, a thin facade over
+[`devnw/zig/thread-pool`](https://gitlab.com/devnw/zig/thread-pool). A
+single shared `Executor` owns the pool; `Pool`, `Batch`, and
+`GeodeClient` consume it by parameter. The runner can be built with a
+dedicated blocking lane so network I/O (connect, query, health check)
+runs on workers reserved for syscalls without starving CPU-bound
+tasks (proto encode/decode, idle-sweeping).
+
+Public APIs that accept an `*Executor`:
+
+- `Pool.cleanupExpiredAsync` / `startIdleSweeper` — async idle-connection maintenance
+- `Batch.runParallel` — concurrent per-query dispatch with `WaitGroup` fan-out
+- `GeodeClient.queryAsync` / `queryBatchParallel` — async query execution
+
+See `CLAUDE.md` for the full Executor module docs and the `.default` /
+`.blocking` lane rationale.
+
 ### System-Level QUIC Optimizations
 
 For optimal QUIC throughput on high-bandwidth connections, configure UDP buffer sizes at the OS level.

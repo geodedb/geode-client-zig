@@ -107,7 +107,7 @@ External dependencies are managed via `build.zig.zon` with git URL references:
 - **advanced_types**: Network, vector, geographic, URL, range value types
 - **gql**: ISO/IEC 39075:2024 GQL front-end (lexer, parser, AST)
 - **metrics**: Counters, gauges, histograms, Prometheus export
-- **concurrency**: Thread pool and bounded MPMC queue
+- **thread_pool**: Direct concurrency primitives — ThreadPool with work-stealing and lane-extension schedulers, WaitGroup, BatchTask, futex-backed sync.Mutex/Condition. Single source of concurrency for the library; pinned to the commit transitive deps resolve to so the module graph stays diamond-free.
 - **fle**: Field-level encryption with AEAD, HKDF, blind indices
 
 ## Module Overview
@@ -227,6 +227,56 @@ defer pool.release(conn);
 const stats = pool.getStats();
 // stats.total_connections, stats.active_connections, stats.idle_connections, etc.
 ```
+
+### Executor Module (`src/executor.zig`)
+
+The shared `thread_pool.ThreadPool` facade — single source of concurrency for the client. `Pool`, `Batch`, and `GeodeClient` all consume an `*Executor` by parameter; nothing else in the library constructs a `thread_pool.ThreadPool` directly.
+
+```zig
+const Executor = @import("executor.zig").Executor;
+
+// Construct with a dedicated blocking lane for network I/O.
+var runner = try Executor.init(allocator, .{
+    .max_threads = 8,
+    .blocking_workers = 4,       // 4 blocking + 4 CPU workers
+    .blocking_queue_capacity = 256,
+});
+defer runner.deinit();
+
+// Fire a task on the blocking lane.
+const handle = try runner.submit(myFn, &ctx, .blocking);
+try runner.wait(handle);
+
+// Fan-out with WaitGroup.
+var wg = runner.waitGroup();
+for (items) |*item| _ = try runner.submit(run, item, .blocking);
+wg.wait();
+
+// submitBatch auto-adds to the WaitGroup per task — do NOT pre-add.
+var batch: [8]tp.BatchTask = undefined;
+for (&batch) |*task| task.* = .{ .task_fn = run, .ctx = &ctx };
+var wg2 = runner.waitGroup();
+_ = try runner.submitBatch(&batch, .blocking, &wg2);
+wg2.wait();
+
+// Graceful shutdown — drains in-flight tasks or cancels queued work.
+try runner.shutdown(.drain, 5 * std.time.ns_per_s);
+```
+
+**Lanes:**
+
+- `.default` — CPU-bound work (proto encode/decode, idle-sweeper body)
+- `.blocking` — network syscalls (connect, query, health check)
+
+Blocking workers never steal from the default lane; default workers only help blocking tasks when `cpu_helps_blocking=true`. This prevents a QUIC read from starving concurrent query encoding.
+
+**Footgun:** if `blocking_workers > 0`, pass a non-zero `max_threads` explicitly — CPU auto-detect can produce `blocking_workers >= max_threads` on small machines and fail `thread_pool.Config.validate()`.
+
+**Consumers:**
+
+- `Pool.cleanupExpiredAsync` / `startIdleSweeper` — offloads idle-connection sweeping from the caller's thread
+- `Batch.runParallel` — concurrent per-query execution via WaitGroup
+- `GeodeClient.queryAsync` / `queryBatchParallel` — async query dispatch
 
 ### Query Builder Module (`src/query_builder.zig`)
 
