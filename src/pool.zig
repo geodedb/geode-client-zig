@@ -406,6 +406,21 @@ pub fn Pool(comptime ConnectionType: type) type {
             return removed;
         }
 
+        /// Submit cleanupExpired to the pool's executor.
+        /// Returns the task handle so callers can `exec.pool.wait(h)` or
+        /// fire-and-forget. Errors with `NoExecutor` if no executor was
+        /// configured.
+        pub fn cleanupExpiredAsync(self: *Self) !tp.TaskHandle {
+            if (self.executor == null) return error.NoExecutor;
+            const sweep = struct {
+                fn run(raw: *anyopaque, _: *tp.TaskContext) void {
+                    const pool: *Self = @ptrCast(@alignCast(raw));
+                    _ = pool.cleanupExpired();
+                }
+            }.run;
+            return self.executor.?.submit(sweep, self);
+        }
+
         // Internal: create a new connection entry
         // Note: stats.idle_connections is NOT incremented here because the caller
         // (acquire) will immediately mark it as in_use. Stats are managed by the caller.
@@ -675,4 +690,34 @@ test "Pool without executor config has no executor" {
     defer pool.deinit();
 
     try std.testing.expect(pool.getExecutor() == null);
+}
+
+test "Pool.cleanupExpiredAsync runs on the executor" {
+    const TestPool = Pool(TestConnection);
+    var cfg = PoolConfig.init();
+    _ = cfg.withExecutor(.{ .num_threads = 2 });
+    cfg.idle_timeout_ms = 1; // immediate expiry
+    cfg.min_size = 0; // allow reaping below 1
+
+    var pool = try TestPool.init(std.testing.allocator, Config.init(), cfg);
+    defer pool.deinit();
+
+    // Seed an idle connection that will expire.
+    const c = try pool.acquire();
+    pool.release(c);
+    tp.clock.sleep(10 * std.time.ns_per_ms);
+
+    const handle = try pool.cleanupExpiredAsync();
+    try pool.executor.?.pool.wait(handle);
+
+    // The sweeper should have reaped the expired connection.
+    try std.testing.expectEqual(@as(u32, 0), pool.size());
+}
+
+test "Pool.cleanupExpiredAsync returns NoExecutor without executor" {
+    const TestPool = Pool(TestConnection);
+    var pool = try TestPool.init(std.testing.allocator, Config.init(), PoolConfig.init());
+    defer pool.deinit();
+
+    try std.testing.expectError(error.NoExecutor, pool.cleanupExpiredAsync());
 }
