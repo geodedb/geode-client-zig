@@ -105,6 +105,13 @@ pub const Executor = struct {
     pub fn wait(self: *Executor, handle: tp.TaskHandle) !void {
         return self.pool.wait(handle);
     }
+
+    /// Build a WaitGroup bound to this runner. Used for fan-out
+    /// patterns where the caller submits N tasks and needs to wait for
+    /// all of them without retaining individual handles.
+    pub fn waitGroup(self: *Executor) tp.WaitGroup {
+        return self.pool.waitGroup();
+    }
 };
 
 test "Executor.init with no blocking lane uses work_stealing" {
@@ -192,4 +199,34 @@ test "Executor.submit routes to blocking lane when configured" {
     try runner.wait(handle);
 
     try std.testing.expect(completed.load(.acquire));
+}
+
+test "Executor.waitGroup runs fan-out correctly" {
+    var runner = try Executor.init(std.testing.allocator, .{ .max_threads = 4 });
+    defer runner.deinit();
+
+    var counter = std.atomic.Value(u32).init(0);
+    const N: u32 = 16;
+
+    var wg = runner.waitGroup();
+    wg.add(N);
+
+    const Ctx = struct {
+        counter: *std.atomic.Value(u32),
+        wg: *tp.WaitGroup,
+        fn run(raw: *anyopaque, _: *tp.TaskContext) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            _ = self.counter.fetchAdd(1, .release);
+            self.wg.done();
+        }
+    };
+    var ctx = Ctx{ .counter = &counter, .wg = &wg };
+
+    var i: u32 = 0;
+    while (i < N) : (i += 1) {
+        _ = try runner.submit(Ctx.run, &ctx, .default);
+    }
+    wg.wait();
+
+    try std.testing.expectEqual(N, counter.load(.acquire));
 }
