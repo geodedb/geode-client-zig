@@ -4,6 +4,8 @@ const uuid = @import("uuid");
 pub const proto = @import("proto");
 pub const config = @import("config");
 pub const grpc = @import("grpc");
+pub const executor_mod = @import("executor");
+pub const tp = @import("thread_pool");
 
 // CANARY: REQ=REQ-ZIG-CLIENT-002; FEATURE="Zig Client v2"; ASPECT=QuicPackageClient; STATUS=IMPL; OWNER=clients; UPDATED=2026-01-24
 // Zig client uses the quic package from zig package manager for full compatibility with the server.
@@ -661,6 +663,41 @@ pub const GeodeClient = struct {
     }
 
     /// Execute a GQL query and return the result.
+    /// Context for `queryAsync`. The caller owns allocation; must
+    /// outlive the submitted task (stack-allocated + waited on is fine).
+    pub const AsyncQueryCtx = struct {
+        client: *GeodeClient,
+        gql: []const u8,
+        params: ?std.StringHashMapUnmanaged([]const u8),
+        result: *?QueryResult,
+        err: *?anyerror,
+
+        fn run(raw: *anyopaque, _: *tp.TaskContext) void {
+            const self: *AsyncQueryCtx = @ptrCast(@alignCast(raw));
+            const r = self.client.query(self.gql, self.params) catch |e| {
+                self.err.* = e;
+                return;
+            };
+            self.result.* = r;
+        }
+    };
+
+    /// Submit a query to run asynchronously on the runner's blocking
+    /// lane (falls back to default lane if none is configured).
+    /// Returns a task handle the caller can `runner.wait(handle)` on.
+    /// The `ctx` allocation MUST outlive the task.
+    pub fn queryAsync(
+        self: *GeodeClient,
+        runner: *executor_mod.Executor,
+        ctx: *AsyncQueryCtx,
+    ) !tp.TaskHandle {
+        _ = self;
+        return runner.submit(AsyncQueryCtx.run, ctx, .blocking) catch |e| switch (e) {
+            error.BlockingLaneDisabled => runner.submit(AsyncQueryCtx.run, ctx, .default),
+            else => return e,
+        };
+    }
+
     /// Automatically generates a UUID v4 request ID for tracing.
     /// The caller may pass an explicit request_id; if null, one is generated.
     pub fn query(self: *GeodeClient, gql: []const u8, params: ?std.StringHashMapUnmanaged([]const u8)) !QueryResult {

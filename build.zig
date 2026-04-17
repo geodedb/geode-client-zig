@@ -220,6 +220,8 @@ pub fn build(b: *std.Build) void {
     geode_client_mod.addImport("config", cfg_mod);
     geode_client_mod.addImport("grpc", grpc_mod);
     geode_client_mod.addImport("encryption", encryption_mod);
+    geode_client_mod.addImport("executor", executor_mod);
+    geode_client_mod.addImport("thread_pool", thread_pool_mod);
 
     // Export geode_client module for dependents
     _ = b.addModule("geode_client", .{
@@ -231,6 +233,8 @@ pub fn build(b: *std.Build) void {
             .{ .name = "config", .module = cfg_mod },
             .{ .name = "grpc", .module = grpc_mod },
             .{ .name = "encryption", .module = encryption_mod },
+            .{ .name = "executor", .module = executor_mod },
+            .{ .name = "thread_pool", .module = thread_pool_mod },
         },
     });
 
@@ -497,6 +501,9 @@ pub fn build(b: *std.Build) void {
     client_tests.root_module.addImport("proto", proto_mod);
     client_tests.root_module.addImport("config", cfg_mod);
     client_tests.root_module.addImport("grpc", grpc_mod);
+    client_tests.root_module.addImport("encryption", encryption_mod);
+    client_tests.root_module.addImport("executor", executor_mod);
+    client_tests.root_module.addImport("thread_pool", thread_pool_mod);
 
     linkSystemDeps(client_tests, target);
 
