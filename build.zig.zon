@@ -73,8 +73,8 @@
 
         // UUID - RFC 9562 compliant (V1-V8), k-sortable V7
         .uuid = .{
-            .url = "git+https://gitlab.com/devnw/zig/uuid.git#95a6951ed6a04f07b49de4c35ad44e9e821cf8da",
-            .hash = "uuid-0.1.0-tL1irmYTDAAsRZcvnn24DDdWo0lAicJR6mAXVlmxT2TJ",
+            .url = "git+https://gitlab.com/devnw/zig/uuid.git#1538dba0f39bf402f68ddd83a62cd7f291775d87",
+            .hash = "uuid-0.1.0-tL1irh8QDAD0RN9g_zSxKlHEjoF3HFMHa75scFAfhkGV",
         },
         // Auth - HMAC chain, API keys, TOTP/MFA primitives
         .auth = .{
