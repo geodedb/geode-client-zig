@@ -19,18 +19,18 @@
         // =======================================================================
 
         // QUIC v1/v2 protocol implementation (RFC 9000) - primary transport
-        // Updated 2026-04-16: pin forward to 51c1a03 — includes the UAF fix
-        // in Endpoint.processExpiredTimers and the 5 ms cadence port in
-        // QuicStream.readLine (handshake stall fix). Must match the geode
-        // repo's quic pin so the module graph stays single-copy.
+        // Updated 2026-04-21: bump to quic v0.1.12 and tls v0.1.2 in lockstep
+        // with the geode repo so the module graph stays single-copy. Previous
+        // pin was 2026-04-16 51c1a03 (UAF fix in Endpoint.processExpiredTimers
+        // and 5 ms cadence port in QuicStream.readLine).
         .quic = .{
-            .url = "git+https://gitlab.com/devnw/zig/quic.git#ede1b305a5e72921130c9addba7ac135cddc90f2",
-            .hash = "quic-0.1.11-gBIqUfKQNgCVumcHNPOO2E40sZJCgxZPvdvlu87JcrID",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git#dd9ddfcb2f03b325bd10f79dd9cf2f1cab2f5a74",
+            .hash = "quic-0.1.11-gBIqUWfVNgA2NDmS2kZUQJygCGxeGV8Rd4sV7-gmYiNy",
         },
         // TLS 1.3 library for QUIC
         .tls = .{
-            .url = "git+https://gitlab.com/devnw/zig/tls.git#8453b30e3868fa5a3fc4ac49bd671eb25962f8e8",
-            .hash = "tls-0.1.1-mtEaLJW-EQD6ED9LTRLNbvijVL0kpr0uICMWyiISZg7w",
+            .url = "git+https://gitlab.com/devnw/zig/tls.git#c0895db0adc841abdb44bd8ff6fe1edd3e321aa6",
+            .hash = "tls-0.1.1-mtEaLKedEgBUv1K_Vd1PCWYrB1hjpvN5rskwXvFKdiBK",
         },
         // =======================================================================
         // Foundation Libraries
