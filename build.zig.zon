@@ -24,8 +24,8 @@
         // pin was 2026-04-16 51c1a03 (UAF fix in Endpoint.processExpiredTimers
         // and 5 ms cadence port in QuicStream.readLine).
         .quic = .{
-            .url = "git+https://gitlab.com/devnw/zig/quic.git#dd9ddfcb2f03b325bd10f79dd9cf2f1cab2f5a74",
-            .hash = "quic-0.1.11-gBIqUWfVNgA2NDmS2kZUQJygCGxeGV8Rd4sV7-gmYiNy",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git#c7808ed93ba939febee3ae6de4c0a61f4b0b9b25",
+            .hash = "quic-0.1.11-gBIqUaSsNwA7iXj1KIrXsebs6BObfFf7Rf4geAhkZy2O",
         },
         // TLS 1.3 library for QUIC
         .tls = .{
