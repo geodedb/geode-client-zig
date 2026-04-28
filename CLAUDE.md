@@ -35,7 +35,9 @@ geode-client-zig/
 │   ├── batch.zig          # Batch query execution
 │   ├── auth.zig           # Authentication and RLS policies
 │   ├── client_metrics.zig # Observability (counters, gauges, histograms)
-│   └── encryption.zig     # Field-level encryption (AES-256-GCM, blind indexes)
+│   ├── encryption.zig     # Field-level encryption (AES-256-GCM, blind indexes)
+│   ├── observability.zig  # otel seam (zero-overhead when -Dwith_otel=false)
+│   └── observability_init.zig # Provider bootstrap (compiled only when -Dwith_otel=true)
 ├── tests/                 # Integration tests
 │   └── integration.zig    # Comprehensive integration test suite
 ├── benchmarks/            # Performance benchmarks
@@ -80,6 +82,31 @@ make ci                 # Full CI pipeline
 make ci-quick           # Quick CI (unit tests only)
 ```
 
+### OpenTelemetry build flag
+
+The library is instrumented behind a comptime gate. The dependency is
+declared `lazy = true` in `build.zig.zon` so default builds never fetch it.
+
+```bash
+# Default — otel disabled, zero runtime overhead, no otel symbols linked
+zig build
+zig build test
+
+# Enabled — pulls otel package, links provider/exporter code, every
+# public client entry point emits a span
+zig build -Dwith_otel=true
+zig build -Dwith_otel=true test
+```
+
+When `-Dwith_otel=false` (the default), `src/observability.zig`'s
+`enabled` const is `false`, every `start*Span` helper returns a no-op
+`Span{}`, and `defer span.end(null)` collapses to nothing under the
+optimizer. The otel package is never resolved.
+
+When `-Dwith_otel=true`, `src/observability_init.zig` is registered as
+the `observability_init` module, accessible from consumer code as
+`geode_client.observability_init.Otel`.
+
 ## Dependencies
 
 External dependencies are managed via `build.zig.zon` with git URL references:
@@ -109,6 +136,7 @@ External dependencies are managed via `build.zig.zon` with git URL references:
 - **metrics**: Counters, gauges, histograms, Prometheus export
 - **thread_pool**: Direct concurrency primitives — ThreadPool with work-stealing and lane-extension schedulers, WaitGroup, BatchTask, futex-backed sync.Mutex/Condition. Single source of concurrency for the library; pinned to the commit transitive deps resolve to so the module graph stays diamond-free.
 - **fle**: Field-level encryption with AEAD, HKDF, blind indices
+- **otel** (lazy): OpenTelemetry client. Pinned to the commit every transitive dep (quic, dns, slog, metrics, thread-pool, gql) also references — single otel module identity in the build graph. Only resolved when `-Dwith_otel=true` is passed.
 
 ## Module Overview
 
@@ -616,6 +644,62 @@ var enc = encryption.FieldEncryptionConfig{
     .aad_context = "Person.ssn",
 };
 ```
+
+### Observability Seam (`src/observability.zig` + `src/observability_init.zig`)
+
+OpenTelemetry instrumentation gated behind `-Dwith_otel`. The seam
+mirrors the pattern used by the rest of the devnw/zig stack
+(thread-pool, slog, metrics, quic, dns, gql): zero-overhead when
+disabled (every helper compiles to a comptime-known no-op), real spans
+forwarded through the otel SDK when enabled.
+
+**Spans emitted at every public client entry point** (`db.system.name = "geode"`):
+
+| Method                       | Span name           | `db.operation.name` |
+| ---------------------------- | ------------------- | ------------------- |
+| `GeodeClient.connect`        | `geode.connect`     | `CONNECT`           |
+| `GeodeClient.query`          | `geode.query`       | `EXECUTE`           |
+| `GeodeClient.begin`          | `geode.tx.begin`    | `BEGIN`             |
+| `GeodeClient.commit`         | `geode.tx.commit`   | `COMMIT`            |
+| `GeodeClient.rollback`       | `geode.tx.rollback` | `ROLLBACK`          |
+| `GeodeClient.ping`           | `geode.ping`        | `PING`              |
+
+`connect` additionally emits `server.address`, `server.port`, and
+`network.transport` (`quic`/`grpc`). `query` emits `db.query.text`.
+Span kind is `.client`. Errors set status `.error_`; success leaves
+status `.unset` per the OTel spec recommendation.
+
+**Caller bootstrap** (only when `-Dwith_otel=true`, typically in `main()`):
+
+```zig
+const geode_client = @import("geode_client");
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+
+    var otel_state = try geode_client.observability_init.Otel.init(
+        gpa.allocator(),
+        "my-service",
+    );
+    defer otel_state.deinit();
+    otel_state.installGlobals();
+
+    // ... use GeodeClient as usual ...
+}
+```
+
+`Otel.init` reads `OTEL_*` env vars via the otel SDK's standard config
+resolution (`OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
+`OTEL_TRACES_EXPORTER`, etc.), builds Tracer/Meter/Logger providers,
+and `installGlobals` publishes the handles to
+`observability.global.tracer` / `.meter`. `deinit` flushes pending
+exports (2s timeout each) before tearing down providers.
+
+When the host application opts not to call `installGlobals`, the
+seam's `global.tracer` stays null and every `start*Span` returns a
+no-op `Span{}` — so unit tests under `-Dwith_otel=true` work without
+a running collector.
 
 ## Development Guidelines
 

@@ -6,6 +6,14 @@ pub const config = @import("config");
 pub const grpc = @import("grpc");
 pub const executor_mod = @import("executor");
 pub const tp = @import("thread_pool");
+const obs = @import("observability");
+// Re-export the otel bootstrap helper so consumers can call
+// `geode_client.observability_init.Otel.init(...)` from `main()`. The
+// import is gated by the seam's `enabled` const: when `-Dwith_otel=false`,
+// the `observability_init` module is never registered in build.zig, so
+// the @import never fires and this resolves to an empty struct.
+pub const observability_init = if (obs.enabled) @import("observability_init") else struct {};
+pub const observability = obs;
 
 // CANARY: REQ=REQ-ZIG-CLIENT-002; FEATURE="Zig Client v2"; ASPECT=QuicPackageClient; STATUS=IMPL; OWNER=clients; UPDATED=2026-01-24
 // Zig client uses the quic package from zig package manager for full compatibility with the server.
@@ -260,6 +268,13 @@ pub const GeodeClient = struct {
     }
 
     pub fn connect(self: *GeodeClient) !void {
+        const transport_tag: obs.Transport = switch (self.transport) {
+            .quic => .quic,
+            .grpc => .grpc,
+        };
+        const span = obs.startConnectSpan(self.host, self.port, transport_tag);
+        defer span.end(null);
+        errdefer obs.markSpanError(span, "");
         switch (self.transport) {
             .quic => try self.connectQuic(),
             .grpc => try self.connectGrpc(),
@@ -771,6 +786,9 @@ pub const GeodeClient = struct {
     /// Automatically generates a UUID v4 request ID for tracing.
     /// The caller may pass an explicit request_id; if null, one is generated.
     pub fn query(self: *GeodeClient, gql: []const u8, params: ?std.StringHashMapUnmanaged([]const u8)) !QueryResult {
+        const span = obs.startQuerySpan(gql, "EXECUTE");
+        defer span.end(null);
+        errdefer obs.markSpanError(span, "");
         const request_id = try self.generateRequestId();
 
         var execute = proto.ExecuteRequest{
@@ -871,6 +889,9 @@ pub const GeodeClient = struct {
 
     /// Begin a transaction.
     pub fn begin(self: *GeodeClient) ![]const u8 {
+        const span = obs.startBeginSpan();
+        defer span.end(null);
+        errdefer obs.markSpanError(span, "");
         const msg = proto.QuicClientMessage{
             .begin = proto.BeginRequest{
                 .read_only = false,
@@ -891,6 +912,9 @@ pub const GeodeClient = struct {
 
     /// Commit the current transaction.
     pub fn commit(self: *GeodeClient) !void {
+        const span = obs.startCommitSpan();
+        defer span.end(null);
+        errdefer obs.markSpanError(span, "");
         const msg = proto.QuicClientMessage{
             .commit = proto.CommitRequest{ .session_id = self.session_id },
         };
@@ -909,6 +933,9 @@ pub const GeodeClient = struct {
 
     /// Rollback the current transaction.
     pub fn rollback(self: *GeodeClient) !void {
+        const span = obs.startRollbackSpan();
+        defer span.end(null);
+        errdefer obs.markSpanError(span, "");
         const msg = proto.QuicClientMessage{
             .rollback = proto.RollbackRequest{ .session_id = self.session_id },
         };
@@ -927,6 +954,9 @@ pub const GeodeClient = struct {
 
     /// Ping the server.
     pub fn ping(self: *GeodeClient) !bool {
+        const span = obs.startPingSpan();
+        defer span.end(null);
+        errdefer obs.markSpanError(span, "");
         const msg = proto.QuicClientMessage{
             .ping = proto.PingRequest{},
         };

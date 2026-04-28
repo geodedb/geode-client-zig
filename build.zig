@@ -20,6 +20,42 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     // ========================================================================
+    // Build options
+    // ========================================================================
+
+    // -Dwith_otel: compile in otel instrumentation. OFF by default;
+    // when off the otel dependency is never resolved (it's marked
+    // `lazy = true` in build.zig.zon) and the seam in
+    // src/observability.zig collapses to comptime-known no-ops so the
+    // produced artifacts contain zero otel symbols. Mirrors the seam
+    // pattern used by quic, dns, slog, metrics, thread-pool, and gql.
+    const with_otel = b.option(
+        bool,
+        "with_otel",
+        "Compile in otel instrumentation (off by default; zero overhead when off)",
+    ) orelse false;
+
+    // Materialize ONE shared `build_options` MODULE. Every consumer
+    // module imports the SAME module instance via `addImport` to avoid
+    // Zig 0.16's "file exists in modules X and X0" error when two
+    // independent `addOptions` modules share a transitive file path.
+    //
+    // The `package` option is a discriminator: every transitive dep
+    // (quic, thread-pool, ...) also creates a `build_options` module
+    // and Zig caches the synthesized .zig source by content hash. If
+    // ours and a transitive dep's `addOptions` produced byte-identical
+    // output (e.g. both only declared `with_otel = false`), they would
+    // resolve to the SAME cached file. That file would then be the
+    // root of two distinct named modules, which Zig rejects with
+    // `file exists in modules 'build_options1' and 'build_options'`.
+    // Stamping our package name into the options keeps our content
+    // unique without touching upstream.
+    const build_options = b.addOptions();
+    build_options.addOption([]const u8, "package", "geode_client_zig");
+    build_options.addOption(bool, "with_otel", with_otel);
+    const build_options_mod = build_options.createModule();
+
+    // ========================================================================
     // External Dependencies (from build.zig.zon)
     // ========================================================================
 
@@ -203,6 +239,57 @@ pub fn build(b: *std.Build) void {
     });
 
     // ========================================================================
+    // Observability seam (otel)
+    // ========================================================================
+    //
+    // Single shared NAMED module so every consumer (public client,
+    // tests, integration tests, benchmarks) resolves
+    // `@import("observability")` to the same source file. Without
+    // `addModule`, each consumer that did
+    // `b.createModule(.{ .root_source_file = b.path("src/observability.zig"), ... })`
+    // would create a distinct module identity for the same file and
+    // Zig would fail with "file exists in modules X and X0".
+    //
+    // The seam's `enabled` flag tracks `build_options.with_otel`; when
+    // off, every helper compiles to a comptime-known no-op and the
+    // otel dependency is never resolved. See src/observability.zig.
+    const observability_mod = b.addModule("observability", .{
+        .root_source_file = b.path("src/observability.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    observability_mod.addImport("build_options", build_options_mod);
+
+    // Gated otel dependency. The `lazy = true` entry in build.zig.zon
+    // means Zig only fetches the package when this branch executes;
+    // with the flag off the dependency is never resolved and the
+    // produced artifacts contain zero otel symbols.
+    var otel_mod: ?*std.Build.Module = null;
+    var observability_init_mod: ?*std.Build.Module = null;
+    if (with_otel) {
+        if (b.lazyDependency("otel", .{
+            .target = target,
+            .optimize = optimize,
+        })) |otel_dep| {
+            const m = otel_dep.module("otel");
+            otel_mod = m;
+            // The seam itself imports `otel` when enabled.
+            observability_mod.addImport("otel", m);
+
+            // Bootstrap helper. Only registered when `-Dwith_otel=true`
+            // so the disabled build never compiles otel-touching code.
+            const init_mod = b.addModule("observability_init", .{
+                .root_source_file = b.path("src/observability_init.zig"),
+                .target = target,
+                .optimize = optimize,
+            });
+            init_mod.addImport("otel", m);
+            init_mod.addImport("observability", observability_mod);
+            observability_init_mod = init_mod;
+        }
+    }
+
+    // ========================================================================
     // Geode Client Module
     // ========================================================================
 
@@ -222,9 +309,12 @@ pub fn build(b: *std.Build) void {
     geode_client_mod.addImport("encryption", encryption_mod);
     geode_client_mod.addImport("executor", executor_mod);
     geode_client_mod.addImport("thread_pool", thread_pool_mod);
+    geode_client_mod.addImport("observability", observability_mod);
+    if (observability_init_mod) |m| geode_client_mod.addImport("observability_init", m);
+    if (otel_mod) |m| geode_client_mod.addImport("otel", m);
 
     // Export geode_client module for dependents
-    _ = b.addModule("geode_client", .{
+    const public_geode_client = b.addModule("geode_client", .{
         .root_source_file = b.path("geode_client_v2.zig"),
         .imports = &.{
             .{ .name = "quic", .module = quic_mod },
@@ -235,8 +325,11 @@ pub fn build(b: *std.Build) void {
             .{ .name = "encryption", .module = encryption_mod },
             .{ .name = "executor", .module = executor_mod },
             .{ .name = "thread_pool", .module = thread_pool_mod },
+            .{ .name = "observability", .module = observability_mod },
         },
     });
+    if (observability_init_mod) |m| public_geode_client.addImport("observability_init", m);
+    if (otel_mod) |m| public_geode_client.addImport("otel", m);
 
     // ========================================================================
     // Test Executables
@@ -504,11 +597,29 @@ pub fn build(b: *std.Build) void {
     client_tests.root_module.addImport("encryption", encryption_mod);
     client_tests.root_module.addImport("executor", executor_mod);
     client_tests.root_module.addImport("thread_pool", thread_pool_mod);
+    client_tests.root_module.addImport("observability", observability_mod);
+    if (observability_init_mod) |m| client_tests.root_module.addImport("observability_init", m);
+    if (otel_mod) |m| client_tests.root_module.addImport("otel", m);
 
     linkSystemDeps(client_tests, target);
 
     const run_client_tests = b.addRunArtifact(client_tests);
     test_step.dependOn(&run_client_tests.step);
+
+    // Test observability seam (covers both -Dwith_otel=false comptime
+    // no-op path and the enabled path; the enabled path's `global`
+    // tracer remains null so spans collapse to no-op `Span{}`).
+    const observability_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/observability.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    observability_tests.root_module.addImport("build_options", build_options_mod);
+    if (otel_mod) |m| observability_tests.root_module.addImport("otel", m);
+    const run_observability_tests = b.addRunArtifact(observability_tests);
+    test_step.dependOn(&run_observability_tests.step);
 
     // Smoke test: thread_pool module is wired.
     const tp_smoke = b.addTest(.{
