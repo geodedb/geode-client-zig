@@ -26,8 +26,8 @@
         // Earlier 2026-04-28: 67720c1 (v0.1.14) fixed Initial+Handshake
         // datagram coalescing.
         .quic = .{
-            .url = "git+https://gitlab.com/devnw/zig/quic.git#4b246b2743212f3c007abb3b4541a2534f17e628",
-            .hash = "quic-0.1.14-gBIqUeC4OACPS7NwD4FKRCTnMZ6GHSEE6fF2L0NxxCMP",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git#c42657d97aee213f530e26cc68c553db3bfdbe46",
+            .hash = "quic-0.1.14-gBIqUQ3AOACbHux60u1GqaCDu7H1ky556uc6wNLGVUPr",
         },
         // TLS 1.3 library for QUIC (must match the version quic v0.1.14 uses)
         .tls = .{
