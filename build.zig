@@ -570,26 +570,15 @@ pub fn build(b: *std.Build) void {
     const run_grpc_tests = b.addRunArtifact(grpc_tests);
     test_step.dependOn(&run_grpc_tests.step);
 
-    // Test geode_client module
-    const client_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("geode_client_v2.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-
-    client_tests.root_module.addImport("quic", quic_mod);
-    client_tests.root_module.addImport("uuid", uuid_mod);
-    client_tests.root_module.addImport("proto", proto_mod);
-    client_tests.root_module.addImport("config", cfg_mod);
-    client_tests.root_module.addImport("grpc", grpc_mod);
-    client_tests.root_module.addImport("encryption", encryption_mod);
-    client_tests.root_module.addImport("executor", executor_mod);
-    client_tests.root_module.addImport("thread_pool", thread_pool_mod);
-    client_tests.root_module.addImport("observability", observability_mod);
-    if (observability_init_mod) |m| client_tests.root_module.addImport("observability_init", m);
-    if (otel_mod) |m| client_tests.root_module.addImport("otel", m);
+    // Test geode_client module — reuses the SAME module instance
+    // (`geode_client_mod`) declared above. Previously this block created
+    // a SECOND module also rooted at `geode_client_v2.zig`, which Zig
+    // 0.16 rejects with "file exists in modules X and X0" even when
+    // the duplicate is only reachable through a test artifact, because
+    // module-graph traversal during downstream `b.dependency(...)`
+    // resolution still touches it. Reusing the same module instance
+    // avoids the duplicate root.
+    const client_tests = b.addTest(.{ .root_module = geode_client_mod });
 
     linkSystemDeps(client_tests, target);
 
