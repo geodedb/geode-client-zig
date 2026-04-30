@@ -292,30 +292,20 @@ pub fn build(b: *std.Build) void {
     // ========================================================================
     // Geode Client Module
     // ========================================================================
-
-    // Create geode_client module with all dependencies
-    const geode_client_mod = b.createModule(.{
+    //
+    // Single named module rooted at `geode_client_v2.zig`. Previously
+    // this file declared TWO modules with the same root source file
+    // (`geode_client_mod` via `b.createModule` for internal use plus
+    // `public_geode_client` via `b.addModule` for export). Zig 0.16
+    // rejects that with "file exists in modules X and X0" because it
+    // refuses to let one source file be the root of multiple modules
+    // — see geode/scripts/detect_diamond_deps.py for the cross-repo
+    // detection harness. The single-module pattern below mirrors what
+    // thread-pool / wal / quic / etc. already do.
+    const geode_client_mod = b.addModule("geode_client", .{
         .root_source_file = b.path("geode_client_v2.zig"),
         .target = target,
         .optimize = optimize,
-    });
-
-    // Add only the dependencies actually @import'd by geode_client_v2.zig
-    geode_client_mod.addImport("quic", quic_mod);
-    geode_client_mod.addImport("uuid", uuid_mod);
-    geode_client_mod.addImport("proto", proto_mod);
-    geode_client_mod.addImport("config", cfg_mod);
-    geode_client_mod.addImport("grpc", grpc_mod);
-    geode_client_mod.addImport("encryption", encryption_mod);
-    geode_client_mod.addImport("executor", executor_mod);
-    geode_client_mod.addImport("thread_pool", thread_pool_mod);
-    geode_client_mod.addImport("observability", observability_mod);
-    if (observability_init_mod) |m| geode_client_mod.addImport("observability_init", m);
-    if (otel_mod) |m| geode_client_mod.addImport("otel", m);
-
-    // Export geode_client module for dependents
-    const public_geode_client = b.addModule("geode_client", .{
-        .root_source_file = b.path("geode_client_v2.zig"),
         .imports = &.{
             .{ .name = "quic", .module = quic_mod },
             .{ .name = "uuid", .module = uuid_mod },
@@ -328,8 +318,8 @@ pub fn build(b: *std.Build) void {
             .{ .name = "observability", .module = observability_mod },
         },
     });
-    if (observability_init_mod) |m| public_geode_client.addImport("observability_init", m);
-    if (otel_mod) |m| public_geode_client.addImport("otel", m);
+    if (observability_init_mod) |m| geode_client_mod.addImport("observability_init", m);
+    if (otel_mod) |m| geode_client_mod.addImport("otel", m);
 
     // ========================================================================
     // Test Executables
