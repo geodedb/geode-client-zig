@@ -25,13 +25,13 @@
         // it. Transitive deps converge on thread_pool 0.2.1 (1674ebb), so
         // the pin below has to match.
         .quic = .{
-            .url = "git+https://gitlab.com/devnw/zig/quic.git#a1f94c6a56465f4b875a7e7c868e588c9071c72a",
-            .hash = "quic-0.1.14-gBIqUcO_OQAleJAtuYEXt2_zdLeH1mOB7EBReBFLNwf-",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git#1f247f2b4128203515e300af152ff0780f037914",
+            .hash = "quic-0.1.14-gBIqUcO_OQCSmVRjodaaLBgIDLLcC3AT3HGLJMNEMe-9",
         },
         // TLS 1.3 library for QUIC (must match the version quic v0.1.14 uses)
         .tls = .{
-            .url = "git+https://gitlab.com/devnw/zig/tls.git#81a9d0faaeeb0c4192dbc338c25e62f0725226cd",
-            .hash = "tls-0.2.0-mtEaLBxpEwCyLogPHqiRA_Bz2maFU4cKI_hhQpyFurLc",
+            .url = "git+https://gitlab.com/devnw/zig/tls.git#1131769dcd60b635d3efc6de8bc082478af43251",
+            .hash = "tls-0.2.0-mtEaLBxpEwDmASwAuOrdSx6o45XnXIXKG-kGlXh1S3T_",
         },
         // =======================================================================
         // Foundation Libraries
@@ -39,8 +39,8 @@
 
         // DNS resolution - RFC 1035 compliant with caching and DoT/DoH/DoQ
         .dns = .{
-            .url = "git+https://gitlab.com/devnw/zig/dns.git#86e3b851fcd0cb7662aa7fcf488423f154d8875d",
-            .hash = "dns-0.1.0-x4U-zSE9EQB1boJ_gj3GUff9d_aT5HVveZY2juIpX2NH",
+            .url = "git+https://gitlab.com/devnw/zig/dns.git#d473b09ad0a50493b1c1acbaaebe2c0964c5d0f7",
+            .hash = "dns-0.1.0-x4U-zSE9EQBPWVm_i78igvxsZ-nLMqlosBL1yiqfaGHu",
         },
         // JSON parser/encoder - RFC 8259 compliant
         .json = .{
@@ -54,8 +54,8 @@
         },
         // Structured logging - slog-style with multiple handlers
         .slog = .{
-            .url = "git+https://gitlab.com/devnw/zig/slog.git#0c0a203cd2f4e14f36b37bd6d2a9fc4bc27fc270",
-            .hash = "slog-0.1.0-SamED3i2BgACzyoqY4yqFVUbAgEuAQB-RBfI-LvfUU-z",
+            .url = "git+https://gitlab.com/devnw/zig/slog.git#7bd780172eb050fd615d73ec7e0a09c5cc8a7ef2",
+            .hash = "slog-0.1.0-SamED3i2BgDXnacjTn6Uj17FNCwuSoMwN-Rw0kq2yh0I",
         },
         // URI/URL parsing - RFC 3986 compliant
         .uri = .{
@@ -79,8 +79,8 @@
         },
         // Auth - HMAC chain, API keys, TOTP/MFA primitives
         .auth = .{
-            .url = "git+https://gitlab.com/devnw/zig/auth.git#a60fd5f2176e6db247c3f4122f75d3021d263d94",
-            .hash = "auth-0.1.0-W76ZZzZ2AQCZ0kHCpzL2AmDGboEv1tbkesnI-F6nMG7h",
+            .url = "git+https://gitlab.com/devnw/zig/auth.git#67a79143d56612210286966d962aad8d8f238961",
+            .hash = "auth-0.1.0-W76ZZzZ2AQA_0iVvSJmq-8Cds2gDbGJiJqDB0UBkt69W",
         },
         // Advanced Types - Network, vector, geographic, URL, range value types
         .advanced_types = .{
@@ -89,13 +89,13 @@
         },
         // GQL - ISO/IEC 39075:2024 Graph Query Language front-end (lexer, parser, AST)
         .gql = .{
-            .url = "git+https://gitlab.com/devnw/zig/gql.git#702cec2fdbb295b77370a05d1766281911114493",
-            .hash = "gql-0.1.0-T1ANDcD3CAA8Kk7xoyFpotJ0wTntvZAYJumsvF8t036A",
+            .url = "git+https://gitlab.com/devnw/zig/gql.git#a56e84ba68b7f06c2f4ae9b62111eea4d6be34b2",
+            .hash = "gql-0.1.0-T1ANDcD3CACWH0F6vfKdRYgsMPtQ8MBML0uEUsWeKzbJ",
         },
         // Metrics - Counters, gauges, histograms, Prometheus export
         .metrics = .{
-            .url = "git+https://gitlab.com/devnw/zig/metrics.git#634de7df447fc6f16c8ec06c8f0ac15967372245",
-            .hash = "metrics-0.1.0-uPGXFhzPAQDXdqLCNGG1qhGL33dH9-EoNPKHdqiAJ8xC",
+            .url = "git+https://gitlab.com/devnw/zig/metrics.git#e6fe731837f452414391ab2f51b8d829187b2f77",
+            .hash = "metrics-0.1.0-uPGXFhzPAQBLYsSIEu1c0psvTWYDHKnMR5SURT9olP0Y",
         },
         // Thread Pool - direct (replaces the concurrency wrapper).
         // PINNED to the commit that transitive deps (quic, dns, gql,
@@ -126,8 +126,8 @@
         // To bump: change the SHA + hash here AND in every upstream's
         // build.zig.zon, then `zig fetch --save=otel <url>#<sha>`.
         .otel = .{
-            .url = "git+https://gitlab.com/devnw/zig/otel.git#57ef1f221930e5fd85e50297588c253e04361733",
-            .hash = "otel-0.1.0-B0v3lrgNNAA5vn53MsLSUUunxIAdI88cPgcgpgg5JMKr",
+            .url = "git+https://gitlab.com/devnw/zig/otel.git#7deab7fa53ff47f3e01b934ea01a139bcfed0c72",
+            .hash = "otel-0.1.0-B0v3lrgNNABguHBo8K_wuApcbbDJzyV0iUu2U0E4tLao",
             .lazy = true,
         },
     },
