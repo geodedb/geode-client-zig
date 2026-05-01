@@ -25,12 +25,16 @@
         // it. Transitive deps converge on thread_pool 0.2.1 (1674ebb), so
         // the pin below has to match.
         .quic = .{
-            // 2026-05-01: bumped to e33e7bf with the macOS std.posix
-            // -> std.c.* fix in udp_transport.zig (initPosix path).
-            // Must match geode's pin so cross-compile to x86_64-macos
-            // sees a single quic module instance in the build graph.
-            .url = "git+https://gitlab.com/devnw/zig/quic.git#e33e7bf2f9e1522e1d44e6f14525cb2d966c77d4",
-            .hash = "quic-0.1.14-gBIqUXfFOQDcp_5fl9IPTjOcom48JB5ATHdCYfmUGT-e",
+            // 2026-05-01: bumped to 49f59f7 with the server-side
+            // NoHandshakeKeys defer+retry fix (Phase 4.5 drain in
+            // Endpoint.pollWithStats reissues sendHandshakePackets
+            // every tick until pollCrypto installs hs_tx_keys).
+            // Includes the prior macOS std.posix -> std.c.* fix.
+            // Must match geode's pin so the build graph has a single
+            // quic module instance (no "file exists in modules
+            // 'quic' and 'quic0'" diamond).
+            .url = "git+https://gitlab.com/devnw/zig/quic.git#49f59f7ac432d71842baf1263abe39988b9603c3",
+            .hash = "quic-0.1.14-gBIqUS4jOgBqM61tIiulYgHrmm9DemZXX2DtMnV8XcJj",
         },
         // TLS 1.3 library for QUIC (must match the version quic v0.1.14 uses)
         .tls = .{
