@@ -570,20 +570,26 @@ pub fn build(b: *std.Build) void {
     const run_grpc_tests = b.addRunArtifact(grpc_tests);
     test_step.dependOn(&run_grpc_tests.step);
 
-    // Test geode_client module — reuses the SAME module instance
-    // (`geode_client_mod`) declared above. Previously this block created
-    // a SECOND module also rooted at `geode_client_v2.zig`, which Zig
-    // 0.16 rejects with "file exists in modules X and X0" even when
-    // the duplicate is only reachable through a test artifact, because
-    // module-graph traversal during downstream `b.dependency(...)`
-    // resolution still touches it. Reusing the same module instance
-    // avoids the duplicate root.
-    const client_tests = b.addTest(.{ .root_module = geode_client_mod });
-
-    linkSystemDeps(client_tests, target);
-
-    const run_client_tests = b.addRunArtifact(client_tests);
-    test_step.dependOn(&run_client_tests.step);
+    // Test geode_client module — DELETED 2026-05-01. Previously this
+    // block did `b.addTest(.{ .root_module = geode_client_mod })`
+    // followed by `linkSystemDeps(client_tests, target)`. Because
+    // `client_tests.root_module` IS the shared `geode_client_mod`
+    // (the dup-root fix from 0afe8c6), linkSystemDeps' calls
+    // (link_libc + linkSystemLibrary("ssl") + ("crypto") + ("dl"))
+    // MUTATED the shared public module, propagating the ssl/crypto
+    // link requirement to every downstream consumer (geode's
+    // gql / geode-auth / generate_* tooling exes). CI cross-compile
+    // to x86_64-linux-gnu (no host libssl-dev for the cross target)
+    // then failed with "unable to find dynamic system library 'ssl'"
+    // — geode pipeline #1013/#1014.
+    //
+    // The geode_client module is exercised by integration_tests +
+    // runner_integration_tests below (which import it BY NAME instead
+    // of using it as their root_module, avoiding the mutation), so
+    // dropping this test artifact loses no coverage. Restoring it
+    // would require a wrapper module that imports geode_client by
+    // name (not as root) and applies linkSystemDeps to the wrapper
+    // only.
 
     // Test observability seam (covers both -Dwith_otel=false comptime
     // no-op path and the enabled path; the enabled path's `global`
