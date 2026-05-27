@@ -33,8 +33,8 @@
             // Must match geode's pin so the build graph has a single
             // quic module instance (no "file exists in modules
             // 'quic' and 'quic0'" diamond).
-            .url = "git+https://gitlab.com/devnw/zig/quic.git?ref=main#8af86b2882b423dbef34583ad5027a9b76bd76e7",
-            .hash = "quic-0.1.20-gBIqUd4hPADfdT0jkVyCDsY2xal-_k3FSCnX_h7MeE4P",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git?ref=main#bf3b5a948a8c1edcc43e48e85c2a7895cc798452",
+            .hash = "quic-0.1.20-gBIqUUwkPADnrcKYNdOUUiXUtTdbEX-Gc89TXQ4RvzWN",
         },
         // TLS 1.3 library for QUIC (must match the version quic v0.1.14 uses)
         .tls = .{
