@@ -27,8 +27,8 @@
         .quic = .{
             // Must match geode's pin so the build graph has a single quic
             // module instance.
-            .url = "git+https://gitlab.com/devnw/zig/quic.git#v0.1.21",
-            .hash = "quic-0.1.21-gBIqUUwkPAD_9Jii8hHtc2rwzRRAtIe9N7adluYf9TRe",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git#a7bd4152714ae1318c681b7529dcd39ef64cc722",
+            .hash = "quic-0.1.21-gBIqUZAkPAD1uL57se7y-IjWdW3yRLrY1s9ELfeWy3Hx",
         },
         // TLS 1.3 library for QUIC (must match the version quic v0.1.14 uses)
         .tls = .{
@@ -105,8 +105,8 @@
         // Otherwise zig errors with "file exists in modules
         // build_options and build_options0".
         .thread_pool = .{
-            .url = "git+https://gitlab.com/devnw/zig/thread-pool.git#v0.2.4",
-            .hash = "thread_pool-0.2.4-11B1BsqSdgD2ZmPGiEwbjSR30K8xwBlWsiLt2NKWqpUl",
+            .url = "git+https://gitlab.com/devnw/zig/thread-pool.git#39528a3e92212efab8ed5840bc20e619a419c0f5",
+            .hash = "thread_pool-0.2.4-11B1BnyUdgCUNlqgBwHNvE4plLwP1s1MAyCjODPafrpo",
         },
 
         // =======================================================================
