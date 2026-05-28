@@ -24,11 +24,14 @@
         // exposes a lazy `otel` dep gated behind `-Dwith_otel=true`; default
         // builds never resolve it. Transitive deps converge on thread_pool
         // 0.2.4 (39528a3), so the pin below has to match.
+        // 2026-05-28: picks up the trusted-localhost cwnd bypass used by
+        // Geode's high-fanout loopback integration tests while preserving the
+        // normal congestion gate for remote peers.
         .quic = .{
             // Must match geode's pin so the build graph has a single quic
             // module instance.
-            .url = "git+https://gitlab.com/devnw/zig/quic.git#f8a39e8cfef5eed1f3ecf2fa34f35b769aa38eb5",
-            .hash = "quic-0.1.21-gBIqUUgzPAB0Mfjz2zgctLSiebmRlVuJtAqSavwf8MwQ",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git#d3382eb95277243e8fc18c7edbe5b9d14a4a90c9",
+            .hash = "quic-0.1.21-gBIqUTc_PADw6YWwF-LoqJRB7gxumt_G2IhFeQJ_gw0j",
         },
         // TLS 1.3 library for QUIC (must match the version quic v0.1.21 uses)
         .tls = .{
