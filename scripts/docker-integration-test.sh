@@ -29,6 +29,8 @@ DOCKER_IMAGE="${GEODE_IMAGE:-geodedb/geode:latest}"
 CONTAINER_NAME="geode-zig-test-$$"
 CONTAINER_PORT=3141
 GRPC_CONTAINER_PORT=50051
+GEODE_USERNAME="${GEODE_USERNAME:-geode}"
+GEODE_PASSWORD="${GEODE_PASSWORD:-geode-test-password}"
 STARTUP_TIMEOUT=60
 KEEP_CONTAINER=false
 PULL_IMAGE=false
@@ -157,6 +159,9 @@ verbose "Container port: $CONTAINER_PORT -> Host port: $HOST_PORT"
 
 CONTAINER_ID=$(docker run -d --rm \
     --name "$CONTAINER_NAME" \
+    -e GEODE_ADMIN_USERNAME="$GEODE_USERNAME" \
+    -e GEODE_DEFAULT_PASSWORD="$GEODE_PASSWORD" \
+    -e GEODE_ADMIN_PASSWORD="$GEODE_PASSWORD" \
     -p "$HOST_PORT:$CONTAINER_PORT/udp" \
     -p "$GRPC_HOST_PORT:$GRPC_CONTAINER_PORT/tcp" \
     "$DOCKER_IMAGE" \
@@ -221,6 +226,8 @@ echo ""
 
 export GEODE_SERVER="127.0.0.1:$HOST_PORT"
 export GEODE_INSECURE=1
+export GEODE_USERNAME
+export GEODE_PASSWORD
 
 # Change to project directory
 cd "$(dirname "$0")/.."

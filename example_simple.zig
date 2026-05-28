@@ -1,6 +1,19 @@
 const std = @import("std");
 const GeodeClient = @import("geode_client").GeodeClient;
 
+fn getEnvOr(name: [*:0]const u8, default: []const u8) []const u8 {
+    if (std.c.getenv(name)) |v| return std.mem.span(v);
+    return default;
+}
+
+fn authUsername() []const u8 {
+    return getEnvOr("GEODE_USERNAME", getEnvOr("GEODE_USER", "geode"));
+}
+
+fn authPassword() []const u8 {
+    return getEnvOr("GEODE_PASSWORD", getEnvOr("GEODE_DEFAULT_PASSWORD", getEnvOr("GEODE_ADMIN_PASSWORD", "geode-test-password")));
+}
+
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -13,15 +26,14 @@ pub fn main() !void {
 
     // SECURITY: Default to secure mode; set GEODE_INSECURE=1 for local testing
     const insecure = blk: {
-        if (std.process.getEnvVarOwned(allocator, "GEODE_INSECURE")) |val| {
-            defer allocator.free(val);
+        if (std.c.getenv("GEODE_INSECURE")) |raw| {
+            const val = std.mem.span(raw);
             break :blk std.mem.eql(u8, val, "1") or std.mem.eql(u8, val, "true");
-        } else |_| {
-            break :blk false;
         }
+        break :blk false;
     };
 
-    var client = try GeodeClient.init(allocator, host, port, insecure, "", "");
+    var client = try GeodeClient.init(allocator, host, port, insecure, authUsername(), authPassword());
     defer client.deinit();
 
     if (insecure) {

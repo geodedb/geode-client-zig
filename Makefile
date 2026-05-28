@@ -13,7 +13,7 @@ GEODE_HOST ?= 127.0.0.1
 GEODE_PORT ?= 3141
 GEODE_GRPC_PORT ?= 50051
 GEODE_USERNAME ?= geode
-GEODE_PASSWORD ?= GeodeTestPassword123!
+GEODE_PASSWORD ?= geode-test-password
 
 .PHONY: all build release test test-unit test-integration test-integration-docker \
         test-integration-docker-legacy test-integration-docker-verbose test-integration-docker-keep \

@@ -58,7 +58,7 @@ const TestConfig = struct {
         const username = getEnvOpt("GEODE_USERNAME") orelse getEnvOr("GEODE_USER", "geode");
         const password = getEnvOpt("GEODE_PASSWORD") orelse
             getEnvOpt("GEODE_DEFAULT_PASSWORD") orelse
-            getEnvOr("GEODE_ADMIN_PASSWORD", "GeodeTestPassword123!");
+            getEnvOr("GEODE_ADMIN_PASSWORD", "geode-test-password");
 
         var host: []const u8 = "127.0.0.1";
         var port: u16 = default_port;

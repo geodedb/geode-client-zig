@@ -6,14 +6,22 @@ fn getEnvOr(name: [*:0]const u8, default: []const u8) []const u8 {
     return default;
 }
 
+fn authUsername() []const u8 {
+    return getEnvOr("GEODE_USERNAME", getEnvOr("GEODE_USER", "geode"));
+}
+
+fn authPassword() []const u8 {
+    return getEnvOr("GEODE_PASSWORD", getEnvOr("GEODE_DEFAULT_PASSWORD", getEnvOr("GEODE_ADMIN_PASSWORD", "geode-test-password")));
+}
+
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
 
     std.debug.print("Creating Geode client...\n", .{});
     var host: []const u8 = "127.0.0.1";
     var port: u16 = 3141;
-    const username = getEnvOr("GEODE_USER", "");
-    const password = getEnvOr("GEODE_PASSWORD", "");
+    const username = authUsername();
+    const password = authPassword();
 
     if (init.environ_map.get("GEODE_SERVER")) |env_addr| {
         if (std.mem.indexOf(u8, env_addr, ":")) |idx| {

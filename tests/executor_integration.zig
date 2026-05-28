@@ -18,26 +18,63 @@ const ServerAddr = struct {
     host: []const u8,
     port: u16,
     insecure: bool,
+    username: []const u8,
+    password: []const u8,
     host_owned: bool,
 };
 
-fn getServerAddr(allocator: std.mem.Allocator) ServerAddr {
-    const dsn = std.process.getEnvVarOwned(allocator, "GEODE_SERVER") catch {
-        return .{ .host = "127.0.0.1", .port = 3141, .insecure = true, .host_owned = false };
+fn getEnvOpt(name: [*:0]const u8) ?[]const u8 {
+    if (std.c.getenv(name)) |v| return std.mem.span(v);
+    return null;
+}
+
+fn getEnvOr(name: [*:0]const u8, default: []const u8) []const u8 {
+    return getEnvOpt(name) orelse default;
+}
+
+fn defaultPassword() []const u8 {
+    return getEnvOpt("GEODE_PASSWORD") orelse
+        getEnvOpt("GEODE_DEFAULT_PASSWORD") orelse
+        getEnvOr("GEODE_ADMIN_PASSWORD", "geode-test-password");
+}
+
+fn getServerAddr(allocator: std.mem.Allocator) !ServerAddr {
+    const dsn = getEnvOpt("GEODE_SERVER") orelse {
+        return .{
+            .host = "127.0.0.1",
+            .port = 3141,
+            .insecure = true,
+            .username = getEnvOr("GEODE_USERNAME", "geode"),
+            .password = defaultPassword(),
+            .host_owned = false,
+        };
     };
-    defer allocator.free(dsn);
 
     const colon = std.mem.lastIndexOfScalar(u8, dsn, ':') orelse {
-        const owned = allocator.dupe(u8, dsn) catch "127.0.0.1";
-        return .{ .host = owned, .port = 3141, .insecure = true, .host_owned = true };
+        const owned = try allocator.dupe(u8, dsn);
+        return .{
+            .host = owned,
+            .port = 3141,
+            .insecure = true,
+            .username = getEnvOr("GEODE_USERNAME", "geode"),
+            .password = defaultPassword(),
+            .host_owned = true,
+        };
     };
     const port = std.fmt.parseInt(u16, dsn[colon + 1 ..], 10) catch 3141;
-    const host_copy = allocator.dupe(u8, dsn[0..colon]) catch "127.0.0.1";
-    return .{ .host = host_copy, .port = port, .insecure = true, .host_owned = true };
+    const host_copy = try allocator.dupe(u8, dsn[0..colon]);
+    return .{
+        .host = host_copy,
+        .port = port,
+        .insecure = true,
+        .username = getEnvOr("GEODE_USERNAME", "geode"),
+        .password = defaultPassword(),
+        .host_owned = true,
+    };
 }
 
 test "executor runs a real ping on blocking lane" {
-    const addr = getServerAddr(std.testing.allocator);
+    const addr = try getServerAddr(std.testing.allocator);
     defer if (addr.host_owned) std.testing.allocator.free(addr.host);
 
     var runner = try runner_mod.Executor.init(std.testing.allocator, .{
@@ -50,6 +87,8 @@ test "executor runs a real ping on blocking lane" {
         host: []const u8,
         port: u16,
         insecure: bool,
+        username: []const u8,
+        password: []const u8,
         result: std.atomic.Value(bool),
 
         fn run(raw: *anyopaque, _: *tp.TaskContext) void {
@@ -59,8 +98,8 @@ test "executor runs a real ping on blocking lane" {
                 self.host,
                 self.port,
                 self.insecure,
-                "admin",
-                "admin",
+                self.username,
+                self.password,
             ) catch return;
             defer client.deinit();
             client.connect() catch return;
@@ -74,6 +113,8 @@ test "executor runs a real ping on blocking lane" {
         .host = addr.host,
         .port = addr.port,
         .insecure = addr.insecure,
+        .username = addr.username,
+        .password = addr.password,
         .result = std.atomic.Value(bool).init(false),
     };
 

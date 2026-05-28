@@ -6,6 +6,14 @@ fn getEnvOr(name: [*:0]const u8, default: []const u8) []const u8 {
     return default;
 }
 
+fn authUsername() []const u8 {
+    return getEnvOr("GEODE_USERNAME", getEnvOr("GEODE_USER", "geode"));
+}
+
+fn authPassword() []const u8 {
+    return getEnvOr("GEODE_PASSWORD", getEnvOr("GEODE_DEFAULT_PASSWORD", getEnvOr("GEODE_ADMIN_PASSWORD", "geode-test-password")));
+}
+
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
     const io = init.io;
@@ -24,8 +32,8 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const insecure = std.c.getenv("GEODE_INSECURE") != null;
-    const username = getEnvOr("GEODE_USER", "");
-    const password = getEnvOr("GEODE_PASSWORD", "");
+    const username = authUsername();
+    const password = authPassword();
 
     // Resolve hostname to IP address if needed (QUIC library requires numeric IP)
     var resolved_host: []const u8 = host;

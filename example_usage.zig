@@ -1,6 +1,19 @@
 const std = @import("std");
 const GeodeClient = @import("geode_client").GeodeClient;
 
+fn getEnvOr(name: [*:0]const u8, default: []const u8) []const u8 {
+    if (std.c.getenv(name)) |v| return std.mem.span(v);
+    return default;
+}
+
+fn authUsername() []const u8 {
+    return getEnvOr("GEODE_USERNAME", getEnvOr("GEODE_USER", "geode"));
+}
+
+fn authPassword() []const u8 {
+    return getEnvOr("GEODE_PASSWORD", getEnvOr("GEODE_DEFAULT_PASSWORD", getEnvOr("GEODE_ADMIN_PASSWORD", "geode-test-password")));
+}
+
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -37,7 +50,7 @@ pub fn main() !void {
     std.debug.print("Connecting to {s}:{d}\n", .{ host, port });
 
     // Create and connect client
-    var client = try GeodeClient.init(allocator, host, port, insecure, "", "");
+    var client = try GeodeClient.init(allocator, host, port, insecure, authUsername(), authPassword());
     defer client.deinit();
 
     if (insecure) {
