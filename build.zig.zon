@@ -27,11 +27,13 @@
         // 2026-05-28: picks up the trusted-localhost cwnd bypass used by
         // Geode's high-fanout loopback integration tests while preserving the
         // normal congestion gate for remote peers.
+        // 2026-05-28: also includes the sent-packet legacy map mutex needed
+        // for multi-poll-worker PTO accounting under high fan-out.
         .quic = .{
             // Must match geode's pin so the build graph has a single quic
             // module instance.
-            .url = "git+https://gitlab.com/devnw/zig/quic.git#d3382eb95277243e8fc18c7edbe5b9d14a4a90c9",
-            .hash = "quic-0.1.21-gBIqUTc_PADw6YWwF-LoqJRB7gxumt_G2IhFeQJ_gw0j",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git#ef8d14315b23d3ce374cbd6690af3d5a144d7670",
+            .hash = "quic-0.1.21-gBIqUadHPABudlGfMXHJMcMGkPj3CvlWVfjf63jEqUoi",
         },
         // TLS 1.3 library for QUIC (must match the version quic v0.1.21 uses)
         .tls = .{
