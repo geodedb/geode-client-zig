@@ -40,15 +40,14 @@
         // 2026-05-29: defers the first server-side STREAM-only standalone ACK
         // so request/response traffic can piggyback ACKs on response packets
         // while retaining an AppAckDelay fallback for quiet/upload-only peers.
-        // 2026-05-29: restored the proven server short-header receive budget
-        // after a one-batch experiment regressed 4k setup and sustained mixed
-        // request throughput; keep the pin on the upstream revert commit so
-        // consumers do not observe the rejected intermediate commit.
+        // 2026-05-29: keeps the proven four-batch server drain while adding
+        // smaller recv slices plus a short-header wall-clock yield for contended
+        // application receive cycles.
         .quic = .{
             // Must match geode's pin so the build graph has a single quic
             // module instance.
-            .url = "git+https://gitlab.com/devnw/zig/quic.git#9a35274086e8cfb9cab5b78fa7471506aec03d3e",
-            .hash = "quic-0.1.21-gBIqUeHmPADddO39D62L-gMpkIq0hQYX0-BpsXL20uX3",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git#c2874fb8586a472fb1cf053feef1259a12b5f3e0",
+            .hash = "quic-0.1.21-gBIqUUX9PAAaX6t5bNKteXGwTq5yTQKq9dIpkU6gjYUV",
         },
         // TLS 1.3 library for QUIC (must match the version quic v0.1.21 uses)
         .tls = .{
