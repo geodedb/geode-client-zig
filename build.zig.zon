@@ -50,11 +50,14 @@
         // 2026-05-29: pins REQ-QUIC-HC-168 so generic/coalesced long-header
         // dispatch uses the same per-connection TLS serialization as the
         // optimized burst receive path, closing the pollCrypto ownership race.
+        // 2026-05-29: pins REQ-QUIC-HC-177 so server short-header receive
+        // workers shed busy per-connection mutexes before PN tracking instead
+        // of parking the poll loop behind response writers.
         .quic = .{
             // Must match geode's pin so the build graph has a single quic
             // module instance.
-            .url = "git+https://gitlab.com/devnw/zig/quic.git#06f4aadcf045a0d6295c7e85398b94c7096accb9",
-            .hash = "quic-0.1.21-gBIqUTjsPADrNNiwBmGSnFPs0wIO1Go_rItY5kK-ci8K",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git#8bb37336c61c72e55e1676dd54a1d76c7ef44351",
+            .hash = "quic-0.1.21-gBIqUU_0PADJk38zKO6kJjJ55sGsbKi5b5BCWdMr7y1Y",
         },
         // TLS 1.3 library for QUIC (must match the version quic v0.1.21 uses)
         .tls = .{
