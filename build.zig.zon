@@ -43,15 +43,15 @@
         // 2026-05-29: restores the proven four-batch server drain after the
         // short-header wall-clock yield experiments regressed Geode's accepted
         // 4096 single-op gate.
-        // 2026-05-29: adds a conservative slow-batch cadence yield after a
-        // full server short-header batch has already been processed for at
-        // least 500ms, preserving the accepted single-op gate while bounding
-        // sustained mixed read/write poll-cycle monopolization.
+        // 2026-05-29: pins the upstream-main revert of a slow-batch cadence
+        // experiment that regressed Geode's accepted 4096 single-op gate.
+        // Content remains equivalent to the proven 108d06d four-batch receive
+        // behavior, but downstream pins now track the latest upstream commit.
         .quic = .{
             // Must match geode's pin so the build graph has a single quic
             // module instance.
-            .url = "git+https://gitlab.com/devnw/zig/quic.git#6224b28fc1654ccd20d1b5dc951e6502cb984aa7",
-            .hash = "quic-0.1.21-gBIqUWvwPAAhw4xcpo-RMeG92U4_wHSJOkl36lWsrHJF",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git#eeeb2161ccd94c60f7c6b645bcfd16e20202593a",
+            .hash = "quic-0.1.21-gBIqUeHmPADddO39D62L-gMpkIq0hQYX0-BpsXL20uX3",
         },
         // TLS 1.3 library for QUIC (must match the version quic v0.1.21 uses)
         .tls = .{
