@@ -11,12 +11,15 @@ pub const HelloRequest = struct {
     password: []const u8 = "",
     tenant_id: ?[]const u8 = null,
     graph: ?[]const u8 = null,
+    // FLE role for field-level access control (geode.proto field 8, GAP-0841).
+    role: ?[]const u8 = null,
 
     pub const _desc_table = .{
         .username = fd(1, .{ .scalar = .string }),
         .password = fd(2, .{ .scalar = .string }),
         .tenant_id = fd(3, .{ .scalar = .string }),
         .graph = fd(7, .{ .scalar = .string }),
+        .role = fd(8, .{ .scalar = .string }),
     };
 
     pub fn deinit(self: *HelloRequest, allocator: std.mem.Allocator) void {

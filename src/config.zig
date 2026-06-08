@@ -94,6 +94,12 @@ pub const Config = struct {
     server_name: ?[]const u8,
     /// Graph name for DSN graph binding (optional)
     graph: ?[]const u8 = null,
+    /// Tenant id for multi-tenant connections (optional, HELLO field 3).
+    /// Sent in the HELLO handshake only when set (GAP-0841).
+    tenant: ?[]const u8 = null,
+    /// FLE role for field-level access control (optional, HELLO field 8).
+    /// Sent in the HELLO handshake only when set (GAP-0841).
+    role: ?[]const u8 = null,
 
     /// Initialize with default values (QUIC transport)
     pub fn init() Config {
@@ -116,6 +122,8 @@ pub const Config = struct {
             .client_key = null,
             .server_name = null,
             .graph = null,
+            .tenant = null,
+            .role = null,
         };
     }
 
@@ -164,6 +172,22 @@ pub const Config = struct {
     pub fn withGraph(self: *Config, allocator: std.mem.Allocator, graph: []const u8) !*Config {
         if (self.graph) |old| allocator.free(old);
         self.graph = try allocator.dupe(u8, graph);
+        return self;
+    }
+
+    /// Set tenant id for multi-tenant connections (HELLO field 3).
+    /// Takes an owned copy of the tenant id string (GAP-0841).
+    pub fn withTenant(self: *Config, allocator: std.mem.Allocator, tenant: []const u8) !*Config {
+        if (self.tenant) |old| allocator.free(old);
+        self.tenant = try allocator.dupe(u8, tenant);
+        return self;
+    }
+
+    /// Set FLE role for field-level access control (HELLO field 8).
+    /// Takes an owned copy of the role string (GAP-0841).
+    pub fn withRole(self: *Config, allocator: std.mem.Allocator, role: []const u8) !*Config {
+        if (self.role) |old| allocator.free(old);
+        self.role = try allocator.dupe(u8, role);
         return self;
     }
 
@@ -259,6 +283,14 @@ pub const Config = struct {
         if (self.graph) |v| {
             allocator.free(v);
             self.graph = null;
+        }
+        if (self.tenant) |v| {
+            allocator.free(v);
+            self.tenant = null;
+        }
+        if (self.role) |v| {
+            allocator.free(v);
+            self.role = null;
         }
     }
 };
@@ -513,6 +545,12 @@ fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *C
             } else if (std.mem.eql(u8, key, "graph")) {
                 if (config.graph) |old| allocator.free(old);
                 config.graph = try urlDecode(allocator, value);
+            } else if (std.mem.eql(u8, key, "tenant") or std.mem.eql(u8, key, "tenant_id")) {
+                if (config.tenant) |old| allocator.free(old);
+                config.tenant = try urlDecode(allocator, value);
+            } else if (std.mem.eql(u8, key, "role")) {
+                if (config.role) |old| allocator.free(old);
+                config.role = try urlDecode(allocator, value);
             }
         }
     }

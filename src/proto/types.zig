@@ -28,6 +28,8 @@ pub const HelloRequest = struct {
     client_version: []const u8 = "0.1.0",
     wanted_conformance: []const u8 = "minimum",
     graph: ?[]const u8 = null,
+    // FLE role for field-level access control (geode.proto HelloRequest field 8).
+    role: ?[]const u8 = null,
 };
 
 pub const HelloResponse = struct {

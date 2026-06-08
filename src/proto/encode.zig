@@ -276,12 +276,23 @@ fn writeHelloRequestTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allo
     const writer = arrayListWriter(buf, allocator);
     try encodeString(writer, 1, req.username);
     try encodeString(writer, 2, req.password);
+    // tenant_id (field 3, optional) — emitted only when set so the server
+    // sees an absent field for single-tenant connections (GAP-0841).
     if (req.tenant_id) |tid| {
-        try encodeString(writer, 3, tid);
+        if (tid.len > 0) try encodeString(writer, 3, tid);
     }
     try encodeString(writer, 4, req.client_name);
     try encodeString(writer, 5, req.client_version);
     try encodeString(writer, 6, req.wanted_conformance);
+    // graph (field 7, optional) — DSN graph binding.
+    if (req.graph) |g| {
+        if (g.len > 0) try encodeString(writer, 7, g);
+    }
+    // role (field 8, optional) — FLE role for field-level access control.
+    // Emitted only when set (GAP-0841).
+    if (req.role) |r| {
+        if (r.len > 0) try encodeString(writer, 8, r);
+    }
 }
 
 fn writeExecuteRequestTo(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, req: ExecuteRequest) !void {
@@ -442,6 +453,92 @@ test "HelloRequest encodes with all fields" {
     defer buf.deinit(allocator);
     try writeHelloRequestTo(&buf, allocator, req);
     try std.testing.expect(buf.items.len > 0);
+}
+
+// Returns true if `buf` contains a length-delimited (wire type 2) field with
+// the given proto field number whose payload equals `expected`.
+fn helloHasStringField(buf: []const u8, field_num: u32, expected: []const u8) bool {
+    const tag: u8 = @intCast((field_num << 3) | WIRE_BYTES);
+    var i: usize = 0;
+    while (i < buf.len) {
+        const t = buf[i];
+        i += 1;
+        const wire: u3 = @intCast(t & 0x7);
+        if (wire != WIRE_BYTES) {
+            // HelloRequest only carries length-delimited string fields, so any
+            // non-bytes wire type would be malformed; bail out conservatively.
+            return false;
+        }
+        if (i >= buf.len) return false;
+        const len: usize = buf[i];
+        i += 1;
+        if (i + len > buf.len) return false;
+        const payload = buf[i .. i + len];
+        if (t == tag and std.mem.eql(u8, payload, expected)) return true;
+        i += len;
+    }
+    return false;
+}
+
+// Returns true if `buf` contains any field with the given proto field number
+// (wire type 2 / length-delimited).
+fn helloHasField(buf: []const u8, field_num: u32) bool {
+    const tag: u8 = @intCast((field_num << 3) | WIRE_BYTES);
+    var i: usize = 0;
+    while (i < buf.len) {
+        const t = buf[i];
+        i += 1;
+        const wire: u3 = @intCast(t & 0x7);
+        if (wire != WIRE_BYTES) return false;
+        if (i >= buf.len) return false;
+        const len: usize = buf[i];
+        i += 1;
+        if (i + len > buf.len) return false;
+        if (t == tag) return true;
+        i += len;
+    }
+    return false;
+}
+
+test "HelloRequest encodes tenant_id (field 3) and role (field 8) when set" {
+    // GAP-0841: multi-tenant + FLE handshake. With tenant + role set, the
+    // wire bytes must carry field 3 (tenant_id) and field 8 (role).
+    const allocator = std.testing.allocator;
+    const req = HelloRequest{
+        .username = "admin",
+        .password = "secret",
+        .tenant_id = "acme",
+        .graph = "social",
+        .role = "fle_reader",
+    };
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer buf.deinit(allocator);
+    try writeHelloRequestTo(&buf, allocator, req);
+
+    try std.testing.expect(helloHasStringField(buf.items, 3, "acme"));
+    try std.testing.expect(helloHasStringField(buf.items, 7, "social"));
+    try std.testing.expect(helloHasStringField(buf.items, 8, "fle_reader"));
+}
+
+test "HelloRequest omits tenant_id and role when empty/absent" {
+    // Single-tenant, non-FLE connection: fields 3 and 8 must be absent so the
+    // server treats the connection as the default tenant / no FLE role.
+    const allocator = std.testing.allocator;
+    const req = HelloRequest{
+        .username = "admin",
+        .password = "secret",
+        // tenant_id defaults to null; explicit empty string also omitted.
+        .tenant_id = "",
+        .role = null,
+    };
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer buf.deinit(allocator);
+    try writeHelloRequestTo(&buf, allocator, req);
+
+    try std.testing.expect(!helloHasField(buf.items, 3));
+    try std.testing.expect(!helloHasField(buf.items, 8));
+    // Sanity: username (field 1) is still present.
+    try std.testing.expect(helloHasStringField(buf.items, 1, "admin"));
 }
 
 test "QuicClientMessage with hello encodes" {

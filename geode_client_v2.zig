@@ -66,6 +66,11 @@ pub const GeodeClient = struct {
     // Graph binding from DSN or config
     graph: ?[]const u8 = null,
 
+    // Multi-tenant id sent in HELLO field 3 (GAP-0841). Null in single-tenant.
+    tenant: ?[]const u8 = null,
+    // FLE role sent in HELLO field 8 (GAP-0841). Null when not using FLE.
+    role: ?[]const u8 = null,
+
     /// Initialize a QUIC client (backward compatible).
     pub fn init(allocator: std.mem.Allocator, host: []const u8, port: u16, insecure: bool, username: []const u8, password: []const u8) !GeodeClient {
         return initWithTransport(allocator, host, port, insecure, username, password, .quic);
@@ -111,6 +116,12 @@ pub const GeodeClient = struct {
         );
         if (cfg.graph) |g| {
             client.graph = try allocator.dupe(u8, g);
+        }
+        if (cfg.tenant) |t| {
+            client.tenant = try allocator.dupe(u8, t);
+        }
+        if (cfg.role) |r| {
+            client.role = try allocator.dupe(u8, r);
         }
         if (cfg.ca_cert) |path| {
             client.ca_cert_path = try allocator.dupe(u8, path);
@@ -164,6 +175,16 @@ pub const GeodeClient = struct {
         if (self.graph) |g| {
             self.allocator.free(g);
             self.graph = null;
+        }
+
+        // Clean up tenant id and FLE role (GAP-0841)
+        if (self.tenant) |t| {
+            self.allocator.free(t);
+            self.tenant = null;
+        }
+        if (self.role) |r| {
+            self.allocator.free(r);
+            self.role = null;
         }
 
         if (self.ca_cert_path) |path| {
@@ -646,12 +667,16 @@ pub const GeodeClient = struct {
 
     /// Send HELLO and store session_id from response.
     pub fn sendHello(self: *GeodeClient) !void {
+        // tenant_id (field 3) and role (field 8) ride the HELLO only when
+        // set so single-tenant / non-FLE connections send absent fields
+        // (GAP-0841). encodeString omits empty/absent optional strings.
         const msg = proto.QuicClientMessage{
             .hello = proto.HelloRequest{
                 .username = self.username,
                 .password = self.password,
-                .tenant_id = "",
+                .tenant_id = self.tenant,
                 .graph = self.graph,
+                .role = self.role,
             },
         };
         try self.sendProto(msg);

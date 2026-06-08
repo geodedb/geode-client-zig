@@ -78,8 +78,14 @@ pub const decodeDoubleFixed = decode.decodeDoubleFixed;
 pub const decodeLengthPrefix = decode.decodeLengthPrefix;
 pub const decodeQuicServerMessage = decode.decodeQuicServerMessage;
 
-// Pull in tests from sub-modules
+// Pull in tests from sub-modules. `refAllDecls` references decls for
+// type-checking; the explicit `_ = @import(...)` lines force the test
+// runner to also execute the `test {}` blocks defined in each sub-module
+// (refAllDecls alone does not pull in nested-file tests).
 test {
     const std = @import("std");
     std.testing.refAllDecls(@This());
+    _ = @import("proto/types.zig");
+    _ = @import("proto/encode.zig");
+    _ = @import("proto/decode.zig");
 }

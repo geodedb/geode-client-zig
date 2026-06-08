@@ -347,15 +347,20 @@ pub const GrpcClient = struct {
         return try proto.decodeQuicServerMessage(self.allocator, body);
     }
 
-    /// Perform Hello handshake
-    pub fn hello(self: *Self, username: ?[]const u8, password: ?[]const u8, graph: ?[]const u8) !void {
+    /// Perform Hello handshake.
+    /// `tenant` (HELLO field 3) and `role` (HELLO field 8) are sent only when
+    /// non-null/non-empty so single-tenant / non-FLE connections omit them on
+    /// the wire (GAP-0841).
+    pub fn hello(self: *Self, username: ?[]const u8, password: ?[]const u8, graph: ?[]const u8, tenant: ?[]const u8, role: ?[]const u8) !void {
         const hello_req = proto.HelloRequest{
             .username = username orelse "",
             .password = password orelse "",
+            .tenant_id = tenant,
             .client_name = "geode-zig-grpc",
             .client_version = "0.1.0",
             .wanted_conformance = "minimum",
             .graph = graph,
+            .role = role,
         };
 
         const msg = proto.QuicClientMessage{ .hello = hello_req };
