@@ -1,6 +1,6 @@
 .{
     .name = .geode_client_zig,
-    .version = "0.2.14",
+    .version = "0.2.15",
     .fingerprint = 0x13ee9771571b2bf3,
     .minimum_zig_version = "0.16.0",
     .paths = .{
@@ -60,8 +60,11 @@
             // 2026-06-14: v0.1.28 — acceptor-wedge RC-A: socket-drain cap
             // decoupled from the Initial processing budget (server-side only;
             // client behaviour unchanged). Kept in lockstep with geode's pin.
-            .url = "git+https://gitlab.com/devnw/zig/quic.git?ref=v0.1.28#8ed9425aef2616363726d1ca1d7f1fe7330d10ed",
-            .hash = "quic-0.1.28-gBIqUXa3PQC5z_Z8dgnK_rGcxRnryXDxJIUx5-5T5MMJ",
+            // 2026-06-15: v0.1.29 — RC-A iteration 2: small Initial-processing
+            // budget + full-drain cap so the kernel rx-queue is actually bounded
+            // (server-side only; client unchanged). Lockstep with geode.
+            .url = "git+https://gitlab.com/devnw/zig/quic.git?ref=v0.1.29#69d53630252efcaa9da0fdba2d37ecc1ab1e7119",
+            .hash = "quic-0.1.29-gBIqUeLJPQBViVQOkmQTLkrZ9aQNi5O9kIRTDrll8sVD",
         },
         // TLS 1.3 library for QUIC (must match the version quic v0.1.21 uses)
         .tls = .{
