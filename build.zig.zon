@@ -1,6 +1,6 @@
 .{
     .name = .geode_client_zig,
-    .version = "0.2.16",
+    .version = "0.2.17",
     .fingerprint = 0x13ee9771571b2bf3,
     .minimum_zig_version = "0.16.0",
     .paths = .{
@@ -66,11 +66,16 @@
             // 2026-06-15: v0.1.30 — RC-C (it.3): wire the dead/churned-connection
             // reaper (idle close + same-peer stale close). Server-side opt-in
             // (dead_conn_reap_ms; OFF by default), so client behaviour unchanged.
-            // Lockstep with geode. NOTE: the v0.1.30 tag commit (245ecae) predates
-            // its own build.zig.zon .version bump, so the content hash is labelled
-            // 0.1.29 — pinned by commit, so reproducible; matches geode exactly.
-            .url = "git+https://gitlab.com/devnw/zig/quic.git?ref=v0.1.30#245ecae9f4a2755ae79991bb18a7025da036022e",
-            .hash = "quic-0.1.29-gBIqUaUCPgBVgy1MKj-IzF3GoMEfTpHJ3_p6tUcXkbKl",
+            // Lockstep with geode. NOTE: the v0.1.30 tag commit (245ecae) predated
+            // its own build.zig.zon .version bump, so its content hash was labelled
+            // 0.1.29 — pinned by commit, so reproducible; matched geode exactly.
+            // 2026-06-17: v0.1.31 — GAP-0900 lever (a): move endpoint.pollWithStats's
+            // 256 KiB receive scratch from a stack `= undefined` (0xAA-filled every
+            // poll cycle in ReleaseSafe, across 16 poll threads) to threadlocal
+            // static. API-compatible (no signature change); client behaviour
+            // unchanged. Lockstep with geode. .version now tracks the tag (0.1.31).
+            .url = "git+https://gitlab.com/devnw/zig/quic.git?ref=v0.1.31#02cee4ae5e0516bcf5d7298f65787ac4b0f0bd4b",
+            .hash = "quic-0.1.31-gBIqUdkGPgB-zCfIX5aWkA-7vSMktGzRlhNqNzA06MGZ",
         },
         // TLS 1.3 library for QUIC (must match the version quic v0.1.21 uses)
         .tls = .{
