@@ -238,6 +238,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // Quote module (GQL identifier/string quoting)
+    const quote_mod = b.createModule(.{
+        .root_source_file = b.path("src/quote.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     // ========================================================================
     // Observability seam (otel)
     // ========================================================================
@@ -782,6 +789,18 @@ pub fn build(b: *std.Build) void {
     fuzz_validate.root_module.addImport("validate", validate_mod);
     const run_fuzz_validate = b.addRunArtifact(fuzz_validate);
     fuzz_step.dependOn(&run_fuzz_validate.step);
+
+    // Fuzz quote helpers
+    const fuzz_quote = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("fuzz/fuzz_quote.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    fuzz_quote.root_module.addImport("quote", quote_mod);
+    const run_fuzz_quote = b.addRunArtifact(fuzz_quote);
+    fuzz_step.dependOn(&run_fuzz_quote.step);
 
     // Fuzz pool
     const fuzz_pool = b.addTest(.{
