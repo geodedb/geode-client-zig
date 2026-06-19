@@ -528,6 +528,51 @@ pub const Value = union(enum) {
         };
     }
 
+    /// Get edge (relationship) value or return error. Alias for asRelationship
+    /// matching the Go driver's AsEdge naming.
+    pub fn asEdge(self: Value) !Relationship {
+        return switch (self) {
+            .relationship => |r| r,
+            else => error.TypeMismatch,
+        };
+    }
+
+    /// Get path value or return error.
+    pub fn asPath(self: Value) !Path {
+        return switch (self) {
+            .path => |p| p,
+            else => error.TypeMismatch,
+        };
+    }
+
+    /// Report whether this value is an object whose key-shape matches a
+    /// graph node: it has a "labels" key and no "start_node" key. Mirrors
+    /// the Go driver's AsNode map-shape detection.
+    pub fn objectIsNode(self: Value) bool {
+        return switch (self) {
+            .object => |o| o.contains("labels") and !o.contains("start_node"),
+            else => false,
+        };
+    }
+
+    /// Report whether this value is an object whose key-shape matches a
+    /// graph edge: it has both "start_node" and "end_node" keys.
+    pub fn objectIsEdge(self: Value) bool {
+        return switch (self) {
+            .object => |o| o.contains("start_node") and o.contains("end_node"),
+            else => false,
+        };
+    }
+
+    /// Report whether this value is an object whose key-shape matches a
+    /// graph path: it has a "nodes" key and an "edges" or "relationships" key.
+    pub fn objectIsPath(self: Value) bool {
+        return switch (self) {
+            .object => |o| o.contains("nodes") and (o.contains("edges") or o.contains("relationships")),
+            else => false,
+        };
+    }
+
     /// Get vector value or return error
     pub fn asVector(self: Value) ![]const f32 {
         return switch (self) {
@@ -1079,4 +1124,57 @@ test "Value.initTimeChecked rejects invalid times" {
     try std.testing.expectError(error.InvalidHour, Value.initTimeChecked(24, 0, 0));
     try std.testing.expectError(error.InvalidMinute, Value.initTimeChecked(12, 60, 0));
     try std.testing.expectError(error.InvalidSecond, Value.initTimeChecked(12, 30, 60));
+}
+
+test "Value.asEdge returns relationship variant" {
+    const rel = Value.Relationship{
+        .id = "r1",
+        .type_name = "KNOWS",
+        .start_node_id = "n1",
+        .end_node_id = "n2",
+        .properties = .empty,
+    };
+    const v = Value{ .relationship = rel };
+    const e = try v.asEdge();
+    try std.testing.expectEqualStrings("KNOWS", e.type_name);
+    try std.testing.expectError(error.TypeMismatch, Value.initInt(1).asEdge());
+}
+
+test "Value.asPath returns path variant" {
+    const p = Value.Path{ .nodes = &[_]Value.Node{}, .relationships = &[_]Value.Relationship{} };
+    const v = Value{ .path = p };
+    const got = try v.asPath();
+    try std.testing.expectEqual(@as(usize, 0), got.nodes.len);
+    try std.testing.expectError(error.TypeMismatch, Value.initInt(1).asPath());
+}
+
+test "Value.objectIsNode/Edge/Path detect map shapes" {
+    const a = std.testing.allocator;
+
+    var node_obj: std.StringHashMapUnmanaged(Value) = .empty;
+    defer node_obj.deinit(a);
+    try node_obj.put(a, "labels", Value.initArray(&[_]Value{}));
+    try node_obj.put(a, "id", Value.initInt(1));
+    const node_v = Value{ .object = node_obj };
+    try std.testing.expect(node_v.objectIsNode());
+    try std.testing.expect(!node_v.objectIsEdge());
+    try std.testing.expect(!node_v.objectIsPath());
+
+    var edge_obj: std.StringHashMapUnmanaged(Value) = .empty;
+    defer edge_obj.deinit(a);
+    try edge_obj.put(a, "start_node", Value.initInt(1));
+    try edge_obj.put(a, "end_node", Value.initInt(2));
+    const edge_v = Value{ .object = edge_obj };
+    try std.testing.expect(edge_v.objectIsEdge());
+    try std.testing.expect(!edge_v.objectIsNode());
+
+    var path_obj: std.StringHashMapUnmanaged(Value) = .empty;
+    defer path_obj.deinit(a);
+    try path_obj.put(a, "nodes", Value.initArray(&[_]Value{}));
+    try path_obj.put(a, "edges", Value.initArray(&[_]Value{}));
+    const path_v = Value{ .object = path_obj };
+    try std.testing.expect(path_v.objectIsPath());
+
+    // A plain integer is none of these.
+    try std.testing.expect(!Value.initInt(5).objectIsNode());
 }
