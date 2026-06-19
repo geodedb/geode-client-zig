@@ -245,6 +245,14 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // Schema module (.gql schema-file parsing)
+    const schema_mod = b.createModule(.{
+        .root_source_file = b.path("src/schema.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    _ = schema_mod; // referenced by fuzz/fuzz_schema.zig (Task 5)
+
     // ========================================================================
     // Observability seam (otel)
     // ========================================================================
@@ -598,6 +606,17 @@ pub fn build(b: *std.Build) void {
     });
     const run_redact_tests = b.addRunArtifact(redact_tests);
     test_step.dependOn(&run_redact_tests.step);
+
+    // Test schema module
+    const schema_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/schema.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_schema_tests = b.addRunArtifact(schema_tests);
+    test_step.dependOn(&run_schema_tests.step);
 
     // Test geode_client module — DELETED 2026-05-01. Previously this
     // block did `b.addTest(.{ .root_module = geode_client_mod })`
