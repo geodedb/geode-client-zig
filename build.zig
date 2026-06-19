@@ -648,6 +648,18 @@ pub fn build(b: *std.Build) void {
     const run_crypto_tests = b.addRunArtifact(crypto_tests);
     test_step.dependOn(&run_crypto_tests.step);
 
+    // Test retry module
+    const retry_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/retry.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    retry_tests.root_module.addImport("error", error_mod);
+    const run_retry_tests = b.addRunArtifact(retry_tests);
+    test_step.dependOn(&run_retry_tests.step);
+
     // Test geode_client module — DELETED 2026-05-01. Previously this
     // block did `b.addTest(.{ .root_module = geode_client_mod })`
     // followed by `linkSystemDeps(client_tests, target)`. Because
