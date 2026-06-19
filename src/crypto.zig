@@ -69,8 +69,11 @@ pub const Cipher = struct {
         const out = try allocator.alloc(u8, NONCE_SIZE + plaintext.len + TAG_SIZE);
         errdefer allocator.free(out);
         var nonce: [NONCE_SIZE]u8 = undefined;
-        // In Zig 0.16.0, std.crypto.random was removed; use OS entropy directly.
-        _ = std.os.linux.getrandom(&nonce, nonce.len, 0);
+        // Fill the GCM nonce from the portable CSPRNG. A unique nonce per
+        // encryption under the same key is mandatory for AES-GCM security;
+        // std.Io.random is a cryptographically-secure seeded CSPRNG and is
+        // portable across targets (matches src/grpc.zig's Io usage).
+        std.Io.Threaded.global_single_threaded.io().random(&nonce);
         @memcpy(out[0..NONCE_SIZE], &nonce);
         const ct = out[NONCE_SIZE .. NONCE_SIZE + plaintext.len];
         var tag: [TAG_SIZE]u8 = undefined;
