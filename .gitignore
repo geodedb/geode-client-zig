@@ -38,3 +38,6 @@ Thumbs.db
 
 # Vendored dependencies should not be committed
 vendor/
+
+# Git worktrees
+.worktrees/
