@@ -8,6 +8,7 @@ const std = @import("std");
 
 // Import modules to benchmark
 const Value = @import("types").Value;
+const Cipher = @import("crypto").Cipher;
 const QueryBuilder = @import("query_builder").QueryBuilder;
 const PatternBuilder = @import("query_builder").PatternBuilder;
 const PredicateBuilder = @import("query_builder").PredicateBuilder;
@@ -803,6 +804,36 @@ fn benchProtoDecodeVarint() void {
 }
 
 // =============================================================================
+// Encryption Benchmarks
+// =============================================================================
+
+const bench_master_key = [_]u8{0x5A} ** 32;
+const bench_plaintext = "ssn-123-45-6789";
+
+fn benchCipherRoundTrip(allocator: std.mem.Allocator) void {
+    var c = Cipher.init(&bench_master_key) catch return;
+    defer c.deinit();
+
+    const enc = c.encryptString(allocator, bench_plaintext) catch return;
+    defer allocator.free(enc);
+
+    const dec = c.decryptString(allocator, enc) catch return;
+    defer allocator.free(dec);
+
+    std.mem.doNotOptimizeAway(dec);
+}
+
+fn benchCipherHmac(allocator: std.mem.Allocator) void {
+    var c = Cipher.init(&bench_master_key) catch return;
+    defer c.deinit();
+
+    const h = c.hmacHex(allocator, "email@example.com") catch return;
+    defer allocator.free(h);
+
+    std.mem.doNotOptimizeAway(h);
+}
+
+// =============================================================================
 // Main Entry Point
 // =============================================================================
 
@@ -924,6 +955,12 @@ pub fn main() !void {
     benchmark("proto.decodeHelloResponse", benchProtoDecodeHelloResponse, allocator).print();
     benchmarkSimple("proto.decodeTag", benchProtoDecodeTag).print();
     benchmarkSimple("proto.decodeVarint", benchProtoDecodeVarint).print();
+    std.debug.print("\n", .{});
+
+    // Encryption (AES-256-GCM) Benchmarks
+    std.debug.print("--- Encryption (AES-256-GCM) ---\n", .{});
+    benchmark("Cipher encrypt+decrypt round-trip", benchCipherRoundTrip, allocator).print();
+    benchmark("Cipher hmacHex", benchCipherHmac, allocator).print();
     std.debug.print("\n", .{});
 
     std.debug.print("=" ** 100 ++ "\n", .{});

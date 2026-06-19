@@ -258,7 +258,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    _ = crypto_mod; // consumed by encryption_mod/bench in Task 14
+    encryption_mod.addImport("crypto", crypto_mod);
 
     // ========================================================================
     // Observability seam (otel)
@@ -566,6 +566,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    encryption_tests.root_module.addImport("crypto", crypto_mod);
     const run_encryption_tests = b.addRunArtifact(encryption_tests);
     test_step.dependOn(&run_encryption_tests.step);
 
@@ -767,6 +768,7 @@ pub fn build(b: *std.Build) void {
     bench_exe.root_module.addImport("validate", validate_mod);
     bench_exe.root_module.addImport("error", error_mod);
     bench_exe.root_module.addImport("proto", proto_mod);
+    bench_exe.root_module.addImport("crypto", crypto_mod);
 
     b.installArtifact(bench_exe);
 

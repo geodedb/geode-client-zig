@@ -11,6 +11,7 @@
 // layer using only std library types.
 
 const std = @import("std");
+const crypto = @import("crypto");
 
 /// AES-256-GCM key size in bytes.
 pub const KEY_SIZE: usize = 32;
@@ -197,6 +198,35 @@ pub const EncryptionConfig = struct {
         if (self.master_key == null) {
             return EncryptionError.MasterKeyNotSet;
         }
+    }
+
+    /// Build a crypto.Cipher from the configured master key. Errors if
+    /// encryption is not enabled or no master key is set.
+    pub fn cipher(self: *const Self) EncryptionError!crypto.Cipher {
+        if (!self.enabled) return EncryptionError.NotEnabled;
+        const key = self.master_key orelse return EncryptionError.MasterKeyNotSet;
+        return crypto.Cipher.init(&key) catch return EncryptionError.KeyDerivationFailed;
+    }
+
+    /// Encrypt `plaintext` and return a base64 string. Caller owns the slice.
+    pub fn encryptField(self: *const Self, allocator: std.mem.Allocator, plaintext: []const u8) ![]u8 {
+        var c = try self.cipher();
+        defer c.deinit();
+        return c.encryptString(allocator, plaintext) catch EncryptionError.EncryptFailed;
+    }
+
+    /// Decrypt a base64 string produced by encryptField. Caller owns the slice.
+    pub fn decryptField(self: *const Self, allocator: std.mem.Allocator, encoded: []const u8) ![]u8 {
+        var c = try self.cipher();
+        defer c.deinit();
+        return c.decryptString(allocator, encoded) catch EncryptionError.DecryptFailed;
+    }
+
+    /// Compute a 64-char hex HMAC for deterministic lookups. Caller owns the slice.
+    pub fn hmacField(self: *const Self, allocator: std.mem.Allocator, data: []const u8) ![]u8 {
+        var c = try self.cipher();
+        defer c.deinit();
+        return c.hmacHex(allocator, data);
     }
 };
 
@@ -406,4 +436,37 @@ test "FieldEncryptionConfig: init" {
 
     const fec2 = FieldEncryptionConfig.init("other", false);
     try std.testing.expect(!fec2.searchable);
+}
+
+test "EncryptionConfig.cipher errors when disabled or keyless" {
+    var cfg = EncryptionConfig.init(std.testing.allocator);
+    defer cfg.deinit();
+    try std.testing.expectError(EncryptionError.NotEnabled, cfg.cipher());
+
+    cfg.enabled = true;
+    try std.testing.expectError(EncryptionError.MasterKeyNotSet, cfg.cipher());
+}
+
+test "EncryptionConfig encryptField/decryptField round-trips" {
+    const a = std.testing.allocator;
+    var cfg = EncryptionConfig.init(a);
+    defer cfg.deinit();
+    _ = cfg.withMasterKey([_]u8{0x5A} ** KEY_SIZE);
+
+    const enc = try cfg.encryptField(a, "ssn-123-45-6789");
+    defer a.free(enc);
+    const dec = try cfg.decryptField(a, enc);
+    defer a.free(dec);
+    try std.testing.expectEqualStrings("ssn-123-45-6789", dec);
+}
+
+test "EncryptionConfig hmacField is deterministic 64-hex" {
+    const a = std.testing.allocator;
+    var cfg = EncryptionConfig.init(a);
+    defer cfg.deinit();
+    _ = cfg.withMasterKey([_]u8{0x5A} ** KEY_SIZE);
+
+    const h = try cfg.hmacField(a, "email@example.com");
+    defer a.free(h);
+    try std.testing.expectEqual(@as(usize, 64), h.len);
 }
