@@ -241,6 +241,12 @@ pub fn Pool(comptime ConnectionType: type) type {
             };
         }
 
+        /// Construct a pool directly from a client Config using the default
+        /// PoolConfig. Mirrors the Go driver's NewPoolFromConfig.
+        pub fn initFromConfig(allocator: std.mem.Allocator, client_config: Config) !Self {
+            return Self.init(allocator, client_config, PoolConfig.init());
+        }
+
         /// Get the pool's executor, if configured.
         pub fn getExecutor(self: *Self) ?*PoolExecutor {
             if (self.executor) |*exec| {
@@ -808,4 +814,14 @@ test "Pool.startIdleSweeper without executor errors" {
     defer pool.deinit();
 
     try std.testing.expectError(error.NoExecutor, pool.startIdleSweeper());
+}
+
+test "Pool.initFromConfig builds a pool from a Config" {
+    const cfg = Config.initWithHost("127.0.0.1", 3141);
+    var pool = try Pool(u32).initFromConfig(std.testing.allocator, cfg);
+    defer pool.deinit();
+
+    try std.testing.expectEqual(@as(u32, 0), pool.size());
+    try std.testing.expect(!pool.isClosed());
+    try std.testing.expectEqual(@as(u32, 10), pool.config.max_size);
 }
