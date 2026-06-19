@@ -260,6 +260,27 @@ pub fn build(b: *std.Build) void {
     });
     encryption_mod.addImport("crypto", crypto_mod);
 
+    // Redact module
+    const redact_mod = b.createModule(.{
+        .root_source_file = b.path("src/redact.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    // gtime module
+    const gtime_mod = b.createModule(.{
+        .root_source_file = b.path("src/gtime.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    gtime_mod.addImport("types", types_mod);
+    // Retry module
+    const retry_mod = b.createModule(.{
+        .root_source_file = b.path("src/retry.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    retry_mod.addImport("error", error_mod);
+
     // ========================================================================
     // Observability seam (otel)
     // ========================================================================
@@ -746,6 +767,23 @@ pub fn build(b: *std.Build) void {
     linkSystemDeps(runner_integration_tests, target);
     const run_runner_integration_tests = b.addRunArtifact(runner_integration_tests);
     integration_test_step.dependOn(&run_runner_integration_tests.step);
+
+    // Parity feature integration tests (compile always; server tests skip).
+    const parity_integration_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/parity_integration.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    parity_integration_tests.root_module.addImport("quote", quote_mod);
+    parity_integration_tests.root_module.addImport("redact", redact_mod);
+    parity_integration_tests.root_module.addImport("schema", schema_mod);
+    parity_integration_tests.root_module.addImport("gtime", gtime_mod);
+    parity_integration_tests.root_module.addImport("crypto", crypto_mod);
+    parity_integration_tests.root_module.addImport("retry", retry_mod);
+    const run_parity_integration_tests = b.addRunArtifact(parity_integration_tests);
+    integration_test_step.dependOn(&run_parity_integration_tests.step);
 
     // ========================================================================
     // Benchmarks
