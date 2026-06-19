@@ -782,6 +782,10 @@ pub fn build(b: *std.Build) void {
     parity_integration_tests.root_module.addImport("gtime", gtime_mod);
     parity_integration_tests.root_module.addImport("crypto", crypto_mod);
     parity_integration_tests.root_module.addImport("retry", retry_mod);
+    // parity_integration.zig uses std.c.getenv (serverConfigured), which
+    // requires libc to be explicitly linked. linkSystemDeps sets link_libc,
+    // matching how integration_tests / runner_integration_tests are built.
+    linkSystemDeps(parity_integration_tests, target);
     const run_parity_integration_tests = b.addRunArtifact(parity_integration_tests);
     integration_test_step.dependOn(&run_parity_integration_tests.step);
 
