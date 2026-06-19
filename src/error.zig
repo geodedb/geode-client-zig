@@ -303,6 +303,21 @@ pub fn Result(comptime T: type) type {
     };
 }
 
+/// Sentinel error set for row accessors. Mirrors the Go driver's
+/// sql.ErrNoRows behaviour: a single-row accessor over an empty result set
+/// returns error.NoRows.
+pub const RowError = error{
+    /// The result set contained no rows.
+    NoRows,
+};
+
+/// Return the first row of `rows`, or error.NoRows when the slice is empty.
+/// This is the allocation-free core used by QueryResult.firstRow().
+pub fn firstRow(comptime T: type, rows: []const T) RowError!T {
+    if (rows.len == 0) return RowError.NoRows;
+    return rows[0];
+}
+
 // =============================================================================
 // Unit Tests
 // =============================================================================
@@ -464,4 +479,14 @@ test "Result.unwrapErr returns error for err" {
     const result: Result(i32) = .{ .err = GeodeError.connection("failed") };
     const err = result.unwrapErr();
     try std.testing.expectEqual(GeodeError.ErrorKind.connection, err.kind);
+}
+
+test "RowError.NoRows is returned for empty result sets" {
+    const empty: []const i64 = &[_]i64{};
+    try std.testing.expectError(RowError.NoRows, firstRow(i64, empty));
+}
+
+test "firstRow returns the first row when present" {
+    const rows = [_]i64{ 10, 20, 30 };
+    try std.testing.expectEqual(@as(i64, 10), try firstRow(i64, &rows));
 }
