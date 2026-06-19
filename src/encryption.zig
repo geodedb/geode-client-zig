@@ -4,11 +4,10 @@
 // Client-side field-level encryption for the Geode Zig client.
 // Provides transparent encrypt-before-send and decrypt-after-receive.
 //
-// This module wraps the FLE library for field-level encryption with
-// support for searchable encryption via blind indexes. The FLE
-// integration will be wired in once the library API is confirmed;
-// this module currently provides the configuration and orchestration
-// layer using only std library types.
+// This module provides the configuration and orchestration layer for
+// field-level encryption and exposes the real AES-256-GCM cipher (see
+// src/crypto.zig) via cipher()/encryptField()/decryptField()/hmacField().
+// Searchable encryption uses deterministic HMAC-SHA256 blind indexes.
 
 const std = @import("std");
 const crypto = @import("crypto");
