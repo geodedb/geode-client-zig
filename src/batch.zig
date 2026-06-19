@@ -21,6 +21,12 @@ const tp = @import("thread_pool");
 /// The limit is set high enough for legitimate use cases while preventing abuse.
 pub const MAX_BATCH_SIZE: usize = 10000;
 
+/// Default number of statements per chunk in pipelineExec (matches Go driver).
+pub const DEFAULT_CHUNK_SIZE: usize = 100;
+
+/// Default maximum number of concurrent chunk workers in pipelineExec.
+pub const DEFAULT_MAX_WORKERS: u32 = 8;
+
 /// A single query in a batch operation.
 pub const BatchQuery = struct {
     /// The GQL query string
@@ -243,6 +249,123 @@ pub const Batch = struct {
         }
 
         wg.wait();
+    }
+
+    /// Per-chunk callback invoked by `pipelineExec`. Returns null on success
+    /// or an error message (borrowed; must outlive the call) on failure.
+    /// Called concurrently from multiple executor workers; must be thread-safe.
+    pub const ChunkInvokeFn = *const fn (ctx: *anyopaque, chunk: []const BatchQuery) ?[]const u8;
+
+    /// Execute the batch's queries in concurrent chunks (GAP-0900). Splits
+    /// the queries into chunks of `chunk_size` and runs up to `max_workers`
+    /// chunks concurrently on `runner`. After the first chunk error, no new
+    /// chunks are launched; in-flight chunks are allowed to complete. Returns
+    /// the first error message encountered, or null on full success.
+    ///
+    /// Pass 0 for chunk_size or max_workers to use DEFAULT_CHUNK_SIZE /
+    /// DEFAULT_MAX_WORKERS. Rejects transactional batches (those require
+    /// sequential single-session execution).
+    pub fn pipelineExec(
+        self: *const Batch,
+        runner: *runner_mod.Executor,
+        chunk_size: usize,
+        max_workers: u32,
+        ctx: *anyopaque,
+        invoke: ChunkInvokeFn,
+    ) !?[]const u8 {
+        if (self.transactional) return error.TransactionalBatchMustBeSequential;
+        if (self.queries.items.len == 0) return null;
+
+        const csize = if (chunk_size == 0) DEFAULT_CHUNK_SIZE else chunk_size;
+        const workers = if (max_workers == 0) DEFAULT_MAX_WORKERS else max_workers;
+
+        const total = self.queries.items.len;
+        const num_chunks = (total + csize - 1) / csize;
+
+        // Shared state across chunk workers.
+        const Shared = struct {
+            ctx: *anyopaque,
+            invoke: ChunkInvokeFn,
+            // first_err: null until a chunk fails; protected by mutex.
+            mutex: tp.sync.Mutex = .{},
+            first_err: ?[]const u8 = null,
+            // semaphore: bounds concurrent in-flight chunks.
+            sem: tp.sync.Semaphore,
+            fn hasError(s: *@This()) bool {
+                s.mutex.lock();
+                defer s.mutex.unlock();
+                return s.first_err != null;
+            }
+            fn recordError(s: *@This(), msg: []const u8) void {
+                s.mutex.lock();
+                defer s.mutex.unlock();
+                if (s.first_err == null) s.first_err = msg;
+            }
+        };
+
+        const ChunkSlot = struct {
+            shared: *Shared,
+            queries: []const BatchQuery,
+
+            fn run(raw: *anyopaque, _: *tp.TaskContext) void {
+                const slot: *@This() = @ptrCast(@alignCast(raw));
+                defer slot.shared.sem.post();
+                // Honor first-error: skip work if an error already occurred.
+                if (slot.shared.hasError()) return;
+                if (slot.shared.invoke(slot.shared.ctx, slot.queries)) |msg| {
+                    slot.shared.recordError(msg);
+                }
+            }
+        };
+
+        var shared = Shared{
+            .ctx = ctx,
+            .invoke = invoke,
+            .sem = .{ .inner = .{ .permits = workers } },
+        };
+
+        const slots = try self.allocator.alloc(ChunkSlot, num_chunks);
+        defer self.allocator.free(slots);
+
+        var wg = runner.waitGroup();
+
+        var chunk_idx: usize = 0;
+        var offset: usize = 0;
+        while (offset < total) : (chunk_idx += 1) {
+            // First-error-stops-new: don't launch further chunks.
+            if (shared.hasError()) break;
+
+            // Bound concurrency: acquire a permit before launching.
+            shared.sem.wait();
+
+            const end = @min(offset + csize, total);
+            slots[chunk_idx] = .{
+                .shared = &shared,
+                .queries = self.queries.items[offset..end],
+            };
+            offset = end;
+
+            _ = runner.pool.submit(ChunkSlot.run, &slots[chunk_idx], .{
+                .lane = .blocking,
+                .backpressure = .block,
+                .wait_group = &wg,
+            }) catch |err| switch (err) {
+                error.BlockingLaneDisabled => {
+                    _ = try runner.pool.submit(ChunkSlot.run, &slots[chunk_idx], .{
+                        .lane = .default,
+                        .backpressure = .block,
+                        .wait_group = &wg,
+                    });
+                },
+                else => {
+                    shared.sem.post(); // release the permit we acquired
+                    return err;
+                },
+            };
+        }
+
+        wg.wait();
+        return shared.first_err;
     }
 };
 
@@ -535,5 +658,101 @@ test "Batch.runParallel rejects undersized results buffer" {
     try std.testing.expectError(
         error.BufferTooSmall,
         batch.runParallel(&runner, &results, @ptrCast(&dummy), noop),
+    );
+}
+
+test "pipelineExec runs all chunks on success" {
+    var runner = try runner_mod.Executor.init(std.testing.allocator, .{ .max_threads = 4 });
+    defer runner.deinit();
+
+    var batch = Batch.init(std.testing.allocator);
+    defer batch.deinit();
+    // 250 queries with chunk_size 100 => 3 chunks.
+    for (0..250) |_| _ = try batch.add("RETURN 1");
+
+    const Ctx = struct {
+        chunks_seen: std.atomic.Value(u32),
+        queries_seen: std.atomic.Value(u32),
+        fn invoke(raw: *anyopaque, chunk: []const BatchQuery) ?[]const u8 {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            _ = self.chunks_seen.fetchAdd(1, .release);
+            _ = self.queries_seen.fetchAdd(@intCast(chunk.len), .release);
+            return null;
+        }
+    };
+    var ctx = Ctx{
+        .chunks_seen = std.atomic.Value(u32).init(0),
+        .queries_seen = std.atomic.Value(u32).init(0),
+    };
+
+    const err = try batch.pipelineExec(&runner, 100, 8, @ptrCast(&ctx), Ctx.invoke);
+    try std.testing.expect(err == null);
+    try std.testing.expectEqual(@as(u32, 3), ctx.chunks_seen.load(.acquire));
+    try std.testing.expectEqual(@as(u32, 250), ctx.queries_seen.load(.acquire));
+}
+
+test "pipelineExec applies defaults for zero chunk_size/max_workers" {
+    var runner = try runner_mod.Executor.init(std.testing.allocator, .{ .max_threads = 4 });
+    defer runner.deinit();
+
+    var batch = Batch.init(std.testing.allocator);
+    defer batch.deinit();
+    for (0..150) |_| _ = try batch.add("RETURN 1"); // chunk 100 => 2 chunks
+
+    const Ctx = struct {
+        chunks: std.atomic.Value(u32),
+        fn invoke(raw: *anyopaque, chunk: []const BatchQuery) ?[]const u8 {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            _ = chunk;
+            _ = self.chunks.fetchAdd(1, .release);
+            return null;
+        }
+    };
+    var ctx = Ctx{ .chunks = std.atomic.Value(u32).init(0) };
+
+    const err = try batch.pipelineExec(&runner, 0, 0, @ptrCast(&ctx), Ctx.invoke);
+    try std.testing.expect(err == null);
+    try std.testing.expectEqual(@as(u32, 2), ctx.chunks.load(.acquire));
+}
+
+test "pipelineExec returns first error" {
+    var runner = try runner_mod.Executor.init(std.testing.allocator, .{ .max_threads = 4 });
+    defer runner.deinit();
+
+    var batch = Batch.init(std.testing.allocator);
+    defer batch.deinit();
+    for (0..300) |_| _ = try batch.add("RETURN 1");
+
+    const Ctx = struct {
+        fn invoke(_: *anyopaque, _: []const BatchQuery) ?[]const u8 {
+            return "chunk failed";
+        }
+    };
+    var ctx = Ctx{};
+
+    const err = try batch.pipelineExec(&runner, 100, 8, @ptrCast(&ctx), Ctx.invoke);
+    try std.testing.expect(err != null);
+    try std.testing.expectEqualStrings("chunk failed", err.?);
+}
+
+test "pipelineExec rejects transactional batches" {
+    var runner = try runner_mod.Executor.init(std.testing.allocator, .{ .max_threads = 2 });
+    defer runner.deinit();
+
+    var batch = Batch.init(std.testing.allocator);
+    defer batch.deinit();
+    _ = try batch.add("RETURN 1");
+    _ = batch.withTransaction(true);
+
+    const Ctx = struct {
+        fn invoke(_: *anyopaque, _: []const BatchQuery) ?[]const u8 {
+            return null;
+        }
+    };
+    var ctx = Ctx{};
+
+    try std.testing.expectError(
+        error.TransactionalBatchMustBeSequential,
+        batch.pipelineExec(&runner, 100, 8, @ptrCast(&ctx), Ctx.invoke),
     );
 }
