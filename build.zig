@@ -251,7 +251,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    _ = schema_mod; // referenced by fuzz/fuzz_schema.zig (Task 5)
 
     // ========================================================================
     // Observability seam (otel)
@@ -831,6 +830,18 @@ pub fn build(b: *std.Build) void {
     fuzz_quote.root_module.addImport("quote", quote_mod);
     const run_fuzz_quote = b.addRunArtifact(fuzz_quote);
     fuzz_step.dependOn(&run_fuzz_quote.step);
+
+    // Fuzz schema parsing
+    const fuzz_schema = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("fuzz/fuzz_schema.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    fuzz_schema.root_module.addImport("schema", schema_mod);
+    const run_fuzz_schema = b.addRunArtifact(fuzz_schema);
+    fuzz_step.dependOn(&run_fuzz_schema.step);
 
     // Fuzz pool
     const fuzz_pool = b.addTest(.{

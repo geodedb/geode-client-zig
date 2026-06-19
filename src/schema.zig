@@ -75,7 +75,9 @@ pub fn parseSchemaFS(allocator: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) 
     while (try it.next(io)) |entry| {
         if (entry.kind == .directory) continue;
         if (!std.mem.endsWith(u8, entry.name, ".gql")) continue;
-        try names.append(allocator, try allocator.dupe(u8, entry.name));
+        const name_copy = try allocator.dupe(u8, entry.name);
+        errdefer allocator.free(name_copy);
+        try names.append(allocator, name_copy);
     }
     std.mem.sort([]u8, names.items, {}, struct {
         fn lessThan(_: void, lhs: []u8, rhs: []u8) bool {
