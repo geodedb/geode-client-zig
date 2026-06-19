@@ -588,6 +588,17 @@ pub fn build(b: *std.Build) void {
     const run_quote_tests = b.addRunArtifact(quote_tests);
     test_step.dependOn(&run_quote_tests.step);
 
+    // Test redact module
+    const redact_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/redact.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_redact_tests = b.addRunArtifact(redact_tests);
+    test_step.dependOn(&run_redact_tests.step);
+
     // Test geode_client module — DELETED 2026-05-01. Previously this
     // block did `b.addTest(.{ .root_module = geode_client_mod })`
     // followed by `linkSystemDeps(client_tests, target)`. Because
