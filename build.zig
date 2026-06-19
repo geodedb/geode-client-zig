@@ -617,6 +617,18 @@ pub fn build(b: *std.Build) void {
     const run_schema_tests = b.addRunArtifact(schema_tests);
     test_step.dependOn(&run_schema_tests.step);
 
+    // Test gtime module
+    const gtime_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/gtime.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    gtime_tests.root_module.addImport("types", types_mod);
+    const run_gtime_tests = b.addRunArtifact(gtime_tests);
+    test_step.dependOn(&run_gtime_tests.step);
+
     // Test geode_client module — DELETED 2026-05-01. Previously this
     // block did `b.addTest(.{ .root_module = geode_client_mod })`
     // followed by `linkSystemDeps(client_tests, target)`. Because
