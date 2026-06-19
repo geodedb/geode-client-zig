@@ -237,13 +237,72 @@ pub const Config = struct {
         return std.fmt.allocPrint(allocator, "{s}:{d}", .{ self.host, self.port });
     }
 
-    /// Format as DSN string
+    /// Format as a DSN string that round-trips with parseDSN. Emits
+    /// scheme://[user[:pass]@]host:port[?params], with query parameters only
+    /// for non-default values. A password-only config (no username) is
+    /// emitted via a `pass=` query parameter since userinfo requires a user.
     pub fn toDSN(self: Config, allocator: std.mem.Allocator) ![]const u8 {
-        return std.fmt.allocPrint(allocator, "{s}://{s}:{d}", .{
-            self.transport.toString(),
-            self.host,
-            self.port,
-        });
+        var buf: std.ArrayListUnmanaged(u8) = .empty;
+        errdefer buf.deinit(allocator);
+
+        try buf.print(allocator, "{s}://", .{self.transport.toString()});
+
+        // Userinfo: user[:pass]@ (only when a username is present).
+        if (self.username) |user| {
+            try buf.appendSlice(allocator, user);
+            if (self.password) |pass| {
+                try buf.append(allocator, ':');
+                try buf.appendSlice(allocator, pass);
+            }
+            try buf.append(allocator, '@');
+        }
+
+        // host:port (bracket IPv6 literals).
+        if (std.mem.indexOfScalar(u8, self.host, ':') != null and
+            !std.mem.startsWith(u8, self.host, "["))
+        {
+            try buf.print(allocator, "[{s}]:{d}", .{ self.host, self.port });
+        } else {
+            try buf.print(allocator, "{s}:{d}", .{ self.host, self.port });
+        }
+
+        // Query parameters (order is stable; only non-defaults emitted).
+        var first = true;
+
+        const addParam = struct {
+            fn call(b: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, f: *bool, key: []const u8, value: []const u8) !void {
+                const sep: u8 = if (f.*) '?' else '&';
+                f.* = false;
+                try b.append(alloc, sep);
+                try b.appendSlice(alloc, key);
+                try b.append(alloc, '=');
+                try b.appendSlice(alloc, value);
+            }
+        }.call;
+
+        if (self.page_size != DEFAULT_PAGE_SIZE) {
+            var num: [16]u8 = undefined;
+            const s = try std.fmt.bufPrint(&num, "{d}", .{self.page_size});
+            try addParam(&buf, allocator, &first, "page_size", s);
+        }
+        if (!std.mem.eql(u8, self.hello_name, "geode-zig")) try addParam(&buf, allocator, &first, "hello_name", self.hello_name);
+        if (!std.mem.eql(u8, self.hello_ver, "0.1.0")) try addParam(&buf, allocator, &first, "hello_ver", self.hello_ver);
+        if (!std.mem.eql(u8, self.conformance, "min")) try addParam(&buf, allocator, &first, "conformance", self.conformance);
+        if (self.ca_cert) |v| try addParam(&buf, allocator, &first, "ca", v);
+        if (self.client_cert) |v| try addParam(&buf, allocator, &first, "cert", v);
+        if (self.client_key) |v| try addParam(&buf, allocator, &first, "key", v);
+        if (self.server_name) |v| try addParam(&buf, allocator, &first, "server_name", v);
+        if (self.insecure) try addParam(&buf, allocator, &first, "insecure_tls_skip_verify", "true");
+        if (!self.tls) try addParam(&buf, allocator, &first, "tls", "0");
+        if (self.graph) |v| try addParam(&buf, allocator, &first, "graph", v);
+        if (self.tenant) |v| try addParam(&buf, allocator, &first, "tenant", v);
+        if (self.role) |v| try addParam(&buf, allocator, &first, "role", v);
+        // Password-only (no username): emit pass= so credentials survive.
+        if (self.username == null) {
+            if (self.password) |pass| try addParam(&buf, allocator, &first, "pass", pass);
+        }
+
+        return buf.toOwnedSlice(allocator);
     }
 
     /// Free allocated credentials and zero sensitive data before freeing.
@@ -1106,6 +1165,54 @@ test "Config.toDSN formats correctly for gRPC" {
     const dsn = try cfg.toDSN(std.testing.allocator);
     defer std.testing.allocator.free(dsn);
     try std.testing.expectEqualStrings("grpc://localhost:50051", dsn);
+}
+
+test "toDSN round-trips with parseDSN for full field set" {
+    const a = std.testing.allocator;
+
+    var cfg = Config.init();
+    cfg.host = "db.example.com";
+    cfg.port = 3141;
+    cfg.transport = .quic;
+    _ = try cfg.withCredentials(a, "alice", "s3cr3t");
+    _ = try cfg.withGraph(a, "social");
+    _ = try cfg.withTenant(a, "acme");
+    _ = try cfg.withRole(a, "analyst");
+    cfg.page_size = 500;
+    defer cfg.deinit(a);
+
+    const dsn = try cfg.toDSN(a);
+    defer a.free(dsn);
+
+    var parsed = try parseDSN(a, dsn);
+    defer parsed.deinit(a);
+
+    try std.testing.expectEqualStrings("db.example.com", parsed.host);
+    try std.testing.expectEqual(@as(u16, 3141), parsed.port);
+    try std.testing.expectEqual(Transport.quic, parsed.transport);
+    try std.testing.expectEqualStrings("alice", parsed.username.?);
+    try std.testing.expectEqualStrings("s3cr3t", parsed.password.?);
+    try std.testing.expectEqualStrings("social", parsed.graph.?);
+    try std.testing.expectEqualStrings("acme", parsed.tenant.?);
+    try std.testing.expectEqualStrings("analyst", parsed.role.?);
+    try std.testing.expectEqual(@as(u32, 500), parsed.page_size);
+}
+
+test "toDSN round-trips minimal config (no credentials/params)" {
+    const a = std.testing.allocator;
+    const cfg = Config.initWithTransport("127.0.0.1", 50051, .grpc);
+
+    const dsn = try cfg.toDSN(a);
+    defer a.free(dsn);
+
+    var parsed = try parseDSN(a, dsn);
+    defer parsed.deinit(a);
+
+    try std.testing.expectEqualStrings("127.0.0.1", parsed.host);
+    try std.testing.expectEqual(@as(u16, 50051), parsed.port);
+    try std.testing.expectEqual(Transport.grpc, parsed.transport);
+    try std.testing.expect(parsed.username == null);
+    try std.testing.expect(parsed.graph == null);
 }
 
 test "simple host:port defaults to QUIC transport" {
