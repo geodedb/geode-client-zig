@@ -330,10 +330,17 @@ pub const Batch = struct {
         var wg = runner.waitGroup();
 
         var chunk_idx: usize = 0;
+        // Tracks a fatal submit error. We never `return` mid-loop while
+        // tasks may be in flight: the stack `shared`/`wg` and the heap
+        // `slots` (freed by the defer above) must outlive every launched
+        // task, so we always fall through to `wg.wait()` before returning.
+        var submit_err: ?anyerror = null;
+
         var offset: usize = 0;
         while (offset < total) : (chunk_idx += 1) {
-            // First-error-stops-new: don't launch further chunks.
-            if (shared.hasError()) break;
+            // First-error-stops-new: don't launch further chunks. Also stop
+            // launching once a submit has hard-failed.
+            if (submit_err != null or shared.hasError()) break;
 
             // Bound concurrency: acquire a permit before launching.
             shared.sem.wait();
@@ -351,20 +358,30 @@ pub const Batch = struct {
                 .wait_group = &wg,
             }) catch |err| switch (err) {
                 error.BlockingLaneDisabled => {
-                    _ = try runner.pool.submit(ChunkSlot.run, &slots[chunk_idx], .{
+                    _ = runner.pool.submit(ChunkSlot.run, &slots[chunk_idx], .{
                         .lane = .default,
                         .backpressure = .block,
                         .wait_group = &wg,
-                    });
+                    }) catch |err2| {
+                        // Fallback submit failed: release the permit and
+                        // stop launching, but still drain in-flight tasks.
+                        shared.sem.post();
+                        submit_err = err2;
+                    };
                 },
                 else => {
-                    shared.sem.post(); // release the permit we acquired
-                    return err;
+                    // Release the permit we acquired and stop launching;
+                    // drain in-flight tasks before returning the error.
+                    shared.sem.post();
+                    submit_err = err;
                 },
             };
         }
 
+        // Wait for all launched tasks to finish before any teardown so no
+        // worker can dereference freed `slots` or the stack `shared`/`wg`.
         wg.wait();
+        if (submit_err) |err| return err;
         return shared.first_err;
     }
 };
