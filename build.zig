@@ -252,6 +252,14 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // Crypto module (AES-256-GCM field-level encryption)
+    const crypto_mod = b.createModule(.{
+        .root_source_file = b.path("src/crypto.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    _ = crypto_mod; // consumed by encryption_mod/bench in Task 14
+
     // ========================================================================
     // Observability seam (otel)
     // ========================================================================
@@ -628,6 +636,17 @@ pub fn build(b: *std.Build) void {
     gtime_tests.root_module.addImport("types", types_mod);
     const run_gtime_tests = b.addRunArtifact(gtime_tests);
     test_step.dependOn(&run_gtime_tests.step);
+
+    // Test crypto module
+    const crypto_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/crypto.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_crypto_tests = b.addRunArtifact(crypto_tests);
+    test_step.dependOn(&run_crypto_tests.step);
 
     // Test geode_client module — DELETED 2026-05-01. Previously this
     // block did `b.addTest(.{ .root_module = geode_client_mod })`
