@@ -157,6 +157,23 @@
         },
 
         // =======================================================================
+        // FIPS crypto seam (lazy)
+        // =======================================================================
+        //
+        // OpenSSL FIPS backend. Lazy: only resolved when `-Dfips=true` is
+        // passed to `zig build`. Default builds never fetch this package, and
+        // the produced artifacts contain zero OpenSSL symbols (the seam in
+        // `src/crypto_backend.zig` delegates to the local std_shim instead).
+        //
+        // Tag v0.1.0 is the first published stable release. The hash below was
+        // captured via `zig fetch --save=fips <url>` against that tag.
+        .fips = .{
+            .url = "git+https://gitlab.com/devnw/zig/fips.git#v0.1.0",
+            .hash = "fips-0.1.0-1wf3nbxWBgAp6yAk6cPRrF5l_U1tbblcVcN9xcjJDddy",
+            .lazy = true,
+        },
+
+        // =======================================================================
         // OpenTelemetry (lazy)
         // =======================================================================
         //

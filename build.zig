@@ -35,6 +35,23 @@ pub fn build(b: *std.Build) void {
         "Compile in otel instrumentation (off by default; zero overhead when off)",
     ) orelse false;
 
+    // -Dfips: route security crypto through the OpenSSL FIPS provider.
+    // OFF by default; when off the std_shim backend is used (no OpenSSL
+    // link, no `fips` dependency resolved). When on, the `fips` lazy dep
+    // is fetched and the crypto_backend module routes all crypto primitives
+    // through the validated OpenSSL FIPS provider. Mirrors the seam pattern
+    // used by quic/tls for their own openssl binding.
+    const fips = b.option(
+        bool,
+        "fips",
+        "Route security crypto through the OpenSSL FIPS provider (default false = std.crypto shim)",
+    ) orelse false;
+    const openssl_path = b.option(
+        []const u8,
+        "openssl_path",
+        "OpenSSL FIPS install prefix (e.g. /usr/local/ssl)",
+    );
+
     // Materialize ONE shared `build_options` MODULE. Every consumer
     // module imports the SAME module instance via `addImport` to avoid
     // Zig 0.16's "file exists in modules X and X0" error when two
@@ -53,6 +70,7 @@ pub fn build(b: *std.Build) void {
     const build_options = b.addOptions();
     build_options.addOption([]const u8, "package", "geode_client_zig");
     build_options.addOption(bool, "with_otel", with_otel);
+    build_options.addOption(bool, "fips", fips);
     const build_options_mod = build_options.createModule();
 
     // ========================================================================
@@ -329,6 +347,53 @@ pub fn build(b: *std.Build) void {
             init_mod.addImport("otel", m);
             init_mod.addImport("observability", observability_mod);
             observability_init_mod = init_mod;
+        }
+    }
+
+    // ========================================================================
+    // Crypto Backend Seam (fips / std_shim)
+    // ========================================================================
+    //
+    // Single shared crypto_backend module. When -Dfips=false the module
+    // delegates to the local std_shim (zero OpenSSL link, no `fips` dep).
+    // When -Dfips=true the lazy `fips` dep is resolved, the fips backend
+    // is wired in, and OpenSSL is linked via the canonical link.zig helper.
+    //
+    // Only the smoke test (and future crypto call sites) import this module.
+    // Full call-site wiring is a later task.
+    const policy_mod = b.createModule(.{
+        .root_source_file = b.path("src/policy.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    _ = policy_mod; // policy.zig is imported directly by std_shim via @import("policy.zig")
+
+    const std_shim_mod = b.createModule(.{
+        .root_source_file = b.path("src/std_shim.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const crypto_backend_mod = b.createModule(.{
+        .root_source_file = b.path("src/crypto_backend.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "build_options", .module = build_options_mod },
+            .{ .name = "std_shim", .module = std_shim_mod },
+        },
+    });
+
+    // Lazy fips dependency: only resolved under -Dfips=true. When false
+    // the `fips` dep is never fetched and no OpenSSL is linked. The import
+    // `@import("fips")` inside crypto_backend.zig is only reached at
+    // comptime when build_options.fips is true, so the missing module is
+    // never a linker issue under the default build.
+    if (fips) {
+        const link_helper = @import("src/link.zig");
+        if (b.lazyDependency("fips", .{ .target = target, .optimize = optimize })) |fips_dep| {
+            crypto_backend_mod.addImport("fips", fips_dep.module("fips"));
+            link_helper.linkOpenssl(b, crypto_backend_mod, openssl_path);
         }
     }
 
@@ -729,6 +794,26 @@ pub fn build(b: *std.Build) void {
     tp_smoke.root_module.addImport("thread_pool", thread_pool_mod);
     const run_tp_smoke = b.addRunArtifact(tp_smoke);
     test_step.dependOn(&run_tp_smoke.step);
+
+    // Smoke test: crypto_backend seam resolves and a hash works in both
+    // -Dfips=false (std_shim) and -Dfips=true (OpenSSL FIPS) modes.
+    const cb_smoke = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/crypto_backend_smoke_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    cb_smoke.root_module.addImport("crypto_backend", crypto_backend_mod);
+    // Under -Dfips=true the test binary must also link OpenSSL so the
+    // fips backend can load at runtime. Mirror the fips-mode link used by
+    // the module itself.
+    if (fips) {
+        const link_helper = @import("src/link.zig");
+        link_helper.linkOpenssl(b, cb_smoke.root_module, openssl_path);
+    }
+    const run_cb_smoke = b.addRunArtifact(cb_smoke);
+    test_step.dependOn(&run_cb_smoke.step);
 
     // ========================================================================
     // Integration Tests
