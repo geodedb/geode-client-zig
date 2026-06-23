@@ -21,7 +21,8 @@ GEODE_PASSWORD ?= geode-test-password
         fmt fmt-check lint clean check ci ci-quick ci-full help \
         docker-start docker-stop docker-logs docker-status docker-pull docker-wait \
         run run-v2 deps watch deps-tree build-verbose \
-        pre-commit pre-commit-install pre-commit-update pre-commit-all setup-dev
+        pre-commit pre-commit-install pre-commit-update pre-commit-all setup-dev \
+        test-shim test-fips test-dual
 
 # Default target
 all: build fmt-check test
@@ -208,6 +209,26 @@ test-fuzz:
 	@echo "Running property-based and fuzz tests..."
 	$(ZIG) build test-fuzz $(ZIG_FLAGS)
 	@echo "✓ Fuzz tests complete"
+
+# FIPS dual-mode test targets
+# ---------------------------------------------------------------------------
+# test-shim: run the full test suite with the std.crypto shim (-Dfips=false).
+#   No OpenSSL required; exercises the non-fips code path.
+#
+# test-fips: run the full test suite with the OpenSSL FIPS provider (-Dfips=true).
+#   Requires an OpenSSL FIPS build at OPENSSL_PREFIX (default /usr/local/ssl).
+#   Set OPENSSL_PREFIX=/your/openssl to override.
+#
+# test-dual: run both shim and FIPS modes; both must be green to pass.
+#   Use this as the pre-commit / CI gate for FIPS parity.
+test-shim:
+	$(ZIG) build test -Dfips=false --summary all
+
+test-fips:
+	OPENSSL_CONF=$(or $(OPENSSL_PREFIX),/usr/local/ssl)/ssl/openssl.cnf $(ZIG) build test -Dfips=true -Dopenssl_path=$(or $(OPENSSL_PREFIX),/usr/local/ssl) --summary all
+
+test-dual: test-shim test-fips
+	@echo "✓ Both FIPS modes passed"
 
 # =============================================================================
 # Benchmark Targets

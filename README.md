@@ -450,6 +450,59 @@ std.debug.print("Code: {s}\n", .{err.status_code});
 | `28xxx` | Authorization | Auth errors |
 | `42xxx` | Syntax | Query syntax errors |
 
+## FIPS Mode
+
+The client ships a cryptographic seam (`src/crypto_backend.zig`) that routes
+all field-encryption and authentication crypto through either the Zig standard
+library (`std.crypto`) or an OpenSSL FIPS-validated provider, selected at
+build time.
+
+### Enabling FIPS mode
+
+Pass `-Dfips=true` and `-Dopenssl_path=<prefix>` to `zig build`:
+
+```bash
+zig build -Dfips=true -Dopenssl_path=/usr/local/ssl
+```
+
+`/usr/local/ssl` is the default OpenSSL FIPS install prefix. Override with the
+`OPENSSL_PREFIX` environment variable when using the Makefile targets (see
+below).
+
+### What changes under -Dfips=true
+
+- All field-level encryption (AES-256-GCM), HMAC-SHA256/384/512, HKDF, and
+  PBKDF2 operations route through the OpenSSL FIPS 140-3 validated provider.
+- All authentication credential handling (`secureZero`, timing-safe compares)
+  uses the seam rather than `std.crypto` directly.
+- The future gRPC TLS transport will use the `tls` package (FIPS-routed) and
+  must never call `std.crypto.tls` directly in a security path.
+- Under `-Dfips=false` (the default), the same API surface is backed by
+  `std.crypto` with no OpenSSL dependency.
+
+### Dual-mode test gate
+
+```bash
+# Run tests with std.crypto shim only (no OpenSSL required)
+make test-shim
+
+# Run tests with OpenSSL FIPS provider
+make test-fips
+
+# Run both modes (CI gate — both must be green)
+make test-dual
+
+# Override OpenSSL prefix
+OPENSSL_PREFIX=/opt/openssl-fips make test-fips
+OPENSSL_PREFIX=/opt/openssl-fips make test-dual
+```
+
+`make test-dual` is the recommended pre-commit and CI gate for FIPS parity: it
+runs the full test suite — including the KAT (Known-Answer Test) suite in
+`src/fips_parity_test.zig` — under both backends and asserts that SHA-256,
+HMAC-SHA256, AES-256-GCM, and HKDF-SHA256 produce identical, spec-correct
+outputs regardless of which backend is active.
+
 ## Building
 
 ```bash

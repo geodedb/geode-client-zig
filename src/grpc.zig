@@ -8,10 +8,13 @@
 // - 5-byte header: 1 byte compressed flag (0 or 1) + 4 bytes big-endian message length
 // - Followed by the protobuf message body
 //
-// TLS support uses std.crypto.tls.Client from the Zig standard library,
-// wrapping the TCP stream with TLS 1.2/1.3 encryption. Certificate
-// verification uses the system CA bundle by default, or can be skipped
-// in insecure mode.
+// SECURITY (FIPS requirement): The future TLS transport for gRPC MUST use the
+// `tls` package (routed through the crypto_backend seam, FIPS-validated via
+// -Dfips=true), NEVER std.crypto.tls directly in a security path. Using
+// std.crypto.tls.Client here would bypass the FIPS provider and break
+// compliance for deployments that require a validated cryptographic boundary.
+// Certificate verification uses the system CA bundle by default, or can be
+// skipped in insecure mode (development only).
 
 const std = @import("std");
 const proto = @import("proto");
@@ -176,7 +179,10 @@ pub fn decodeGrpcHeader(header: *const [5]u8) struct { compressed: bool, length:
 // When config.tls == true (the default), connect() returns TlsNotImplemented
 // to prevent silent plaintext credential transmission. Callers must either:
 // (a) Explicitly set tls=false for plaintext development connections, or
-// (b) Wait for TLS implementation (requires std.crypto.tls.Client integration).
+// (b) Wait for TLS implementation. IMPORTANT: the TLS implementation MUST use
+//     the `tls` package (FIPS-routed via -Dfips), NEVER std.crypto.tls, so
+//     that FIPS-mode deployments keep all security-path crypto inside the
+//     validated OpenSSL FIPS provider boundary.
 
 /// gRPC client for Geode
 pub const GrpcClient = struct {

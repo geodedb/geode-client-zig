@@ -848,6 +848,24 @@ pub fn build(b: *std.Build) void {
     const run_cb_smoke = b.addRunArtifact(cb_smoke);
     test_step.dependOn(&run_cb_smoke.step);
 
+    // Parity / KAT test: asserts KNOWN-CORRECT outputs (SHA-256, HMAC-SHA256,
+    // AES-256-GCM, HKDF-SHA256) via the crypto_backend seam, proving both
+    // correctness AND backend parity under -Dfips=false and -Dfips=true.
+    const fips_parity = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/fips_parity_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    fips_parity.root_module.addImport("crypto_backend", crypto_backend_mod);
+    if (fips) {
+        const link_helper = @import("src/link.zig");
+        link_helper.linkOpenssl(b, fips_parity.root_module, openssl_path);
+    }
+    const run_fips_parity = b.addRunArtifact(fips_parity);
+    test_step.dependOn(&run_fips_parity.step);
+
     // ========================================================================
     // Integration Tests
     // ========================================================================
