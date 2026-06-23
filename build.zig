@@ -397,6 +397,11 @@ pub fn build(b: *std.Build) void {
         const link_helper = @import("src/link.zig");
         if (b.lazyDependency("fips", .{ .target = target, .optimize = optimize })) |fips_dep| {
             crypto_backend_mod.addImport("fips", fips_dep.module("fips"));
+            // linkOpenssl on crypto_backend_mod PROPAGATES to every artifact
+            // that imports it (crypto/auth/config/grpc modules + their test
+            // exes), so individual artifacts need no separate linkOpenssl call.
+            // A routed module compiled into an artifact must reach the seam via
+            // this import for the propagation to apply.
             link_helper.linkOpenssl(b, crypto_backend_mod, openssl_path);
         }
     }
