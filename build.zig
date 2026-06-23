@@ -164,6 +164,7 @@ pub fn build(b: *std.Build) void {
     });
     cfg_mod.addImport("error", error_mod);
     cfg_mod.addImport("validate", validate_mod);
+    // cfg_mod uses cb.secureZero — wired after crypto_backend_mod exists below.
 
     // Query builder module
     const query_builder_mod = b.createModule(.{
@@ -233,6 +234,7 @@ pub fn build(b: *std.Build) void {
     auth_mod.addImport("validate", validate_mod);
     auth_mod.addImport("auth_lib", auth_lib_mod);
     auth_mod.addImport("uuid", uuid_mod);
+    // auth_mod uses cb.secureZero — wired after crypto_backend_mod exists below.
 
     // Proto module (protobuf encoding/decoding)
     const proto_mod = b.createModule(.{
@@ -403,6 +405,12 @@ pub fn build(b: *std.Build) void {
     // crypto_backend_mod's creation.)
     crypto_mod.addImport("crypto_backend", crypto_backend_mod);
 
+    // Wire crypto_backend into cfg_mod and auth_mod (Task 4: secureZero seam).
+    // These modules are declared before crypto_backend_mod, so the addImport
+    // calls are deferred to here.
+    cfg_mod.addImport("crypto_backend", crypto_backend_mod);
+    auth_mod.addImport("crypto_backend", crypto_backend_mod);
+
     // ========================================================================
     // Geode Client Module
     // ========================================================================
@@ -529,6 +537,11 @@ pub fn build(b: *std.Build) void {
     });
     config_tests.root_module.addImport("error", error_mod);
     config_tests.root_module.addImport("validate", validate_mod);
+    config_tests.root_module.addImport("crypto_backend", crypto_backend_mod);
+    if (fips) {
+        const link_helper = @import("src/link.zig");
+        link_helper.linkOpenssl(b, config_tests.root_module, openssl_path);
+    }
     const run_config_tests = b.addRunArtifact(config_tests);
     test_step.dependOn(&run_config_tests.step);
 
@@ -623,6 +636,11 @@ pub fn build(b: *std.Build) void {
     auth_tests.root_module.addImport("validate", validate_mod);
     auth_tests.root_module.addImport("auth_lib", auth_lib_mod);
     auth_tests.root_module.addImport("uuid", uuid_mod);
+    auth_tests.root_module.addImport("crypto_backend", crypto_backend_mod);
+    if (fips) {
+        const link_helper = @import("src/link.zig");
+        link_helper.linkOpenssl(b, auth_tests.root_module, openssl_path);
+    }
     const run_auth_tests = b.addRunArtifact(auth_tests);
     test_step.dependOn(&run_auth_tests.step);
 

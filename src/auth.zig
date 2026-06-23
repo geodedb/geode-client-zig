@@ -15,6 +15,7 @@ const validate = @import("validate");
 // auth_lib is available for future HMAC/TOTP integration
 const auth_lib = @import("auth_lib");
 const uuid = @import("uuid");
+const cb = @import("crypto_backend");
 
 /// Supported authentication methods.
 pub const AuthMethod = enum {
@@ -228,12 +229,12 @@ pub const AuthClient = struct {
         if (self.session_token) |token| {
             // SECURITY: Zero sensitive token data before freeing (CWE-316, CWE-226)
             // This prevents session tokens from remaining in freed memory
-            std.crypto.secureZero(u8, @constCast(token));
+            cb.secureZero(@constCast(token));
             self.allocator.free(token);
         }
         if (self.api_key) |key| {
             // SECURITY: Zero API key before freeing (CWE-316, CWE-226)
-            std.crypto.secureZero(u8, @constCast(key));
+            cb.secureZero(@constCast(key));
             self.allocator.free(key);
         }
     }
@@ -418,7 +419,7 @@ pub const AuthClient = struct {
         }
         if (self.session_token) |old| {
             // SECURITY: Zero old token before freeing (CWE-316, CWE-226)
-            std.crypto.secureZero(u8, @constCast(old));
+            cb.secureZero(@constCast(old));
             self.allocator.free(old);
         }
         self.current_user = try self.allocator.dupe(u8, username);
@@ -435,13 +436,13 @@ pub const AuthClient = struct {
         if (self.session_token) |token| {
             // SECURITY: Zero sensitive token data before freeing (CWE-316, CWE-226)
             // This prevents session tokens from remaining in freed memory
-            std.crypto.secureZero(u8, @constCast(token));
+            cb.secureZero(@constCast(token));
             self.allocator.free(token);
             self.session_token = null;
         }
         if (self.api_key) |key| {
             // SECURITY: Zero API key before freeing (CWE-316, CWE-226)
-            std.crypto.secureZero(u8, @constCast(key));
+            cb.secureZero(@constCast(key));
             self.allocator.free(key);
             self.api_key = null;
         }
@@ -454,7 +455,7 @@ pub const AuthClient = struct {
     pub fn withApiKey(self: *Self, api_key: []const u8) !*Self {
         if (self.api_key) |old| {
             // SECURITY: Zero old key before freeing (CWE-316, CWE-226)
-            std.crypto.secureZero(u8, @constCast(old));
+            cb.secureZero(@constCast(old));
             self.allocator.free(old);
         }
         self.api_key = try self.allocator.dupe(u8, api_key);

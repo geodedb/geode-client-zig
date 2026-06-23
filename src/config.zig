@@ -10,6 +10,7 @@
 const std = @import("std");
 const GeodeError = @import("error").GeodeError;
 const validate = @import("validate");
+const cb = @import("crypto_backend");
 
 /// Default Geode server port for QUIC
 pub const DEFAULT_PORT: u16 = 3141;
@@ -151,7 +152,7 @@ pub const Config = struct {
     pub fn withCredentials(self: *Config, allocator: std.mem.Allocator, username: []const u8, password: []const u8) !*Config {
         // Free previous credentials if they exist to prevent memory leaks (Q-006)
         if (self.password) |old_pass| {
-            std.crypto.secureZero(u8, @constCast(old_pass));
+            cb.secureZero(@constCast(old_pass));
             allocator.free(old_pass);
         }
         if (self.username) |old_user| {
@@ -311,7 +312,7 @@ pub const Config = struct {
     pub fn deinit(self: *Config, allocator: std.mem.Allocator) void {
         // SECURITY: Zero sensitive password data before freeing (CWE-316, CWE-226)
         if (self.password) |pass| {
-            std.crypto.secureZero(u8, @constCast(pass));
+            cb.secureZero(@constCast(pass));
             allocator.free(pass);
             self.password = null;
         }
@@ -331,7 +332,7 @@ pub const Config = struct {
         }
         // SECURITY: Zero client key before freeing
         if (self.client_key) |v| {
-            std.crypto.secureZero(u8, @constCast(v));
+            cb.secureZero(@constCast(v));
             allocator.free(v);
             self.client_key = null;
         }
