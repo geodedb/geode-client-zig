@@ -18,6 +18,7 @@
 
 const std = @import("std");
 const proto = @import("proto");
+const cb = @import("crypto_backend");
 
 /// gRPC message compression flag
 pub const GRPC_COMPRESSED: u8 = 1;
@@ -211,7 +212,7 @@ pub const GrpcClient = struct {
     pub fn deinit(self: *Self) void {
         self.disconnect();
         if (self.session_id) |sid| {
-            std.crypto.secureZero(u8, @constCast(sid));
+            cb.secureZero(@constCast(sid));
             self.allocator.free(sid);
             self.session_id = null;
         }
@@ -379,7 +380,7 @@ pub const GrpcClient = struct {
                 if (hello_resp.session_id.len > 0) {
                     // Free previous session_id to prevent leak on repeated hello() calls (Q-002)
                     if (self.session_id) |old_sid| {
-                        std.crypto.secureZero(u8, @constCast(old_sid));
+                        cb.secureZero(@constCast(old_sid));
                         self.allocator.free(old_sid);
                     }
                     self.session_id = try self.allocator.dupe(u8, hello_resp.session_id);

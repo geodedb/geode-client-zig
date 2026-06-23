@@ -250,6 +250,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     grpc_mod.addImport("proto", proto_mod);
+    // grpc_mod uses cb.secureZero — wired after crypto_backend_mod exists below.
 
     // Encryption module (client-side field-level encryption config)
     const encryption_mod = b.createModule(.{
@@ -405,11 +406,12 @@ pub fn build(b: *std.Build) void {
     // crypto_backend_mod's creation.)
     crypto_mod.addImport("crypto_backend", crypto_backend_mod);
 
-    // Wire crypto_backend into cfg_mod and auth_mod (Task 4: secureZero seam).
+    // Wire crypto_backend into cfg_mod, auth_mod, and grpc_mod (Task 4 + Task 5: secureZero seam).
     // These modules are declared before crypto_backend_mod, so the addImport
     // calls are deferred to here.
     cfg_mod.addImport("crypto_backend", crypto_backend_mod);
     auth_mod.addImport("crypto_backend", crypto_backend_mod);
+    grpc_mod.addImport("crypto_backend", crypto_backend_mod);
 
     // ========================================================================
     // Geode Client Module
@@ -704,6 +706,11 @@ pub fn build(b: *std.Build) void {
         }),
     });
     grpc_tests.root_module.addImport("proto", proto_mod);
+    grpc_tests.root_module.addImport("crypto_backend", crypto_backend_mod);
+    if (fips) {
+        const link_helper = @import("src/link.zig");
+        link_helper.linkOpenssl(b, grpc_tests.root_module, openssl_path);
+    }
     const run_grpc_tests = b.addRunArtifact(grpc_tests);
     test_step.dependOn(&run_grpc_tests.step);
 
