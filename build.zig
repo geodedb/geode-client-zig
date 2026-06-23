@@ -276,6 +276,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    // crypto_backend_mod import is wired after the seam section below.
     encryption_mod.addImport("crypto", crypto_mod);
 
     // Redact module
@@ -396,6 +397,11 @@ pub fn build(b: *std.Build) void {
             link_helper.linkOpenssl(b, crypto_backend_mod, openssl_path);
         }
     }
+
+    // Wire crypto_backend into crypto_mod now that crypto_backend_mod exists.
+    // (crypto_mod is declared earlier in the file; the import must follow
+    // crypto_backend_mod's creation.)
+    crypto_mod.addImport("crypto_backend", crypto_backend_mod);
 
     // ========================================================================
     // Geode Client Module
@@ -653,6 +659,10 @@ pub fn build(b: *std.Build) void {
         }),
     });
     encryption_tests.root_module.addImport("crypto", crypto_mod);
+    if (fips) {
+        const link_helper = @import("src/link.zig");
+        link_helper.linkOpenssl(b, encryption_tests.root_module, openssl_path);
+    }
     const run_encryption_tests = b.addRunArtifact(encryption_tests);
     test_step.dependOn(&run_encryption_tests.step);
 
@@ -732,6 +742,11 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    crypto_tests.root_module.addImport("crypto_backend", crypto_backend_mod);
+    if (fips) {
+        const link_helper = @import("src/link.zig");
+        link_helper.linkOpenssl(b, crypto_tests.root_module, openssl_path);
+    }
     const run_crypto_tests = b.addRunArtifact(crypto_tests);
     test_step.dependOn(&run_crypto_tests.step);
 
@@ -871,6 +886,10 @@ pub fn build(b: *std.Build) void {
     // requires libc to be explicitly linked. linkSystemDeps sets link_libc,
     // matching how integration_tests / runner_integration_tests are built.
     linkSystemDeps(parity_integration_tests, target);
+    if (fips) {
+        const link_helper = @import("src/link.zig");
+        link_helper.linkOpenssl(b, parity_integration_tests.root_module, openssl_path);
+    }
     const run_parity_integration_tests = b.addRunArtifact(parity_integration_tests);
     integration_test_step.dependOn(&run_parity_integration_tests.step);
 
@@ -896,6 +915,10 @@ pub fn build(b: *std.Build) void {
     bench_exe.root_module.addImport("error", error_mod);
     bench_exe.root_module.addImport("proto", proto_mod);
     bench_exe.root_module.addImport("crypto", crypto_mod);
+    if (fips) {
+        const link_helper = @import("src/link.zig");
+        link_helper.linkOpenssl(b, bench_exe.root_module, openssl_path);
+    }
 
     b.installArtifact(bench_exe);
 

@@ -6,18 +6,20 @@
 // with HKDF-SHA256 key derivation and HMAC-SHA256 deterministic hashing.
 //
 // SECURITY: Derived key material is securely zeroed on deinit (CWE-316).
+// FIPS: all crypto ops route through the crypto_backend seam; under
+// -Dfips=true they execute on the OpenSSL FIPS provider; under
+// -Dfips=false they use the std.crypto shim. The on-disk/wire format
+// (nonce(12) || ciphertext || tag(16), base64, hex HMAC) is unchanged.
 
 const std = @import("std");
-const Aes256Gcm = std.crypto.aead.aes_gcm.Aes256Gcm;
-const Hkdf = std.crypto.kdf.hkdf.HkdfSha256;
-const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
+const cb = @import("crypto_backend");
 
 /// AES-256 key size in bytes.
 pub const KEY_SIZE: usize = 32;
 /// AES-GCM nonce size in bytes.
-pub const NONCE_SIZE: usize = Aes256Gcm.nonce_length;
+pub const NONCE_SIZE: usize = 12;
 /// AES-GCM authentication tag size in bytes.
-pub const TAG_SIZE: usize = Aes256Gcm.tag_length;
+pub const TAG_SIZE: usize = 16;
 
 /// Errors returned by the crypto module.
 pub const CryptoError = error{
@@ -33,10 +35,9 @@ pub const CryptoError = error{
 
 /// Derive a KEY_SIZE-byte subkey from `master_key` using HKDF-SHA256 with
 /// the given info label (no salt, matching the Go driver).
-fn deriveKey(master_key: []const u8, info: []const u8) [KEY_SIZE]u8 {
-    const prk = Hkdf.extract(&[_]u8{}, master_key);
+fn deriveKey(master_key: []const u8, info: []const u8) (cb.Kdf.Error || CryptoError)![KEY_SIZE]u8 {
     var out: [KEY_SIZE]u8 = undefined;
-    Hkdf.expand(&out, info, prk);
+    try cb.Kdf.hkdf(.sha256, master_key, &[_]u8{}, info, &out);
     return out;
 }
 
@@ -49,35 +50,34 @@ pub const Cipher = struct {
 
     /// Create a Cipher from a master key (>= KEY_SIZE bytes). Derives
     /// separate AES and HMAC keys via HKDF-SHA256.
-    pub fn init(master_key: []const u8) CryptoError!Self {
+    pub fn init(master_key: []const u8) (CryptoError || cb.Kdf.Error)!Self {
         if (master_key.len < KEY_SIZE) return CryptoError.MasterKeyTooShort;
         return .{
-            .enc_key = deriveKey(master_key, "geode-encrypt"),
-            .hmac_key = deriveKey(master_key, "geode-hmac"),
+            .enc_key = try deriveKey(master_key, "geode-encrypt"),
+            .hmac_key = try deriveKey(master_key, "geode-hmac"),
         };
     }
 
     /// SECURITY: Securely zero derived key material (CWE-316).
     pub fn deinit(self: *Self) void {
-        std.crypto.secureZero(u8, &self.enc_key);
-        std.crypto.secureZero(u8, &self.hmac_key);
+        cb.secureZero(&self.enc_key);
+        cb.secureZero(&self.hmac_key);
     }
 
     /// Encrypt `plaintext` with AES-256-GCM and a random nonce. Output layout
     /// is nonce(12) || ciphertext || tag(16). Caller owns the returned slice.
-    pub fn encrypt(self: *const Self, allocator: std.mem.Allocator, plaintext: []const u8) std.mem.Allocator.Error![]u8 {
+    pub fn encrypt(self: *const Self, allocator: std.mem.Allocator, plaintext: []const u8) (std.mem.Allocator.Error || cb.Csprng.Error || cb.Aead.Error)![]u8 {
         const out = try allocator.alloc(u8, NONCE_SIZE + plaintext.len + TAG_SIZE);
         errdefer allocator.free(out);
         var nonce: [NONCE_SIZE]u8 = undefined;
-        // Fill the GCM nonce from the portable CSPRNG. A unique nonce per
-        // encryption under the same key is mandatory for AES-GCM security;
-        // std.Io.random is a cryptographically-secure seeded CSPRNG and is
-        // portable across targets (matches src/grpc.zig's Io usage).
-        std.Io.Threaded.global_single_threaded.io().random(&nonce);
+        // Fill the GCM nonce from the FIPS DRBG (under -Dfips=true) or from
+        // OS entropy via the seam CSPRNG. A unique nonce per encryption under
+        // the same key is mandatory for AES-GCM security.
+        try cb.Csprng.bytes(&nonce);
         @memcpy(out[0..NONCE_SIZE], &nonce);
         const ct = out[NONCE_SIZE .. NONCE_SIZE + plaintext.len];
         var tag: [TAG_SIZE]u8 = undefined;
-        Aes256Gcm.encrypt(ct, &tag, plaintext, &[_]u8{}, nonce, self.enc_key);
+        try cb.Aead.seal(.aes_256_gcm, &self.enc_key, &nonce, &[_]u8{}, plaintext, ct, &tag);
         @memcpy(out[NONCE_SIZE + plaintext.len ..], &tag);
         return out;
     }
@@ -93,7 +93,7 @@ pub const Cipher = struct {
         var tag: [TAG_SIZE]u8 = undefined;
         @memcpy(&tag, ciphertext[ciphertext.len - TAG_SIZE ..]);
         const pt = try allocator.alloc(u8, ct.len);
-        Aes256Gcm.decrypt(pt, ct, tag, &[_]u8{}, nonce, self.enc_key) catch {
+        cb.Aead.open(.aes_256_gcm, &self.enc_key, &nonce, &[_]u8{}, ct, &tag, pt) catch {
             allocator.free(pt);
             return CryptoError.AuthenticationFailed;
         };
@@ -101,7 +101,7 @@ pub const Cipher = struct {
     }
 
     /// Encrypt `plaintext` and return a standard-base64-encoded string.
-    pub fn encryptString(self: *const Self, allocator: std.mem.Allocator, plaintext: []const u8) std.mem.Allocator.Error![]u8 {
+    pub fn encryptString(self: *const Self, allocator: std.mem.Allocator, plaintext: []const u8) (std.mem.Allocator.Error || cb.Csprng.Error || cb.Aead.Error)![]u8 {
         const ct = try self.encrypt(allocator, plaintext);
         defer allocator.free(ct);
         const enc = std.base64.standard.Encoder;
@@ -123,9 +123,9 @@ pub const Cipher = struct {
 
     /// Compute HMAC-SHA256 of `data` with the derived HMAC key and return a
     /// 64-character lowercase hex digest. Caller owns the returned slice.
-    pub fn hmacHex(self: *const Self, allocator: std.mem.Allocator, data: []const u8) std.mem.Allocator.Error![]u8 {
-        var mac: [HmacSha256.mac_length]u8 = undefined;
-        HmacSha256.create(&mac, data, &self.hmac_key);
+    pub fn hmacHex(self: *const Self, allocator: std.mem.Allocator, data: []const u8) (std.mem.Allocator.Error || cb.Mac.Error)![]u8 {
+        var mac: [32]u8 = undefined;
+        _ = try cb.Mac.hmac(.sha256, &self.hmac_key, data, &mac);
         const out = try allocator.alloc(u8, mac.len * 2);
         errdefer allocator.free(out);
         const hex = "0123456789abcdef";
