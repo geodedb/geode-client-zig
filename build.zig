@@ -71,6 +71,7 @@ pub fn build(b: *std.Build) void {
     build_options.addOption([]const u8, "package", "geode_client_zig");
     build_options.addOption(bool, "with_otel", with_otel);
     build_options.addOption(bool, "fips", fips);
+    build_options.addOption([]const u8, "package_name", "geode-client-zig");
     const build_options_mod = build_options.createModule();
 
     // ========================================================================
