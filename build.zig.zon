@@ -1,6 +1,6 @@
 .{
     .name = .geode_client_zig,
-    .version = "0.3.3",
+    .version = "0.3.4",
     .fingerprint = 0x13ee9771571b2bf3,
     .minimum_zig_version = "0.16.0",
     .paths = .{
@@ -77,14 +77,14 @@
             // 2026-06-23: v0.1.33 — FIPS stack bump: quic links against the
             // FIPS-enabled tls v0.1.16 backend. API-compatible; client behaviour
             // unchanged. Lockstep with geode.
-            .url = "git+https://gitlab.com/devnw/zig/quic.git#v0.1.34",
-            .hash = "quic-0.1.34-gBIqUcTyPgA1hWAIFLlIjChluXdlZvPaengI-3AL_Egk",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git#v0.1.36",
+            .hash = "quic-0.1.36-gBIqUc7zPgDvlLO7f6aqucI_iguv-E80wZ-tpP9ORB55",
         },
         // TLS 1.3 library for QUIC (must match the version quic v0.1.33 uses)
         // 2026-06-23: v0.1.16 — FIPS stack: tls gains OpenSSL FIPS backend wiring.
         .tls = .{
-            .url = "git+https://gitlab.com/devnw/zig/tls.git#v0.1.17",
-            .hash = "tls-0.1.17-mtEaLPssFgDFFZ4Ol2lSApXtM7_jwPlxPmIXzogqih65",
+            .url = "git+https://gitlab.com/devnw/zig/tls.git#v0.1.18",
+            .hash = "tls-0.1.18-mtEaLG0tFgBzj03gWLnQg1UMKH4RVepU0D3zKqe4SOa_",
         },
         // =======================================================================
         // Foundation Libraries
@@ -92,8 +92,8 @@
 
         // DNS resolution - RFC 1035 compliant with caching and DoT/DoH/DoQ
         .dns = .{
-            .url = "git+https://gitlab.com/devnw/zig/dns.git#v0.1.15",
-            .hash = "dns-0.1.15-x4U-zWybFQCASOYjk56HDVKikPerlUfEdR635-wn0xjb",
+            .url = "git+https://gitlab.com/devnw/zig/dns.git#v0.1.16",
+            .hash = "dns-0.1.16-x4U-zWybFQDGzaPPtQFUsktgxWr2baggyAgGXqQ3i30E",
         },
         // JSON parser/encoder - RFC 8259 compliant
         .json = .{
@@ -132,8 +132,8 @@
         },
         // Auth - HMAC chain, API keys, TOTP/MFA primitives
         .auth = .{
-            .url = "git+https://gitlab.com/devnw/zig/auth.git#v0.1.10",
-            .hash = "auth-0.1.10-W76ZZ8l9AgB2r3OGpZ5hFd9bzSSh-4zU7HZN8yhGORse",
+            .url = "git+https://gitlab.com/devnw/zig/auth.git#v0.1.11",
+            .hash = "auth-0.1.11-W76ZZ8l9AgB_Y4e2E0nS9RNkeMMaV2HFNWKAaLRhdDUl",
         },
         // Advanced Types - Network, vector, geographic, URL, range value types
         .advanced_types = .{
@@ -142,8 +142,8 @@
         },
         // GQL - ISO/IEC 39075:2024 Graph Query Language front-end (lexer, parser, AST)
         .gql = .{
-            .url = "git+https://gitlab.com/devnw/zig/gql.git#v0.1.9",
-            .hash = "gql-0.1.9-T1ANDcRyCQBo_BQYpZSxqjxPIKi9bs0r9JeIcJlL6Q0w",
+            .url = "git+https://gitlab.com/devnw/zig/gql.git#v0.1.10",
+            .hash = "gql-0.1.10-T1ANDcVyCQBl5zx_bmHsC6ux9gwHsGRanA23NqsP7SKa",
         },
         // Metrics - Counters, gauges, histograms, Prometheus export
         .metrics = .{
@@ -200,8 +200,8 @@
         // v0.1.14, so the (lazy, -Dwith_otel) otel/tls diamond is fully
         // closed — detect-diamond-deps clean (22 packages, 0 diamonds).
         .otel = .{
-            .url = "git+https://gitlab.com/devnw/zig/otel.git#v0.1.15",
-            .hash = "otel-0.1.15-B0v3lrz2NQDlzY3t-QLNpP4PE3UylgFDF__MoZZTWNJt",
+            .url = "git+https://gitlab.com/devnw/zig/otel.git#v0.1.16",
+            .hash = "otel-0.1.16-B0v3lrz2NQC0EFK30-AxgOnqY6nk34zAtax1JZbZ6YFS",
             .lazy = true,
         },
     },
