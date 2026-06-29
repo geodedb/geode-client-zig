@@ -75,6 +75,13 @@ include:
       stage: release
 
 # SBOM jobs may fail due to DNS/network issues downloading syft
+  # Security findings -> auto-triaged Jira SEC issues (.post; reads gl-*-report
+  # artifacts). component_id 12496 = SEC > Vuln Mgmt.
+  - component: gitlab.com/devnw/ci-catalog/jira-event-intake@v1.31.1
+    inputs:
+      project_key: SEC
+      component_id: "12496"
+
 sbom-generate:
   allow_failure: true
 
