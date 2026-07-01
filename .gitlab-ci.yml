@@ -93,7 +93,7 @@ sbom-scan:
 # =============================================================================
 
 .setup-zig:
-  image: "ubuntu:24.04"
+  image: "ubuntu:26.04"
   variables:
     ZIG_VERSION: "0.16.0"
   cache:
