@@ -1,6 +1,6 @@
 .{
     .name = .geode_client_zig,
-    .version = "0.3.5",
+    .version = "0.3.6",
     .fingerprint = 0x13ee9771571b2bf3,
     .minimum_zig_version = "0.16.0",
     .paths = .{
@@ -142,8 +142,8 @@
         },
         // GQL - ISO/IEC 39075:2024 Graph Query Language front-end (lexer, parser, AST)
         .gql = .{
-            .url = "git+https://gitlab.com/devnw/zig/gql.git#v0.1.11",
-            .hash = "gql-0.1.11-T1ANDcVyCQBoVN-BYSlsqZOE9xR3-VJbK74bXJszIYYv",
+            .url = "git+https://gitlab.com/devnw/zig/gql.git?ref=v0.1.12#e57989b26bd2f703a44003fb422ad6b5dfa732cd",
+            .hash = "gql-0.1.12-T1ANDXCPCQCyUvqtQQYzIjOG7HZwXO1bAlCTSQoK8YKI",
         },
         // Metrics - Counters, gauges, histograms, Prometheus export
         .metrics = .{
