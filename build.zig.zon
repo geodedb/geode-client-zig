@@ -77,8 +77,8 @@
             // 2026-06-23: v0.1.33 — FIPS stack bump: quic links against the
             // FIPS-enabled tls v0.1.16 backend. API-compatible; client behaviour
             // unchanged. Lockstep with geode.
-            .url = "git+https://gitlab.com/devnw/zig/quic.git#v0.1.37",
-            .hash = "quic-0.1.37-gBIqUQ_0PgAmS4T01KwzlYOootXCh2GFzywkF0Ptxdq0",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git#v0.1.38",
+            .hash = "quic-0.1.38-gBIqUZX1PgAf-kyv-ygYRtkRGGDdG6tXuKuM4GRgqoBB",
         },
         // TLS 1.3 library for QUIC (must match the version quic v0.1.33 uses)
         // 2026-06-23: v0.1.16 — FIPS stack: tls gains OpenSSL FIPS backend wiring.
