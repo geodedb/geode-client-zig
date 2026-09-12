@@ -1,6 +1,6 @@
 .{
     .name = .geode_client_zig,
-    .version = "0.3.7",
+    .version = "0.3.8",
     .fingerprint = 0x13ee9771571b2bf3,
     .minimum_zig_version = "0.16.0",
     .paths = .{
@@ -77,8 +77,8 @@
             // 2026-06-23: v0.1.33 — FIPS stack bump: quic links against the
             // FIPS-enabled tls v0.1.16 backend. API-compatible; client behaviour
             // unchanged. Lockstep with geode.
-            .url = "git+https://gitlab.com/devnw/zig/quic.git?ref=v0.1.39#d76e8f50a93f5b4defe079f5c5f5bd46f1c17ce9",
-            .hash = "quic-0.1.39-gBIqURz2PgBmfz6XlmIkS-4Kk2W8tJOhjSTL9KjjqDEQ",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git?ref=v0.1.40#aae9fbd3839033ed2ab756db5b89404b4851d016",
+            .hash = "quic-0.1.40-gBIqURz2PgC6gd-p8baw9Q4hK64yZBhuPKbDYw5Paiwq",
         },
         // TLS 1.3 library for QUIC (must match the version quic v0.1.33 uses)
         // 2026-06-23: v0.1.16 — FIPS stack: tls gains OpenSSL FIPS backend wiring.
@@ -92,8 +92,8 @@
 
         // DNS resolution - RFC 1035 compliant with caching and DoT/DoH/DoQ
         .dns = .{
-            .url = "git+https://gitlab.com/devnw/zig/dns.git?ref=v0.1.18#05479688417efd7f9627719bf10ae4ab934dcb7e",
-            .hash = "dns-0.1.18-x4U-zd2bFQDR2R6kq4VG6tt6FSqh5qkH4RWc-egQrKrt",
+            .url = "git+https://gitlab.com/devnw/zig/dns.git?ref=v0.1.19#80f7c6a94f37434322d78f51fd4c43b891091acc",
+            .hash = "dns-0.1.19-x4U-zQqcFQBSh62Uh3uLCCX1dE95iCDnRJISuVwMibLe",
         },
         // JSON parser/encoder - RFC 8259 compliant
         .json = .{
@@ -102,8 +102,8 @@
         },
         // Configuration management - XDG compliant, multi-format
         .config = .{
-            .url = "git+https://gitlab.com/devnw/zig/config.git?ref=v0.1.12#0ec465abd3fc97c70045cd3d0f764428476a9b44",
-            .hash = "config-0.1.12-TiLumppUDADm3u4VC72oAdhGABhDd8jVu51XWOdmTN2-",
+            .url = "git+https://gitlab.com/devnw/zig/config.git?ref=v0.1.13#e4ad6db7178d9973272b58b453b1b1b6d8d9de82",
+            .hash = "config-0.1.13-TiLummppDAAXakrRsHhftiQO4CKYyOPfH2NPjlOpbtsL",
         },
         // Structured logging - slog-style with multiple handlers
         .slog = .{
@@ -132,8 +132,8 @@
         },
         // Auth - HMAC chain, API keys, TOTP/MFA primitives
         .auth = .{
-            .url = "git+https://gitlab.com/devnw/zig/auth.git?ref=v0.1.13#f5e744f6d925030f3b5962ed15235a52935095d6",
-            .hash = "auth-0.1.13-W76ZZ3h-AgBbMmZiR22d41UQvyPET3a5Jjq6CTVrPtg1",
+            .url = "git+https://gitlab.com/devnw/zig/auth.git?ref=v0.1.14#458581a40f6257319c18f3d3abb1d28a31e2dc09",
+            .hash = "auth-0.1.14-W76ZZ6V-AgA-dFJhUWjfE92Y862i03-OudAteYsuy6Fm",
         },
         // Advanced Types - Network, vector, geographic, URL, range value types
         .advanced_types = .{
@@ -142,8 +142,8 @@
         },
         // GQL - ISO/IEC 39075:2024 Graph Query Language front-end (lexer, parser, AST)
         .gql = .{
-            .url = "git+https://gitlab.com/devnw/zig/gql.git?ref=v0.1.13#95476b80d6eeb4426f9423fdbef56e253ef82c43",
-            .hash = "gql-0.1.13-T1ANDcaPCQBgRUL6uGq69PmTvmwl6Dvt875FJGovuV2d",
+            .url = "git+https://gitlab.com/devnw/zig/gql.git?ref=v0.1.14#bff912e38e7e5893ee46f1a7b8cc48c92ebe4d2b",
+            .hash = "gql-0.1.14-T1ANDcaPCQCC5IvNgn7jbzdWjvj9mSZJzLcMgwCa3cD-",
         },
         // Metrics - Counters, gauges, histograms, Prometheus export
         .metrics = .{
@@ -200,8 +200,8 @@
         // v0.1.14, so the (lazy, -Dwith_otel) otel/tls diamond is fully
         // closed — detect-diamond-deps clean (22 packages, 0 diamonds).
         .otel = .{
-            .url = "git+https://gitlab.com/devnw/zig/otel.git?ref=v0.1.18#d431d1bb72203f51b6922f3a88093cec854dc050",
-            .hash = "otel-0.1.18-B0v3liP3NQB05N3TveX5FJIiWYYRm0UGCeMZ0P9bi_ha",
+            .url = "git+https://gitlab.com/devnw/zig/otel.git?ref=v0.1.19#d928525c34a4b50c9536b064e601ee45760cbabd",
+            .hash = "otel-0.1.19-B0v3liP3NQDyqyLnDV_6rFYepKA7MNgekcHFstany4dq",
             .lazy = true,
         },
     },
