@@ -1,6 +1,6 @@
 .{
     .name = .geode_client_zig,
-    .version = "0.3.6",
+    .version = "0.3.8",
     .fingerprint = 0x13ee9771571b2bf3,
     .minimum_zig_version = "0.16.0",
     .paths = .{
@@ -77,14 +77,14 @@
             // 2026-06-23: v0.1.33 — FIPS stack bump: quic links against the
             // FIPS-enabled tls v0.1.16 backend. API-compatible; client behaviour
             // unchanged. Lockstep with geode.
-            .url = "git+https://gitlab.com/devnw/zig/quic.git#v0.1.38",
-            .hash = "quic-0.1.38-gBIqUZX1PgAf-kyv-ygYRtkRGGDdG6tXuKuM4GRgqoBB",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git?ref=v0.1.40#aae9fbd3839033ed2ab756db5b89404b4851d016",
+            .hash = "quic-0.1.40-gBIqURz2PgC6gd-p8baw9Q4hK64yZBhuPKbDYw5Paiwq",
         },
         // TLS 1.3 library for QUIC (must match the version quic v0.1.33 uses)
         // 2026-06-23: v0.1.16 — FIPS stack: tls gains OpenSSL FIPS backend wiring.
         .tls = .{
-            .url = "git+https://gitlab.com/devnw/zig/tls.git#v0.1.20",
-            .hash = "tls-0.1.20-mtEaLMU3FgAa7A7PgZZxmuG68FBZXJu_BTIrESn_F15w",
+            .url = "git+https://gitlab.com/devnw/zig/tls.git?ref=v0.1.21#fad8b4a73ad7b1f8004e972f76695a1eac5d69fe",
+            .hash = "tls-0.1.21-mtEaLAY4FgA8prixchxXcq6T5lMKdb04B4WgJ_DyfJhN",
         },
         // =======================================================================
         // Foundation Libraries
@@ -92,33 +92,33 @@
 
         // DNS resolution - RFC 1035 compliant with caching and DoT/DoH/DoQ
         .dns = .{
-            .url = "git+https://gitlab.com/devnw/zig/dns.git#v0.1.17",
-            .hash = "dns-0.1.17-x4U-zWybFQCQkE-Zx71nkqJO3S52eYNhZ0BH7X-tEZmw",
+            .url = "git+https://gitlab.com/devnw/zig/dns.git?ref=v0.1.19#80f7c6a94f37434322d78f51fd4c43b891091acc",
+            .hash = "dns-0.1.19-x4U-zQqcFQBSh62Uh3uLCCX1dE95iCDnRJISuVwMibLe",
         },
         // JSON parser/encoder - RFC 8259 compliant
         .json = .{
-            .url = "git+https://gitlab.com/devnw/zig/json.git?ref=v0.1.14#cc94e37600b188be667b8f36532abdcc90755c2d",
-            .hash = "json-0.1.7-tOue4XPRDwD_yDp0Q9YNH-4WzcJGgN39T_RRefh0RyOF",
+            .url = "git+https://gitlab.com/devnw/zig/json.git?ref=v0.1.15#2f75b5d1d42fd179398b0f81491f8e211a888c5e",
+            .hash = "json-0.1.15-tOue4XXRDwDiwJ1Edhk5QstM23dtV_5itFSX1ln2qTrQ",
         },
         // Configuration management - XDG compliant, multi-format
         .config = .{
-            .url = "git+https://gitlab.com/devnw/zig/config.git?ref=v0.1.10#346eece54d4f0ecea0962d85c9a96301edacb8de",
-            .hash = "config-0.1.6-TiLumpdUDADqBkfjjufuTkIMWMYESWO1oWr2zqyQ3PIk",
+            .url = "git+https://gitlab.com/devnw/zig/config.git?ref=v0.1.13#e4ad6db7178d9973272b58b453b1b1b6d8d9de82",
+            .hash = "config-0.1.13-TiLummppDAAXakrRsHhftiQO4CKYyOPfH2NPjlOpbtsL",
         },
         // Structured logging - slog-style with multiple handlers
         .slog = .{
-            .url = "git+https://gitlab.com/devnw/zig/slog.git?ref=v0.1.12#68b00296e7c903dd00c794efdb8d112c591da384",
-            .hash = "slog-0.1.11-SamED3HlBgCQ-PW_8n8SsnWd3_zTUqWP9uKMZ1i58rSV",
+            .url = "git+https://gitlab.com/devnw/zig/slog.git?ref=v0.1.13#cbb4062310a33265ed10a5eb277a0c2c8927c530",
+            .hash = "slog-0.1.13-SamED3LlBgD3WoI7CcKr84955nmjEKU5UnLlBqpYxwa5",
         },
         // URI/URL parsing - RFC 3986 compliant
         .uri = .{
-            .url = "git+https://gitlab.com/devnw/zig/uri.git?ref=v0.1.13#4845d61b1e5f9256850dfdc538a996e71a6de739",
-            .hash = "uri-0.1.6-zVvOsd-kAgBX3KLQ_6GkWcgwCaJOgQ2drJeJDt_BDHZj",
+            .url = "git+https://gitlab.com/devnw/zig/uri.git?ref=v0.1.14#a1cc36d32143805102bfff63e41bae4725dd7f02",
+            .hash = "uri-0.1.14-zVvOseGkAgD4827wHP7W6dx2dTEebtBytjX7qNqQoYWw",
         },
         // Unicode string library with SIMD acceleration
         .strings = .{
-            .url = "git+https://gitlab.com/devnw/zig/strings.git?ref=v0.1.4#0189cde1d82db4c29c946ab7bd4076753d5e4f8a",
-            .hash = "strings-0.1.3-adMOtXZxJgBvulaPBRZE2WuPYqq-b2VAl2RcYjGasm2x",
+            .url = "git+https://gitlab.com/devnw/zig/strings.git?ref=v0.1.5#b5bd8ecc8a11b072be8b59dd1854d8f6896a950a",
+            .hash = "strings-0.1.5-adMOtXZxJgAiSI8eE21B1k04SDWwOYbHYSOxb_vvqkdu",
         },
 
         // =======================================================================
@@ -127,13 +127,13 @@
 
         // UUID - RFC 9562 compliant (V1-V8), k-sortable V7
         .uuid = .{
-            .url = "git+https://gitlab.com/devnw/zig/uuid.git?ref=v0.1.6#f92bce89fcff2c96b3a0c101dd1281caa049d415",
-            .hash = "uuid-0.1.6-tL1irqfjHABYd5_hiee3UxxRXTSPPh-0fbtMdHAs8tZ6",
+            .url = "git+https://gitlab.com/devnw/zig/uuid.git?ref=v0.1.7#c23fb4e8d923a06cc5d94e563c0ae85fb3f87782",
+            .hash = "uuid-0.1.7-tL1irlHkHAAKEQXWa1gN8GmQB6TTnmdjNGPG2cS1GKPe",
         },
         // Auth - HMAC chain, API keys, TOTP/MFA primitives
         .auth = .{
-            .url = "git+https://gitlab.com/devnw/zig/auth.git#v0.1.12",
-            .hash = "auth-0.1.12-W76ZZwp-AgAlJQUXRZciSIcMv0mqXwy-LWeIvSECJzlf",
+            .url = "git+https://gitlab.com/devnw/zig/auth.git?ref=v0.1.14#458581a40f6257319c18f3d3abb1d28a31e2dc09",
+            .hash = "auth-0.1.14-W76ZZ6V-AgA-dFJhUWjfE92Y862i03-OudAteYsuy6Fm",
         },
         // Advanced Types - Network, vector, geographic, URL, range value types
         .advanced_types = .{
@@ -142,13 +142,13 @@
         },
         // GQL - ISO/IEC 39075:2024 Graph Query Language front-end (lexer, parser, AST)
         .gql = .{
-            .url = "git+https://gitlab.com/devnw/zig/gql.git?ref=v0.1.12#e57989b26bd2f703a44003fb422ad6b5dfa732cd",
-            .hash = "gql-0.1.12-T1ANDXCPCQCyUvqtQQYzIjOG7HZwXO1bAlCTSQoK8YKI",
+            .url = "git+https://gitlab.com/devnw/zig/gql.git?ref=v0.1.14#bff912e38e7e5893ee46f1a7b8cc48c92ebe4d2b",
+            .hash = "gql-0.1.14-T1ANDcaPCQCC5IvNgn7jbzdWjvj9mSZJzLcMgwCa3cD-",
         },
         // Metrics - Counters, gauges, histograms, Prometheus export
         .metrics = .{
-            .url = "git+https://gitlab.com/devnw/zig/metrics.git?ref=v0.1.6#c03dd4312c480f7423391188b01bf31ad0d92020",
-            .hash = "metrics-0.1.5-uPGXFlINAgA5PCwhkmuioOWF1Wc8cyN198QgZkpiRRHO",
+            .url = "git+https://gitlab.com/devnw/zig/metrics.git?ref=v0.1.7#098a3f9fec66f13646bac528653f9118556be2d0",
+            .hash = "metrics-0.1.7-uPGXFi0QAgB1FSTsAQWq9JRhqmM2Dw7pZl-Gcg43R5HD",
         },
         // Thread Pool - direct (replaces the concurrency wrapper).
         // PINNED to the commit that transitive deps (quic, dns, gql,
@@ -172,7 +172,7 @@
         // Tag v0.1.0 is the first published stable release. The hash below was
         // captured via `zig fetch --save=fips <url>` against that tag.
         .fips = .{
-            .url = "git+https://gitlab.com/devnw/zig/fips.git#v0.1.1",
+            .url = "git+https://gitlab.com/devnw/zig/fips.git?ref=v0.1.1#4041d9cfdeadcab665644b3f4d3362c276f94bb7",
             .hash = "fips-0.1.1-1wf3na01BwC3voljVu61_0g6DXp6BCedXrq4QMuMeQBq",
             .lazy = true,
         },
@@ -200,8 +200,8 @@
         // v0.1.14, so the (lazy, -Dwith_otel) otel/tls diamond is fully
         // closed — detect-diamond-deps clean (22 packages, 0 diamonds).
         .otel = .{
-            .url = "git+https://gitlab.com/devnw/zig/otel.git#v0.1.17",
-            .hash = "otel-0.1.17-B0v3lvT2NQAYURxdLxS-8cMcAqL8Qfniddlwq1ai86G7",
+            .url = "git+https://gitlab.com/devnw/zig/otel.git?ref=v0.1.19#d928525c34a4b50c9536b064e601ee45760cbabd",
+            .hash = "otel-0.1.19-B0v3liP3NQDyqyLnDV_6rFYepKA7MNgekcHFstany4dq",
             .lazy = true,
         },
     },
