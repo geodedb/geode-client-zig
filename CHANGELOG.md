@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   standalone ACK under high fan-in request/response traffic and retains a
   delayed ACK fallback for quiet or upload-only peers.
 
+## [0.3.9] - 2026-09-15
+
+### Changed
+
+- Converge grpc_zig v0.1.10 (GAP-0838 diamond sync).
+
 ## [0.3.8] - 2026-09-12
 
 ### Changed
