@@ -97,13 +97,13 @@
         },
         // JSON parser/encoder - RFC 8259 compliant
         .json = .{
-            .url = "git+https://gitlab.com/devnw/zig/json.git?ref=v0.1.15#2f75b5d1d42fd179398b0f81491f8e211a888c5e",
-            .hash = "json-0.1.15-tOue4XXRDwDiwJ1Edhk5QstM23dtV_5itFSX1ln2qTrQ",
+            .url = "git+https://gitlab.com/devnw/zig/json.git?ref=v0.1.18#807796bd4ba269870393ef9cad51047ad800ea8f",
+            .hash = "json-0.1.18-tOue4dEGEQBouX4qMZ_VpSZYhnOrprvUOpSF8G4sv27O",
         },
         // Configuration management - XDG compliant, multi-format
         .config = .{
-            .url = "git+https://gitlab.com/devnw/zig/config.git?ref=v0.1.13#e4ad6db7178d9973272b58b453b1b1b6d8d9de82",
-            .hash = "config-0.1.13-TiLummppDAAXakrRsHhftiQO4CKYyOPfH2NPjlOpbtsL",
+            .url = "git+https://gitlab.com/devnw/zig/config.git?ref=v0.1.16#58985ff6a4c7b36c1d24ef7a8e85067c602e9924",
+            .hash = "config-0.1.16-TiLummppDAAK7qgfKL4tbc1W4HN_yLMpZ9ovU4wVkkrW",
         },
         // Structured logging - slog-style with multiple handlers
         .slog = .{
@@ -156,8 +156,8 @@
         // Otherwise zig errors with "file exists in modules
         // build_options and build_options0".
         .thread_pool = .{
-            .url = "git+https://gitlab.com/devnw/zig/thread-pool.git?ref=v0.2.7#54a2ddda1a356c32ba2e4df70691459570fb6339",
-            .hash = "thread_pool-0.2.7-11B1BvRneQBnMkDnRbKd76THvZn4ZhDhmlWQw-aziWQm",
+            .url = "git+https://gitlab.com/devnw/zig/thread-pool.git?ref=v0.2.8#2161d8e77beb6f9d6d8664b4406c739ef3a6cc81",
+            .hash = "thread_pool-0.2.8-11B1BrrSeQD3WHNJ-oyNkrfcHLp5AOW1Zgr4QTGu7pb4",
         },
 
         // =======================================================================
@@ -172,8 +172,8 @@
         // Tag v0.1.0 is the first published stable release. The hash below was
         // captured via `zig fetch --save=fips <url>` against that tag.
         .fips = .{
-            .url = "git+https://gitlab.com/devnw/zig/fips.git?ref=v0.1.1#4041d9cfdeadcab665644b3f4d3362c276f94bb7",
-            .hash = "fips-0.1.1-1wf3na01BwC3voljVu61_0g6DXp6BCedXrq4QMuMeQBq",
+            .url = "git+https://gitlab.com/devnw/zig/fips.git?ref=v0.1.2#2db29e0add6e2e6111b1f27c0fa72afd366f9092",
+            .hash = "fips-0.1.2-1wf3naNnBwDb429FDp9qyF1irQ7otgjMxUafGKxjYTMG",
             .lazy = true,
         },
 
