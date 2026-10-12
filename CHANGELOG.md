@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Isolate external hook tools from inherited Git repository state while preserving the staged TODO check (SONNY-4778).
+
 ### Changed
 
 - Pinned QUIC to `a68d36e`, which defers the first server-side STREAM-only
