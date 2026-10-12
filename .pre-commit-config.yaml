@@ -86,7 +86,7 @@ repos:
   # Commit message validation (Conventional Commits)
   # =============================================================================
 - repo: https://github.com/commitizen-tools/commitizen
-  rev: v4.19.1
+  rev: v4.19.2
   hooks:
   - id: commitizen
     stages: [commit-msg]
