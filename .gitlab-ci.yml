@@ -94,6 +94,8 @@ sbom-scan:
 # =============================================================================
 
 .setup-zig:
+  # SONNY-4913: the unchanged installer below selects the x86_64 Zig archive.
+  tags: [company, linux, x86]
   image: "ubuntu:26.04"
   variables:
     ZIG_VERSION: "0.16.0"
