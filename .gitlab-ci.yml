@@ -43,42 +43,42 @@ stages:
 # =============================================================================
 
 include:
-  - component: gitlab.com/devnw/ci-catalog/zig-format@v1.56.0
+  - component: gitlab.com/devnw/ci-catalog/zig-format@v1.57.0
     inputs:
       zig_version: "0.16.0"
       paths: "*.zig src/*.zig tests/*.zig benchmarks/*.zig fuzz/*.zig"
       stage: lint
 
   # Security scanning
-  - component: gitlab.com/devnw/ci-catalog/security-sast@v1.56.0
+  - component: gitlab.com/devnw/ci-catalog/security-sast@v1.57.0
     inputs:
       stage: security
 
-  - component: gitlab.com/devnw/ci-catalog/security-dependency-scanning@v1.56.0
+  - component: gitlab.com/devnw/ci-catalog/security-dependency-scanning@v1.57.0
     inputs:
       stage: security
 
-  - component: gitlab.com/devnw/ci-catalog/security-secrets@v1.56.0
+  - component: gitlab.com/devnw/ci-catalog/security-secrets@v1.57.0
     inputs:
       stage: security
 
-  - component: gitlab.com/devnw/ci-catalog/security-gitleaks@v1.56.0
+  - component: gitlab.com/devnw/ci-catalog/security-gitleaks@v1.57.0
 
   # SBOM generation and scanning
   # allow_failure: external syft download may fail due to DNS/network issues
-  - component: gitlab.com/devnw/ci-catalog/sbom-generate@v1.56.0
+  - component: gitlab.com/devnw/ci-catalog/sbom-generate@v1.57.0
 
-  - component: gitlab.com/devnw/ci-catalog/sbom-scan@v1.56.0
+  - component: gitlab.com/devnw/ci-catalog/sbom-scan@v1.57.0
 
   # Release creation
-  - component: gitlab.com/devnw/ci-catalog/release-semantic@v1.56.0
+  - component: gitlab.com/devnw/ci-catalog/release-semantic@v1.57.0
     inputs:
       stage: release
 
 # SBOM jobs may fail due to DNS/network issues downloading syft
   # Security findings -> auto-triaged Jira SEC issues (.post; reads gl-*-report
   # artifacts). component_id 12496 = SEC > Vuln Mgmt.
-  - component: gitlab.com/devnw/ci-catalog/jira-event-intake@v1.56.0
+  - component: gitlab.com/devnw/ci-catalog/jira-event-intake@v1.57.0
     inputs:
       project_key: SEC
       component_id: "12496"
@@ -298,7 +298,7 @@ workflow:
 # SONNY-4778: tools must not redirect Git operations into this worktree.
 hook-env-regression:
   stage: lint
-  image: python:3.14-slim-bookworm
+  image: python:3.15-slim-bookworm
   tags: [company, linux, x86]
   before_script:
     - apt-get update -qq && apt-get install -y --no-install-recommends git
