@@ -9,13 +9,9 @@ const Config = @import("config").Config;
 const GeodeError = @import("error").GeodeError;
 const tp = @import("thread_pool");
 
-// zig 0.16.0 removed std.time.nanoTimestamp / milliTimestamp; read the
-// monotonic clock directly.
+// Pool deadlines and idle expiry use the platform's monotonic clock.
 fn nowNs() i128 {
-    var ts: std.os.linux.timespec = undefined;
-    const rc = std.os.linux.clock_gettime(.MONOTONIC, &ts);
-    if (rc != 0) return 0;
-    return @as(i128, ts.sec) * std.time.ns_per_s + @as(i128, ts.nsec);
+    return std.Io.Clock.awake.now(std.Io.Threaded.global_single_threaded.io()).toNanoseconds();
 }
 
 fn nowMs() i64 {
