@@ -511,6 +511,22 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run all unit tests");
 
+    // Exercise the non-FIPS backend with real OS entropy on each native target.
+    const entropy_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/portable_entropy_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    entropy_tests.root_module.addImport("std_shim", std_shim_mod);
+    const run_entropy_tests = b.addRunArtifact(entropy_tests);
+    test_step.dependOn(&run_entropy_tests.step);
+    const entropy_step = b.step("test-portable-entropy", "Test portable OS entropy and signing");
+    entropy_step.dependOn(&run_entropy_tests.step);
+    const entropy_check = b.step("check-portable-entropy", "Compile portable entropy tests without running");
+    entropy_check.dependOn(&entropy_tests.step);
+
     // Test error module
     const error_tests = b.addTest(.{
         .root_module = b.createModule(.{

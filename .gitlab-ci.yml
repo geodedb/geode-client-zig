@@ -5,11 +5,12 @@
 # Dependencies are resolved via build.zig.zon git URLs (no manual cloning).
 #
 # Pipeline stages:
+#   0. prepare  - Cached Zig toolchain
 #   1. lint     - Code formatting checks
 #   2. build    - Compile the library
 #   3. test     - Unit tests and fuzz tests
 #   4. integration - Integration tests with Geode server
-#   5. security - SAST, dependency scanning, secret detection, gitleaks
+#   5. security - Standalone secret scanning
 #   6. sbom     - SBOM generation and scanning
 #   7. release  - Semantic release
 #
@@ -21,6 +22,8 @@
 
 variables:
   ZIG_VERSION: "0.16.0"
+  ZIG_GLOBAL_CACHE_DIR: "$CI_PROJECT_DIR/.zig-global-cache"
+  ZIG_TARBALL_SHA256_X86_64: "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
   GEODE_IMAGE: "geodedb/geode:0.8.22@sha256:867d93375470fd18c60336036196a9ef9715a1922e063e8787dc05d8e798ddce"
 
 default:
@@ -30,6 +33,7 @@ default:
     - linux
 
 stages:
+  - prepare
   - lint
   - build
   - test
@@ -43,6 +47,14 @@ stages:
 # =============================================================================
 
 include:
+  - component: gitlab.com/devnw/ci-catalog/zig-test-macos@402e8986ef2d220db1c2591a461ba60850c59e5b
+    inputs:
+      zig_version: "0.16.0"
+      job_suffix: "-portable-deps"
+      test_step: test
+      test_options: "-j2 --summary all"
+      allow_failure: false
+
   - component: gitlab.com/devnw/ci-catalog/zig-format@aad997d40e358eeef7ec943f761498341c37c724
     inputs:
       zig_version: "0.16.0"
@@ -64,8 +76,6 @@ include:
       stage: release
 
 # SBOM jobs may fail due to DNS/network issues downloading syft
-  # Security findings -> auto-triaged Jira SEC issues (.post; reads gl-*-report
-  # artifacts). component_id 12496 = SEC > Vuln Mgmt.
 sbom-generate:
   allow_failure: true
 
@@ -77,18 +87,27 @@ sbom-scan:
 # =============================================================================
 
 .setup-zig:
-  # SONNY-4913: the unchanged installer below selects the x86_64 Zig archive.
+  # The installer selects the x86_64 Zig archive.
   tags: [company, linux, x86]
   image: "ubuntu:26.04"
   variables:
     ZIG_VERSION: "0.16.0"
   cache:
-    key: "linux-zig-${ZIG_VERSION}"
-    paths:
-      - zig-${ZIG_VERSION}/
+    - key: "zig-toolchain-${ZIG_VERSION}-linux-amd64-verified"
+      paths: ["zig-${ZIG_VERSION}/"]
+      policy: pull
+    - key:
+        prefix: "zig-compile-${ZIG_VERSION}-linux-amd64-${CI_JOB_NAME}"
+        files: [build.zig.zon, .gitlab-ci.yml]
+      paths: [.zig-cache/, .zig-global-cache/]
+  after_script: &trim-zig-cache
+    - |
+      size=$(du -sm .zig-cache .zig-global-cache 2>/dev/null | awk '{sum += $1} END {print sum+0}')
+      if [ "$size" -gt 2048 ]; then rm -rf .zig-cache .zig-global-cache; fi
   before_script:
-    - apt-get update && apt-get install -y curl xz-utils git libssl-dev
-    # Install Zig (downloaded over HTTPS, cached between runs)
+    - set -o pipefail
+    - apt-get update && apt-get install -y --no-install-recommends curl ca-certificates xz-utils git libssl-dev
+    # Install the checksum-verified Zig toolchain, reused across jobs
     - |
       if [ ! -f "zig-${ZIG_VERSION}/zig" ]; then
         MAJOR=$(echo $ZIG_VERSION | cut -d. -f1)
@@ -98,8 +117,12 @@ sbom-scan:
         else
           ARCHIVE_NAME="zig-x86_64-linux-${ZIG_VERSION}"
         fi
-        curl -fSL "https://ziglang.org/download/${ZIG_VERSION}/${ARCHIVE_NAME}.tar.xz" | tar -xJ
+        TARBALL="${ARCHIVE_NAME}.tar.xz"
+        curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/${TARBALL}" -o "$TARBALL"
+        echo "${ZIG_TARBALL_SHA256_X86_64}  ${TARBALL}" | sha256sum --check --strict
+        tar -xJf "$TARBALL"
         mv "${ARCHIVE_NAME}" "zig-${ZIG_VERSION}"
+        rm -f "$TARBALL"
       fi
     - export PATH="$PWD/zig-${ZIG_VERSION}:$PATH"
     - zig version
@@ -107,6 +130,24 @@ sbom-scan:
 # =============================================================================
 # Build Stage
 # =============================================================================
+
+# A single writer fills the toolchain cache; the build/test jobs only restore it.
+prepare-zig:
+  extends: .setup-zig
+  stage: prepare
+  script:
+    - zig version
+  cache:
+    key: "zig-toolchain-${ZIG_VERSION}-linux-amd64-verified"
+    paths: ["zig-${ZIG_VERSION}/"]
+    policy: pull-push
+  after_script: []
+
+zig-format:
+  cache:
+    key: "zig-toolchain-${ZIG_VERSION}-linux-amd64-verified"
+    paths: ["zig-${ZIG_VERSION}/"]
+    policy: pull
 
 build:
   extends: .setup-zig
@@ -128,24 +169,7 @@ test:
   stage: test
   script:
     - export PATH="$PWD/zig-${ZIG_VERSION}:$PATH"
-    - apt-get install -y bc
     - zig build test --summary all 2>&1 | tee test-output.txt
-    # Parse test results for coverage-like metrics
-    # Format: "Build Summary: X/Y steps succeeded; A/B tests passed"
-    - |
-      if grep -q "tests passed" test-output.txt; then
-        # Extract "A/B tests passed" format
-        SUMMARY=$(grep "tests passed" test-output.txt | tail -1)
-        PASSED=$(echo "$SUMMARY" | grep -oP '\d+(?=/\d+ tests passed)' | tail -1)
-        TOTAL=$(echo "$SUMMARY" | grep -oP '(?<=\d)/\d+(?= tests passed)' | tail -1 | tr -d '/')
-        if [ -n "$PASSED" ] && [ -n "$TOTAL" ] && [ "$TOTAL" -gt 0 ]; then
-          COVERAGE_PCT=$(echo "scale=1; $PASSED * 100 / $TOTAL" | bc 2>/dev/null || echo "100")
-          echo "COVERAGE: ${COVERAGE_PCT}% (${PASSED}/${TOTAL} tests passed)"
-        else
-          echo "COVERAGE: 100.0% (all tests passed)"
-        fi
-      fi
-  coverage: '/COVERAGE: (\d+\.?\d*)%/'
   artifacts:
     paths:
       - test-output.txt
@@ -234,7 +258,7 @@ integration-tests:
       when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       allow_failure: true  # Allow failure until Geode Docker image is published
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
       allow_failure: true
 
 # =============================================================================
@@ -245,14 +269,13 @@ integration-tests:
 # Standard SBOM tools don't recognize build.zig.zon, so we use a custom script
 zig-dependency-sbom:
   stage: sbom
+  needs: []
   image: alpine:latest
   before_script:
     - apk add --no-cache bash grep gawk
   script:
-    - ./scripts/generate-zig-sbom.sh build.zig.zon | tee zig-dependencies.txt
+    - bash -o pipefail -c './scripts/generate-zig-sbom.sh build.zig.zon | tee zig-dependencies.txt'
   artifacts:
-    reports:
-      dotenv: zig-dependencies.txt
     paths:
       - zig-dependencies.txt
     expire_in: 30 days
@@ -288,9 +311,9 @@ workflow:
         on_new_commit: none
     # SRE-194: validation pipelines fail fast on the first blocking job failure;
     # these rules admit only what the next rule already admits.
+    # Handwritten jobs use branch pipelines; avoid partial MR duplicates.
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      auto_cancel:
-        on_job_failure: all
+      when: never
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
       auto_cancel:
         on_job_failure: all
@@ -305,3 +328,18 @@ hook-env-regression:
     - apt-get update -qq && apt-get install -y --no-install-recommends git
   script:
     - python3 scripts/test_hook_env.py
+
+# Full unit coverage includes the backend entropy/signature regression.
+zig-test-macos-portable-deps-0.16.0:
+  image: macos-26-xcode-26
+  needs: []
+  variables:
+    ZIG_GLOBAL_CACHE_DIR: "$CI_PROJECT_DIR/.zig-global-cache"
+  cache:
+    key:
+      prefix: "zig-macos-0.16.0-aarch64"
+      files: [build.zig.zon, .gitlab-ci.yml]
+    paths: [zig-0.16.0/, .zig-global-cache/, .zig-cache/]
+  after_script: *trim-zig-cache
+  rules:
+    - if: '$CI_COMMIT_BRANCH || $CI_COMMIT_TAG'
