@@ -269,14 +269,13 @@ integration-tests:
 # Standard SBOM tools don't recognize build.zig.zon, so we use a custom script
 zig-dependency-sbom:
   stage: sbom
+  needs: []
   image: alpine:latest
   before_script:
     - apk add --no-cache bash grep gawk
   script:
-    - ./scripts/generate-zig-sbom.sh build.zig.zon | tee zig-dependencies.txt
+    - bash -o pipefail -c './scripts/generate-zig-sbom.sh build.zig.zon | tee zig-dependencies.txt'
   artifacts:
-    reports:
-      dotenv: zig-dependencies.txt
     paths:
       - zig-dependencies.txt
     expire_in: 30 days
