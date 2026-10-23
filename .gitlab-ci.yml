@@ -21,7 +21,7 @@
 
 variables:
   ZIG_VERSION: "0.16.0"
-  GEODE_IMAGE: "geodedb/geode:latest"
+  GEODE_IMAGE: "geodedb/geode:0.8.22@sha256:867d93375470fd18c60336036196a9ef9715a1922e063e8787dc05d8e798ddce"
 
 default:
   interruptible: true
@@ -43,46 +43,29 @@ stages:
 # =============================================================================
 
 include:
-  - component: gitlab.com/devnw/ci-catalog/zig-format@v1.57.0
+  - component: gitlab.com/devnw/ci-catalog/zig-format@aad997d40e358eeef7ec943f761498341c37c724
     inputs:
       zig_version: "0.16.0"
       paths: "*.zig src/*.zig tests/*.zig benchmarks/*.zig fuzz/*.zig"
       stage: lint
 
   # Security scanning
-  - component: gitlab.com/devnw/ci-catalog/security-sast@v1.57.0
-    inputs:
-      stage: security
-
-  - component: gitlab.com/devnw/ci-catalog/security-dependency-scanning@v1.57.0
-    inputs:
-      stage: security
-
-  - component: gitlab.com/devnw/ci-catalog/security-secrets@v1.57.0
-    inputs:
-      stage: security
-
-  - component: gitlab.com/devnw/ci-catalog/security-gitleaks@v1.57.0
+  - component: gitlab.com/devnw/ci-catalog/security-gitleaks@aad997d40e358eeef7ec943f761498341c37c724
 
   # SBOM generation and scanning
   # allow_failure: external syft download may fail due to DNS/network issues
-  - component: gitlab.com/devnw/ci-catalog/sbom-generate@v1.57.0
+  - component: gitlab.com/devnw/ci-catalog/sbom-generate@aad997d40e358eeef7ec943f761498341c37c724
 
-  - component: gitlab.com/devnw/ci-catalog/sbom-scan@v1.57.0
+  - component: gitlab.com/devnw/ci-catalog/sbom-scan@aad997d40e358eeef7ec943f761498341c37c724
 
   # Release creation
-  - component: gitlab.com/devnw/ci-catalog/release-semantic@v1.57.0
+  - component: gitlab.com/devnw/ci-catalog/release-semantic@aad997d40e358eeef7ec943f761498341c37c724
     inputs:
       stage: release
 
 # SBOM jobs may fail due to DNS/network issues downloading syft
   # Security findings -> auto-triaged Jira SEC issues (.post; reads gl-*-report
   # artifacts). component_id 12496 = SEC > Vuln Mgmt.
-  - component: gitlab.com/devnw/ci-catalog/jira-event-intake@v1.57.0
-    inputs:
-      project_key: SEC
-      component_id: "12496"
-
 sbom-generate:
   allow_failure: true
 
@@ -192,6 +175,15 @@ integration-tests:
   variables:
     SERVICE_PORT: "3141"
     STARTUP_TIMEOUT: "60"
+    # Disposable service: authenticated tests use the same bootstrap account.
+    GEODE_ADMIN_USERNAME: "geode"
+    GEODE_USERNAME: "geode"
+    GEODE_PASSWORD: "Correct horse battery staple" # gitleaks:allow
+    GEODE_ADMIN_PASSWORD: "$GEODE_PASSWORD"
+    GEODE_DEFAULT_PASSWORD: "$GEODE_PASSWORD"
+    GEODE_METRICS_PORT: "9090"
+    GEODE_METRICS_BIND: "0.0.0.0"
+    HEALTHCHECK_TCP_PORT: "9090"
   services:
     - name: $GEODE_IMAGE
       alias: geode
@@ -201,14 +193,15 @@ integration-tests:
         - "0.0.0.0:3141"
         - --log-level
         - info
+        - --data-dir
+        - /data
   script:
     - export PATH="$PWD/zig-${ZIG_VERSION}:$PATH"
-    - apt-get install -y netcat-openbsd
     - |
       echo "Waiting for Geode service to be ready (timeout: ${STARTUP_TIMEOUT}s)..."
       ELAPSED=0
       while [ $ELAPSED -lt $STARTUP_TIMEOUT ]; do
-        if nc -z geode $SERVICE_PORT 2>/dev/null; then
+        if curl -fsS --max-time 2 "http://geode:${GEODE_METRICS_PORT}/health" >/dev/null 2>&1; then
           echo "Geode service is ready after ${ELAPSED}s"
           break
         fi
