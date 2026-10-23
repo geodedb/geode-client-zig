@@ -41,3 +41,7 @@ vendor/
 
 # Git worktrees
 .worktrees/
+
+# CI toolchain and dependency caches
+zig-0.16.0/
+.zig-global-cache/
