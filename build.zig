@@ -809,6 +809,20 @@ pub fn build(b: *std.Build) void {
     const run_retry_tests = b.addRunArtifact(retry_tests);
     test_step.dependOn(&run_retry_tests.step);
 
+    // Exercise the exact transport deadline helpers without mutating the
+    // public client's link requirements for downstream cross-compilation.
+    const deadline_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/deadline.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_deadline_tests = b.addRunArtifact(deadline_tests);
+    test_step.dependOn(&run_deadline_tests.step);
+    const deadline_step = b.step("test-client-deadlines", "Test native client deadline accounting");
+    deadline_step.dependOn(&run_deadline_tests.step);
+
     // Test geode_client module — DELETED 2026-05-01. Previously this
     // block did `b.addTest(.{ .root_module = geode_client_mod })`
     // followed by `linkSystemDeps(client_tests, target)`. Because
