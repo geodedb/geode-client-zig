@@ -28,13 +28,8 @@ pub const Transport = config.Transport;
 /// See GAP_ANALYSIS.md Finding 16.
 pub const MAX_RECV_BUFFER_SIZE: usize = 16 * 1024 * 1024;
 
-// Zig 0.16: std.time.nanoTimestamp was removed. Use clock_gettime directly.
-fn nowNs() i128 {
-    var ts_tmp: std.os.linux.timespec = undefined;
-    const rc = std.os.linux.clock_gettime(.REALTIME, &ts_tmp);
-    if (rc != 0) return 0;
-    return @as(i128, ts_tmp.sec) * std.time.ns_per_s + @as(i128, ts_tmp.nsec);
-}
+const deadline = @import("src/deadline.zig");
+const nowNs = deadline.nowNs;
 
 pub const GeodeClient = struct {
     allocator: std.mem.Allocator,
@@ -376,20 +371,7 @@ pub const GeodeClient = struct {
         }
     }
 
-    /// Compute the remaining timeout in milliseconds from a start timestamp and total timeout.
-    /// Returns 0 when the deadline has already passed.
-    fn remainingMs(start: i128, timeout_ns: u64) u32 {
-        const elapsed_ns = nowNs() - start;
-        if (elapsed_ns < 0) return 0;
-        const elapsed: u64 = @intCast(elapsed_ns);
-        if (elapsed >= timeout_ns) return 0;
-        const remaining_ns = timeout_ns - elapsed;
-        const remaining_ms = remaining_ns / std.time.ns_per_ms;
-        // Clamp to u32 and ensure at least 1ms when there is remaining time
-        if (remaining_ms == 0) return 1;
-        if (remaining_ms > std.math.maxInt(u32)) return std.math.maxInt(u32);
-        return @intCast(remaining_ms);
-    }
+    const remainingMs = deadline.remainingMs;
 
     fn writeAll(self: *GeodeClient, data: []const u8, fin: bool) !void {
         if (self.conn == null or self.stream_id == null) return error.NoStream;

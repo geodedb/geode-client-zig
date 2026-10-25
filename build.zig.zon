@@ -77,8 +77,8 @@
             // 2026-06-23: v0.1.33 — FIPS stack bump: quic links against the
             // FIPS-enabled tls v0.1.16 backend. API-compatible; client behaviour
             // unchanged. Lockstep with geode.
-            .url = "git+https://gitlab.com/devnw/zig/quic.git?ref=v0.1.46#aab1d8b30d9090e25484c65a3678f9154b219281",
-            .hash = "quic-0.1.46-gBIqUWQ8QABlPGwDT2o8jG9dBgB-D023yhLLJp1rl6CM",
+            .url = "git+https://gitlab.com/devnw/zig/quic.git?ref=v0.1.47#3ca1e9fc9a4b515cb9ed3fd5b3a3a6af4c38fcd1",
+            .hash = "quic-0.1.47-gBIqUVmIQADARfwKza2h8HB4V8lrL4ZzRYNh6Vg67qUo",
         },
         // TLS 1.3 library for QUIC (must match the version quic v0.1.33 uses)
         // 2026-06-23: v0.1.16 — FIPS stack: tls gains OpenSSL FIPS backend wiring.
@@ -127,13 +127,13 @@
 
         // UUID - RFC 9562 compliant (V1-V8), k-sortable V7
         .uuid = .{
-            .url = "git+https://gitlab.com/devnw/zig/uuid.git?ref=v0.1.9#88374241b83ced6c6ec8996b8e5529ee0573bbc5",
-            .hash = "uuid-0.1.9-tL1irrHrHABbxhdPA7uz_Qk5mAXaS6QoDVEKL-mK9twq",
+            .url = "git+https://gitlab.com/devnw/zig/uuid.git?ref=c8206cbf2f3abc756b62b9e099715c81a452a2aa#c8206cbf2f3abc756b62b9e099715c81a452a2aa",
+            .hash = "uuid-0.1.9-tL1iruPmHAAJ2ebApUBKroge9t-yDmrcPJ-2A2FEduNj",
         },
         // Auth - HMAC chain, API keys, TOTP/MFA primitives
         .auth = .{
-            .url = "git+https://gitlab.com/devnw/zig/auth.git?ref=v0.1.22#caf8d8e281fc85bd3235bef321f943af7bf327d2",
-            .hash = "auth-0.1.22-W76ZZ6jrAgCCl3HMs_i8SplOFGIGpCRon67_ANGM6tas",
+            .url = "git+https://gitlab.com/devnw/zig/auth.git?ref=4620287e7e99107d87f26f5cf5e8e07c046397e5#4620287e7e99107d87f26f5cf5e8e07c046397e5",
+            .hash = "auth-0.1.22-W76ZZzjwAgC00Xx0xfUNK7N8nMYJOfCeqq43H7gn5LWR",
         },
         // Advanced Types - Network, vector, geographic, URL, range value types
         .advanced_types = .{

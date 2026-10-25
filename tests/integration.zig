@@ -102,6 +102,8 @@ const TestContext = struct {
 
         // Resolve hostname if needed
         var resolved_host: []const u8 = config.host;
+        // initWithTransport copies the host, so this buffer only lives through init.
+        var resolved_host_buf: [64]u8 = undefined;
         var needs_resolution = false;
         for (config.host) |c| {
             if ((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z')) {
@@ -126,11 +128,9 @@ const TestContext = struct {
 
             const sa: *const std.c.sockaddr.in = @ptrCast(@alignCast(res.?.addr.?));
             const ip_bytes: [4]u8 = @bitCast(sa.addr);
-            var buf: [64]u8 = undefined;
-            const result = std.fmt.bufPrint(&buf, "{d}.{d}.{d}.{d}", .{
+            resolved_host = std.fmt.bufPrint(&resolved_host_buf, "{d}.{d}.{d}.{d}", .{
                 ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3],
             }) catch return error.InvalidAddress;
-            resolved_host = allocator.dupe(u8, result) catch return error.OutOfMemory;
         }
 
         var client = try GeodeClient.initWithTransport(

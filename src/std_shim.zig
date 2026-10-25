@@ -15,19 +15,10 @@ const std = @import("std");
 pub const policy = @import("policy.zig");
 
 fn randomBytes(out: []u8) error{OpensslFailure}!void {
-    // Non-fips shim CSPRNG: OS entropy via the getrandom syscall shim
-    // (std.posix.system), which compiles for Linux/macOS/Windows. The FIPS
-    // backend uses the validated DRBG instead (src/csprng.zig); macOS/Windows
-    // runtime coverage remains the deferred item noted in FIPS_SPECIFICATION.md.
-    var off: usize = 0;
-    while (off < out.len) {
-        const rc = std.posix.system.getrandom(out.ptr + off, out.len - off, 0);
-        switch (std.posix.errno(rc)) {
-            .SUCCESS => off += rc, // rc = bytes filled on success
-            .INTR => continue, // interrupted by a signal; retry
-            else => return error.OpensslFailure, // fatal: fail closed, never loop or fall back
-        }
-    }
+    // Select the OS entropy implementation for the actual target. Permanent
+    // failures propagate through the existing backend error instead of spinning.
+    std.Io.Threaded.global_single_threaded.io().randomSecure(out) catch
+        return error.OpensslFailure;
 }
 
 pub const Hash = struct {
