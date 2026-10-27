@@ -332,6 +332,7 @@ hook-env-regression:
 
 # Full unit coverage includes the backend entropy/signature regression.
 zig-test-macos-portable-deps-0.16.0:
+  tags: [dedicated, macos, arm]
   image: macos-26-xcode-26
   needs: []
   variables:
