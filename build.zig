@@ -511,6 +511,19 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run all unit tests");
 
+    const ca_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/ca_bundle.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    ca_tests.root_module.addImport("quic", quic_mod);
+    const run_ca_tests = b.addRunArtifact(ca_tests);
+    test_step.dependOn(&run_ca_tests.step);
+    const ca_step = b.step("test-ca-bundle", "Test bounded owned QUIC CA bundles");
+    ca_step.dependOn(&run_ca_tests.step);
+
     // Exercise the non-FIPS backend with real OS entropy on each native target.
     const entropy_tests = b.addTest(.{
         .root_module = b.createModule(.{

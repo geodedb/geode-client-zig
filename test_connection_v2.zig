@@ -1,5 +1,6 @@
 const std = @import("std");
 const GeodeClient = @import("geode_client").GeodeClient;
+const config = @import("geode_client").config;
 
 fn getEnvOr(name: [*:0]const u8, default: []const u8) []const u8 {
     if (std.c.getenv(name)) |v| return std.mem.span(v);
@@ -68,7 +69,15 @@ pub fn main(init: std.process.Init) !void {
 
     std.debug.print("Creating Geode client...\n", .{});
     std.debug.print("Connecting to {s}:{d} (insecure={})\n", .{ resolved_host, port, insecure });
-    var client = try GeodeClient.init(allocator, resolved_host, port, insecure, username, password);
+    var cfg = config.Config.initWithTransport(resolved_host, port, .quic);
+    defer cfg.deinit(allocator);
+    cfg.insecure = insecure;
+    cfg.server_name = try allocator.dupe(u8, host);
+    if (std.c.getenv("GEODE_CA_CERT")) |path| {
+        cfg.ca_cert = try allocator.dupe(u8, std.mem.span(path));
+    }
+    _ = try cfg.withCredentials(allocator, username, password);
+    var client = try GeodeClient.initFromConfig(allocator, cfg);
     defer client.deinit();
 
     std.debug.print("Connecting to server...\n", .{});

@@ -7,6 +7,7 @@ pub const grpc = @import("grpc");
 pub const executor_mod = @import("executor");
 pub const tp = @import("thread_pool");
 const obs = @import("observability");
+const ca_bundle = @import("src/ca_bundle.zig");
 // Re-export the otel bootstrap helper so consumers can call
 // `geode_client.observability_init.Otel.init(...)` from `main()`. The
 // import is gated by the seam's `enabled` const: when `-Dwith_otel=false`,
@@ -37,6 +38,7 @@ pub const GeodeClient = struct {
     port: u16,
     insecure: bool,
     ca_cert_path: ?[]const u8 = null,
+    ca_chain_der: ?[]const []const u8 = null,
     client_cert_path: ?[]const u8 = null,
     client_key_path: ?[]const u8 = null,
     server_name: ?[]const u8 = null,
@@ -222,6 +224,10 @@ pub const GeodeClient = struct {
             quic.endpointDeinit(ep);
             self.endpoint = null;
         }
+        if (self.ca_chain_der) |chain| {
+            ca_bundle.deinit(self.allocator, chain);
+            self.ca_chain_der = null;
+        }
 
         // Clean up gRPC resources
         if (self.grpc_client) |*gc| {
@@ -255,6 +261,9 @@ pub const GeodeClient = struct {
     fn ensureEndpoint(self: *GeodeClient) !void {
         if (self.endpoint != null) return;
 
+        const chain = if (self.ca_cert_path) |path| try ca_bundle.load(self.allocator, path) else null;
+        errdefer if (chain) |owned| ca_bundle.deinit(self.allocator, owned);
+
         var cfg = quic.QuicConfig{
             .version = .v1,
             .alpn = &[_][]const u8{"geode/1"},
@@ -273,6 +282,7 @@ pub const GeodeClient = struct {
             .cert_path = self.client_cert_path,
             .key_path = self.client_key_path,
             .ca_path = self.ca_cert_path,
+            .inline_ca_chain_der = chain,
             .allow_insecure = self.insecure,
             .aead_confidentiality_limit_override = null,
             .aead_integrity_limit_override = null,
@@ -281,6 +291,7 @@ pub const GeodeClient = struct {
         };
 
         self.endpoint = try quic.endpointInit(&self.allocator, "0.0.0.0:0", &cfg);
+        self.ca_chain_der = chain;
     }
 
     pub fn connect(self: *GeodeClient) !void {
