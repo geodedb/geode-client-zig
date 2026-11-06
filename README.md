@@ -110,6 +110,21 @@ _ = cfg.withTimeout(60000);
 
 **SECURITY WARNING: The `insecure` option disables TLS certificate verification, making connections vulnerable to man-in-the-middle attacks. Only use this option for local development or testing with self-signed certificates. Never use in production environments. When `insecure=true`, the connection cannot verify server identity, and all data transmitted (including credentials) could be intercepted or modified by an attacker.**
 
+#### Private QUIC certificate authorities
+
+Set `Config.ca_cert` (or the DSN `ca` parameter) to a PEM certificate bundle
+and leave `insecure` false. The client decodes the bundle into owned trust
+anchors and retains them until after its QUIC endpoint is destroyed. Missing,
+empty, oversized or malformed bundles fail rather than falling back to an
+unverified connection. Bundles are limited to 1 MiB and 32 certificates.
+
+The native `test_connection_v2` executable accepts `GEODE_CA_CERT` alongside
+`GEODE_SERVER`, `GEODE_USERNAME` and `GEODE_PASSWORD`. With `GEODE_INSECURE`
+unset, it must connect, authenticate and execute `RETURN 1 AS x` using the
+configured CA. Repeating against the same server with a different CA must fail.
+The [qualification record](docs/qualification/sonny-5077-private-ca.md) retains
+the actual product pins and outcome; it does not qualify a disabled TLS check.
+
 #### DSN Parsing
 
 > **Note**: See [`geode/docs/DSN.md`](../geode/docs/DSN.md) for the complete DSN specification.
