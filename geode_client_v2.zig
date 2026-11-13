@@ -8,6 +8,7 @@ pub const executor_mod = @import("executor");
 pub const tp = @import("thread_pool");
 const obs = @import("observability");
 const ca_bundle = @import("src/ca_bundle.zig");
+const client_identity = @import("src/client_identity.zig");
 // Re-export the otel bootstrap helper so consumers can call
 // `geode_client.observability_init.Otel.init(...)` from `main()`. The
 // import is gated by the seam's `enabled` const: when `-Dwith_otel=false`,
@@ -41,6 +42,9 @@ pub const GeodeClient = struct {
     ca_chain_der: ?[]const []const u8 = null,
     client_cert_path: ?[]const u8 = null,
     client_key_path: ?[]const u8 = null,
+    /// DER client certificate and key loaded from client_cert_path /
+    /// client_key_path; must outlive the endpoint (SONNY-6457).
+    client_identity: ?client_identity.ClientIdentity = null,
     server_name: ?[]const u8 = null,
     username: []const u8,
     password: []const u8,
@@ -228,6 +232,10 @@ pub const GeodeClient = struct {
             ca_bundle.deinit(self.allocator, chain);
             self.ca_chain_der = null;
         }
+        if (self.client_identity) |*identity| {
+            identity.deinit(self.allocator);
+            self.client_identity = null;
+        }
 
         // Clean up gRPC resources
         if (self.grpc_client) |*gc| {
@@ -258,11 +266,17 @@ pub const GeodeClient = struct {
         return self.last_request_id;
     }
 
-    fn ensureEndpoint(self: *GeodeClient) !void {
+    /// Create the QUIC endpoint (TLS trust anchors and client identity
+    /// loaded) without dialling; `connect` calls it.
+    pub fn ensureEndpoint(self: *GeodeClient) !void {
         if (self.endpoint != null) return;
 
         const chain = if (self.ca_cert_path) |path| try ca_bundle.load(self.allocator, path) else null;
         errdefer if (chain) |owned| ca_bundle.deinit(self.allocator, owned);
+        // SONNY-6457: the client certificate goes in the client TLS fields
+        // (client_identity.apply); a cert_path would make the endpoint a server.
+        var identity = try client_identity.load(self.allocator, self.client_cert_path, self.client_key_path);
+        errdefer if (identity) |*owned| owned.deinit(self.allocator);
 
         var cfg = quic.QuicConfig{
             .version = .v1,
@@ -279,8 +293,8 @@ pub const GeodeClient = struct {
             .max_datagram_size = 1200,
             .max_idle_timeout_ms = 30000,
             .max_udp_payload = 1350,
-            .cert_path = self.client_cert_path,
-            .key_path = self.client_key_path,
+            .cert_path = null,
+            .key_path = null,
             .ca_path = self.ca_cert_path,
             .inline_ca_chain_der = chain,
             .allow_insecure = self.insecure,
@@ -290,8 +304,11 @@ pub const GeodeClient = struct {
             .inline_server_priv_p256 = null,
         };
 
+        client_identity.apply(&cfg, identity);
+
         self.endpoint = try quic.endpointInit(&self.allocator, "0.0.0.0:0", &cfg);
         self.ca_chain_der = chain;
+        self.client_identity = identity;
     }
 
     pub fn connect(self: *GeodeClient) !void {
