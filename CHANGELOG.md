@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   standalone ACK under high fan-in request/response traffic and retains a
   delayed ACK fallback for quiet or upload-only peers.
 
+## [0.3.14] - 2026-11-12
+
+### Changed
+
+- Converge quic v0.1.49, which bounds ACK and loss-recovery work per packet
+  (SONNY-6434). Geode pins the same quic revision.
+
 ## [0.3.8] - 2026-09-12
 
 ### Changed
