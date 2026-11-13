@@ -524,6 +524,19 @@ pub fn build(b: *std.Build) void {
     const ca_step = b.step("test-ca-bundle", "Test bounded owned QUIC CA bundles");
     ca_step.dependOn(&run_ca_tests.step);
 
+    const identity_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/client_identity.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    identity_tests.root_module.addImport("quic", quic_mod);
+    const run_identity_tests = b.addRunArtifact(identity_tests);
+    test_step.dependOn(&run_identity_tests.step);
+    const identity_step = b.step("test-client-identity", "Test owned client certificate and key loading for mutual TLS");
+    identity_step.dependOn(&run_identity_tests.step);
+
     // Exercise the non-FIPS backend with real OS entropy on each native target.
     const entropy_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -835,6 +848,24 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_deadline_tests.step);
     const deadline_step = b.step("test-client-deadlines", "Test native client deadline accounting");
     deadline_step.dependOn(&run_deadline_tests.step);
+
+    // SONNY-6457: a client certificate is presented (loaded into the client
+    // TLS fields; never cert_path, which makes the endpoint a server).
+    // Imports geode_client by name so linkSystemDeps touches only this test.
+    const client_cert_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/client_cert_presentation_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    client_cert_tests.root_module.addImport("geode_client", geode_client_mod);
+    client_cert_tests.root_module.addImport("quic", quic_mod);
+    linkSystemDeps(client_cert_tests, target);
+    const run_client_cert_tests = b.addRunArtifact(client_cert_tests);
+    test_step.dependOn(&run_client_cert_tests.step);
+    const client_cert_step = b.step("test-client-cert-presentation", "Test that a client certificate is presented over QUIC (SONNY-6457)");
+    client_cert_step.dependOn(&run_client_cert_tests.step);
 
     // Test geode_client module — DELETED 2026-05-01. Previously this
     // block did `b.addTest(.{ .root_module = geode_client_mod })`
