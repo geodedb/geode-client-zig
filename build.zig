@@ -289,6 +289,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    // SONNY-6550: config parses DSN credentials and redacts with redact.
+    cfg_mod.addImport("redact", redact_mod);
     // gtime module
     const gtime_mod = b.createModule(.{
         .root_source_file = b.path("src/gtime.zig"),
@@ -603,6 +605,7 @@ pub fn build(b: *std.Build) void {
     config_tests.root_module.addImport("error", error_mod);
     config_tests.root_module.addImport("validate", validate_mod);
     config_tests.root_module.addImport("crypto_backend", crypto_backend_mod);
+    config_tests.root_module.addImport("redact", redact_mod);
     if (fips) {
         const link_helper = @import("src/link.zig");
         link_helper.linkOpenssl(b, config_tests.root_module, openssl_path);

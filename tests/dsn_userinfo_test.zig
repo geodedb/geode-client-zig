@@ -123,6 +123,8 @@ test "SONNY-6550: an '@' after the authority is InvalidDSN, never part of the ho
         "quic://h:1?hello_name=me@x",
         "h:1?password=a@b",
         "quic://admin:secret@h:1/g?user=a@b",
+        // The old parser dialled evil.example here, with user "db.internal".
+        "quic://db.internal:3141?pass=a@evil.example",
     }) |dsn| try expectRefused(error.InvalidDSN, dsn);
 }
 
