@@ -7,6 +7,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.17] - 2026-11-14
+
+### Security
+
+- DSN credentials follow RFC 3986 §3.2, the rules geode's CLI uses
+  (`src/client/dsn_credentials.zig`, SONNY-6544) (SONNY-6550).
+  `parseDSN` / `parseDSNStrict` split the userinfo at the first `@`
+  anywhere in the DSN, path and query included. A password holding `@` was
+  cut short and its tail became the host: `quic://admin:s3@decoy.invalid@10.0.0.5`
+  gave host `decoy.invalid@10.0.0.5` (put in the connect span's
+  `server.address` and handed to the resolver, which refused it), and an
+  `@` in a query value moved the host into it:
+  `quic://db.internal:3141?pass=a@evil.example` dialled `evil.example`
+  with user `db.internal` and password `3141?pass=a`. The authority now ends at the first
+  `/`, `?` or `#`; the userinfo is everything before its last `@` and splits
+  into user name and password at its first `:`. A scheme-less DSN
+  (`admin:pw@host:3141`) takes the same rule. It used to keep the userinfo
+  in the host (`pw@host`).
+- **BREAKING:** an `@` after the authority (a credential holding an
+  unencoded `/`, `?` or `#`, or an `@` in the graph path or a query value)
+  is `error.UnencodedCredentialDelimiter`; encode it as `%40`. A fragment
+  (`#...`) is `error.InvalidDSN`.
+- **BREAKING:** the user name, the password, the graph path and every query
+  value are strictly percent-decoded: `%` must be followed by two hex digits
+  (`%GG`, a trailing `%` and `50%off` used to pass through as typed and are
+  now `error.InvalidPercentEncoding`), and `+` is a literal plus (it used to
+  become a space, which changed any password holding `+`). The graph in the
+  path was not decoded at all (`/my%20graph` gave `my%20graph`; a
+  `graph=` value gave `my graph`).
+  `InvalidPercentEncoding` and `UnencodedCredentialDelimiter` are the names
+  geode's `endpointErrorMessage` already maps.
+- **BREAKING:** port 0 (`host:0`) is `error.InvalidPort` in both modes; a
+  client cannot dial it. `splitHostPort` still reads it (it is the
+  grammar, also used for listeners). `GeodeClient.connect` refuses port 0
+  too (`error.InvalidPort`), for a client built in code; it used to fail at
+  the first send with `error.Unexpected`.
+- `?connect_timeout=` seconds whose milliseconds overflow u32 (e.g.
+  `5000000`) panicked `parseDSN` / `parseDSNStrict` in safe builds; strict
+  mode now returns `error.TimeoutOutOfRange` and lenient mode keeps the
+  default timeout. `zig build test-fuzz` gains "parseDSN never panics or
+  leaks on arbitrary bytes" (raw bytes, DSN-alphabet noise, hostile numeric
+  query values, `std.testing.allocator`).
+- `Config.toDSN` percent-encodes the user name, password and every query
+  value, so `parseDSN(toDSN(cfg))` gives back the same bytes for any
+  credential (seeded property test in `zig build test-fuzz`); it is
+  allocated once at its final size, and a host holding `@`, `/`, `?` or
+  `#` is `error.InvalidDSN`.
+- New `config.redacted(text)` (`{f}`): an address or DSN without its
+  userinfo and with the value of every secret-looking query parameter
+  (`pass`, `pwd`, `secret`, `token`, `auth`, `credential`, `key`,
+  `session`, `cookie`, `signature`, any case) shown as `***`; a fragment is
+  not shown, and a DSN with an `@` after its authority prints as
+  `<address redacted>`. `config.redact` exposes `splitAuthority`,
+  `decodeUserinfo`, `percentDecode`, `writePercentEncoded`, `schemeEnd` and
+  `isSecretKey`, the same rules and names as geode's `dsn_credentials`.
+  `Config` formats with `{f}` as `scheme://host:port[/graph]`, without
+  credentials or query parameters. `redact.redactDSN` finds the userinfo by
+  the same rule (it printed `admin:pa?ss@...` unmasked) and also masks every
+  `isSecretKey` parameter.
+- Decoded credentials leave no copy in freed memory: the decoder checks
+  the text first and allocates the result at its exact size (the old one
+  grew a list and freed each partial copy), `Config.deinit` and
+  `withCredentials` zero the user name as well as the password, and a
+  credential, certificate path, key path, graph, tenant or role given twice
+  in the query frees (zeroing the secrets) the first value instead of
+  leaking it.
+
+### Fixed
+
+- `hello_name`, `hello_ver` and `conformance` decoded from a DSN were never
+  freed: `Config.deinit` could not tell them from the default literals, so
+  every DSN that set them leaked (SONNY-6550). `Config` has a new
+  `owned_strings` field (all false by default) recording which of the three
+  it owns; `deinit` frees those and restores the defaults, and a value
+  repeated in the query frees the earlier copy. A value assigned in code is
+  not owned and is left alone.
+
+### Changed
+
+- The QUIC echo server and test PKI of `tests/ipv6_dial_test.zig` moved to
+  `tests/quic_echo_fixture.zig`, shared with the new
+  `zig build test-dsn-userinfo` step (SONNY-6550).
+
 ## [0.3.16] - 2026-11-13
 
 ### Changed

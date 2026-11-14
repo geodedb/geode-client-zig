@@ -3,6 +3,7 @@ const quic = @import("quic");
 const uuid = @import("uuid");
 pub const proto = @import("proto");
 pub const config = @import("config");
+const validate = @import("validate");
 pub const grpc = @import("grpc");
 pub const executor_mod = @import("executor");
 pub const tp = @import("thread_pool");
@@ -337,6 +338,9 @@ pub const GeodeClient = struct {
     }
 
     pub fn connect(self: *GeodeClient) !void {
+        // SONNY-6550: port 0 cannot be dialled (a Config built in code
+        // skips the DSN parsers' check).
+        validate.port(self.port) catch return error.InvalidPort;
         const transport_tag: obs.Transport = switch (self.transport) {
             .quic => .quic,
             .grpc => .grpc,

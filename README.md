@@ -151,8 +151,49 @@ const cfg5 = try parseDSN(allocator, "quic://db.example.com:3141?page_size=500&t
 `[ipv6]:port`; an IPv6 address is always bracketed and may carry a zone
 (`quic://[fe80::1%eth0]:3141`). An unbracketed IPv6 host (`::1:3141`) or text
 after `]` other than `:port` is `error.InvalidDSN`; a port that is not 1-5
-digits up to 65535 is `error.InvalidPort` in both `parseDSN` and
-`parseDSNStrict`.
+digits up to 65535, or is 0 (a client cannot dial port 0), is
+`error.InvalidPort` in both `parseDSN` and `parseDSNStrict`.
+
+**Credentials** (RFC 3986 §3.2, the rules geode's CLI uses): the authority
+runs from after `scheme://` (or from the start of a scheme-less DSN such as
+`admin:secret@localhost:3141`) to the first `/`, `?` or `#`. The userinfo is
+everything before the **last** `@` of the authority and splits into user name
+and password at its **first** `:`, so `quic://admin:p@ss:word@[::1]:3141` is
+user `admin`, password `p@ss:word`, host `::1`. The user name, password, graph
+path and every query value are percent-decoded strictly: `%` must be followed
+by two hex digits, and `+` is a literal plus (write a space as `%20`).
+Refused, never guessed at:
+
+- an `@` after the authority, `error.UnencodedCredentialDelimiter`: a
+  credential holding an unencoded `/`, `?` or `#` (`quic://admin:pa/ss@host`),
+  or an `@` in the graph path or a query value (`?pass=a@b`): encode it as
+  `%40`, and `/ ? #` as `%2F %3F %23`;
+- a malformed escape (`%GG`, a trailing `%`, `50%off`),
+  `error.InvalidPercentEncoding`;
+- a fragment (`#...`), `error.InvalidDSN`.
+
+A `connect_timeout` (seconds) above what fits in milliseconds is
+`error.TimeoutOutOfRange` in `parseDSNStrict` and ignored by `parseDSN`.
+
+`Config.toDSN` percent-encodes the credentials and query values, so
+`parseDSN(toDSN(cfg))` gives the same bytes back. Its result carries the
+password: zero it when done and never log it.
+
+**Printing a DSN or address.** Use `config.redacted` (`{f}`); it drops the
+userinfo, shows the value of every secret-looking query parameter (`pass`,
+`pwd`, `secret`, `token`, `auth`, `credential`, `key`, `session`, `cookie`,
+`signature`, any case) as `***`, drops a fragment, and prints a DSN with an
+`@` after its authority as `<address redacted>`. `{f}` on a `Config` prints
+`scheme://host:port[/graph]` without credentials. `config.redact` has the
+parser pieces (`splitAuthority`, `decodeUserinfo`, `percentDecode`,
+`isSecretKey`), with the same names and rules as geode's
+`src/client/dsn_credentials.zig`.
+
+```zig
+const config = @import("geode_client").config;
+std.log.info("connecting to {f}", .{config.redacted(dsn)});
+// quic://admin:s3cret@db:3141/g?pass=x&page_size=5 -> quic://db:3141/g?pass=***&page_size=5
+```
 
 **Supported URL Schemes:**
 
