@@ -12,6 +12,14 @@ const GeodeError = @import("error").GeodeError;
 const validate = @import("validate");
 const cb = @import("crypto_backend");
 
+/// DSN credential parsing and redaction (SONNY-6550; the rules of geode's
+/// src/client/dsn_credentials.zig).
+pub const redact = @import("redact");
+
+/// `{f}` formatter: an address or DSN without its userinfo and with every
+/// secret query value masked. Print a DSN or address only through this.
+pub const redacted = redact.redacted;
+
 /// Default Geode server port for QUIC
 pub const DEFAULT_PORT: u16 = 3141;
 
@@ -101,6 +109,17 @@ pub const Config = struct {
     /// FLE role for field-level access control (optional, HELLO field 8).
     /// Sent in the HELLO handshake only when set (GAP-0841).
     role: ?[]const u8 = null,
+    /// Which of `hello_name` / `hello_ver` / `conformance` this Config owns
+    /// (decoded from a DSN; SONNY-6550). `deinit` frees only those and
+    /// restores the defaults. A value set in code is not owned: leave this
+    /// alone when assigning one.
+    owned_strings: OwnedStrings = .{},
+
+    pub const OwnedStrings = struct {
+        hello_name: bool = false,
+        hello_ver: bool = false,
+        conformance: bool = false,
+    };
 
     /// Initialize with default values (QUIC transport)
     pub fn init() Config {
@@ -156,8 +175,11 @@ pub const Config = struct {
             allocator.free(old_pass);
         }
         if (self.username) |old_user| {
+            cb.secureZero(@constCast(old_user));
             allocator.free(old_user);
         }
+        self.username = null;
+        self.password = null;
 
         self.username = try allocator.dupe(u8, username);
         errdefer {
@@ -243,68 +265,92 @@ pub const Config = struct {
     /// scheme://[user[:pass]@]host:port[?params], with query parameters only
     /// for non-default values. A password-only config (no username) is
     /// emitted via a `pass=` query parameter since userinfo requires a user.
+    ///
+    /// SONNY-6550: the user name, password and every query value are
+    /// percent-encoded (every byte but `A-Z a-z 0-9 - . _ ~`, and `/` `:` in
+    /// query values), so `parseDSN(toDSN(cfg))` gives back the same bytes.
+    /// A host holding `@`, `/`, `?` or `#` cannot be written so that it reads
+    /// back and is error.InvalidDSN. The result carries the credentials:
+    /// zero it before freeing, and print it only through `redacted`. It is
+    /// allocated once at its final size, so no partial copy is freed.
     pub fn toDSN(self: Config, allocator: std.mem.Allocator) ![]const u8 {
-        var buf: std.ArrayListUnmanaged(u8) = .empty;
-        errdefer buf.deinit(allocator);
+        if (std.mem.indexOfAny(u8, self.host, "@/?#") != null) return error.InvalidDSN;
+        var counter: std.Io.Writer.Discarding = .init(&.{});
+        self.writeDSN(&counter.writer) catch unreachable; // a Discarding writer never fails
+        const out = try allocator.alloc(u8, @intCast(counter.fullCount()));
+        var w: std.Io.Writer = .fixed(out);
+        self.writeDSN(&w) catch unreachable;
+        return out;
+    }
 
-        try buf.print(allocator, "{s}://", .{self.transport.toString()});
+    fn writeDSN(self: Config, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        try w.print("{s}://", .{self.transport.toString()});
 
         // Userinfo: user[:pass]@ (only when a username is present).
         if (self.username) |user| {
-            try buf.appendSlice(allocator, user);
+            try redact.writePercentEncoded(w, user, "");
             if (self.password) |pass| {
-                try buf.append(allocator, ':');
-                try buf.appendSlice(allocator, pass);
+                try w.writeByte(':');
+                try redact.writePercentEncoded(w, pass, "");
             }
-            try buf.append(allocator, '@');
+            try w.writeByte('@');
         }
 
         // host:port (bracket IPv6 literals).
         if (std.mem.indexOfScalar(u8, self.host, ':') != null and
             !std.mem.startsWith(u8, self.host, "["))
         {
-            try buf.print(allocator, "[{s}]:{d}", .{ self.host, self.port });
+            try w.print("[{s}]:{d}", .{ self.host, self.port });
         } else {
-            try buf.print(allocator, "{s}:{d}", .{ self.host, self.port });
+            try w.print("{s}:{d}", .{ self.host, self.port });
         }
 
         // Query parameters (order is stable; only non-defaults emitted).
         var first = true;
 
         const addParam = struct {
-            fn call(b: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, f: *bool, key: []const u8, value: []const u8) !void {
-                const sep: u8 = if (f.*) '?' else '&';
+            fn call(out: *std.Io.Writer, f: *bool, key: []const u8, value: []const u8) std.Io.Writer.Error!void {
+                try out.writeByte(if (f.*) '?' else '&');
                 f.* = false;
-                try b.append(alloc, sep);
-                try b.appendSlice(alloc, key);
-                try b.append(alloc, '=');
-                try b.appendSlice(alloc, value);
+                try out.writeAll(key);
+                try out.writeByte('=');
+                try redact.writePercentEncoded(out, value, "/:");
             }
         }.call;
 
         if (self.page_size != DEFAULT_PAGE_SIZE) {
             var num: [16]u8 = undefined;
-            const s = try std.fmt.bufPrint(&num, "{d}", .{self.page_size});
-            try addParam(&buf, allocator, &first, "page_size", s);
+            const s = std.fmt.bufPrint(&num, "{d}", .{self.page_size}) catch unreachable;
+            try addParam(w, &first, "page_size", s);
         }
-        if (!std.mem.eql(u8, self.hello_name, "geode-zig")) try addParam(&buf, allocator, &first, "hello_name", self.hello_name);
-        if (!std.mem.eql(u8, self.hello_ver, "0.1.0")) try addParam(&buf, allocator, &first, "hello_ver", self.hello_ver);
-        if (!std.mem.eql(u8, self.conformance, "min")) try addParam(&buf, allocator, &first, "conformance", self.conformance);
-        if (self.ca_cert) |v| try addParam(&buf, allocator, &first, "ca", v);
-        if (self.client_cert) |v| try addParam(&buf, allocator, &first, "cert", v);
-        if (self.client_key) |v| try addParam(&buf, allocator, &first, "key", v);
-        if (self.server_name) |v| try addParam(&buf, allocator, &first, "server_name", v);
-        if (self.insecure) try addParam(&buf, allocator, &first, "insecure_tls_skip_verify", "true");
-        if (!self.tls) try addParam(&buf, allocator, &first, "tls", "0");
-        if (self.graph) |v| try addParam(&buf, allocator, &first, "graph", v);
-        if (self.tenant) |v| try addParam(&buf, allocator, &first, "tenant", v);
-        if (self.role) |v| try addParam(&buf, allocator, &first, "role", v);
+        if (!std.mem.eql(u8, self.hello_name, "geode-zig")) try addParam(w, &first, "hello_name", self.hello_name);
+        if (!std.mem.eql(u8, self.hello_ver, "0.1.0")) try addParam(w, &first, "hello_ver", self.hello_ver);
+        if (!std.mem.eql(u8, self.conformance, "min")) try addParam(w, &first, "conformance", self.conformance);
+        if (self.ca_cert) |v| try addParam(w, &first, "ca", v);
+        if (self.client_cert) |v| try addParam(w, &first, "cert", v);
+        if (self.client_key) |v| try addParam(w, &first, "key", v);
+        if (self.server_name) |v| try addParam(w, &first, "server_name", v);
+        if (self.insecure) try addParam(w, &first, "insecure_tls_skip_verify", "true");
+        if (!self.tls) try addParam(w, &first, "tls", "0");
+        if (self.graph) |v| try addParam(w, &first, "graph", v);
+        if (self.tenant) |v| try addParam(w, &first, "tenant", v);
+        if (self.role) |v| try addParam(w, &first, "role", v);
         // Password-only (no username): emit pass= so credentials survive.
         if (self.username == null) {
-            if (self.password) |pass| try addParam(&buf, allocator, &first, "pass", pass);
+            if (self.password) |pass| try addParam(w, &first, "pass", pass);
         }
+    }
 
-        return buf.toOwnedSlice(allocator);
+    /// `{f}`: `scheme://host:port[/graph]`, with no credentials and no query
+    /// parameters (SONNY-6550). Safe to log.
+    pub fn format(self: Config, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        try w.print("{s}://", .{self.transport.toString()});
+        if (std.mem.indexOfScalar(u8, self.host, ':') != null and !std.mem.startsWith(u8, self.host, "[")) {
+            try w.print("[{f}]:{d}", .{ redacted(self.host), self.port });
+        } else {
+            try w.print("{f}:{d}", .{ redacted(self.host), self.port });
+        }
+        if (self.graph) |g| try w.print("/{s}", .{g});
     }
 
     /// Free allocated credentials and zero sensitive data before freeing.
@@ -317,8 +363,9 @@ pub const Config = struct {
             allocator.free(pass);
             self.password = null;
         }
-        // Free username (not sensitive, but still allocated)
+        // SECURITY: the user name is a credential too (SONNY-6550)
         if (self.username) |user| {
+            cb.secureZero(@constCast(user));
             allocator.free(user);
             self.username = null;
         }
@@ -353,55 +400,64 @@ pub const Config = struct {
             allocator.free(v);
             self.role = null;
         }
+        // SONNY-6550: the HELLO strings decoded from a DSN.
+        const defaults = Config.init();
+        if (self.owned_strings.hello_name) {
+            allocator.free(self.hello_name);
+            self.hello_name = defaults.hello_name;
+        }
+        if (self.owned_strings.hello_ver) {
+            allocator.free(self.hello_ver);
+            self.hello_ver = defaults.hello_ver;
+        }
+        if (self.owned_strings.conformance) {
+            allocator.free(self.conformance);
+            self.conformance = defaults.conformance;
+        }
+        self.owned_strings = .{};
     }
 };
 
 /// Parse a DSN (Data Source Name) string into a Config.
 /// Supports formats:
-/// - quic://[user:pass@]host[:port][?params] - QUIC transport (recommended)
-/// - grpc://[user:pass@]host[:port][?params] - gRPC transport
-/// - Simple format: host:port[?params] - defaults to QUIC
+/// - quic://[user[:pass]@]host[:port][/graph][?params] - QUIC transport (recommended)
+/// - grpc://[user[:pass]@]host[:port][/graph][?params] - gRPC transport
+/// - Simple format: [user[:pass]@]host:port[/graph][?params] - defaults to QUIC
 /// - Host only: host - defaults to QUIC
 ///
 /// The host and port follow `splitHostPort` in both modes: an unbracketed
 /// IPv6 host is error.InvalidDSN and a bad port is error.InvalidPort
-/// (SONNY-6494). Invalid page_size and timeout values silently fall back to
-/// defaults; use parseDSNStrict() to have them return errors.
+/// (SONNY-6494); port 0 is error.InvalidPort, since a client cannot dial it
+/// (SONNY-6550).
+///
+/// SONNY-6550, credentials (RFC 3986 §3.2, the rules of geode's
+/// src/client/dsn_credentials.zig): the authority runs from after
+/// `scheme://` (or from the start of a scheme-less DSN) to the first `/`,
+/// `?` or `#`; the userinfo is everything before the LAST `@` of the
+/// authority and splits into user name and password at its FIRST `:`. A raw
+/// `@` or `:` in a password therefore parses. An `@` after the authority (a
+/// credential holding an unencoded `/`, `?` or `#`, or an `@` in the path
+/// or a query value) is error.UnencodedCredentialDelimiter; a fragment
+/// (`#`) is error.InvalidDSN. The user name, password, graph path and every
+/// query value are strictly percent-decoded: `%` must be followed by two
+/// hex digits (anything else is error.InvalidPercentEncoding) and `+` is a
+/// literal plus. A `://` after a `/`, `?`, `#` or `@` does not
+/// start a scheme.
+///
+/// Invalid page_size and timeout values silently fall back to defaults; use
+/// parseDSNStrict() to have them return errors.
 pub fn parseDSN(allocator: std.mem.Allocator, dsn: []const u8) !Config {
-    var config = Config.init();
-    errdefer config.deinit(allocator);
-
-    if (dsn.len == 0) {
-        return config;
-    }
-
-    // Check for URL format with scheme
-    if (std.mem.indexOf(u8, dsn, "://")) |scheme_end| {
-        const scheme = dsn[0..scheme_end];
-        const rest = dsn[scheme_end + 3 ..];
-
-        // Parse transport from scheme
-        if (std.mem.eql(u8, scheme, "quic")) {
-            config.transport = .quic;
-            config.port = DEFAULT_PORT;
-        } else if (std.mem.eql(u8, scheme, "grpc")) {
-            config.transport = .grpc;
-            config.port = DEFAULT_GRPC_PORT;
-        } else {
-            return error.UnsupportedScheme;
-        }
-
-        return parseUrlFormat(allocator, rest, &config, false);
-    }
-
-    // Simple format: host:port or host:port?params (defaults to QUIC)
-    return parseSimpleFormat(allocator, dsn, &config, false);
+    return parseDSNMode(allocator, dsn, false);
 }
 
 /// Parse a DSN with strict validation.
 /// SECURITY: Returns errors for invalid values instead of silently using defaults (CWE-20).
 /// This is recommended for production use where misconfigurations should fail explicitly.
 pub fn parseDSNStrict(allocator: std.mem.Allocator, dsn: []const u8) !Config {
+    return parseDSNMode(allocator, dsn, true);
+}
+
+fn parseDSNMode(allocator: std.mem.Allocator, dsn: []const u8, strict: bool) !Config {
     var config = Config.init();
     errdefer config.deinit(allocator);
 
@@ -409,10 +465,10 @@ pub fn parseDSNStrict(allocator: std.mem.Allocator, dsn: []const u8) !Config {
         return config;
     }
 
-    // Check for URL format with scheme
-    if (std.mem.indexOf(u8, dsn, "://")) |scheme_end| {
+    var rest = dsn;
+    if (redact.schemeEnd(dsn)) |scheme_end| {
         const scheme = dsn[0..scheme_end];
-        const rest = dsn[scheme_end + 3 ..];
+        rest = dsn[scheme_end + 3 ..];
 
         // Parse transport from scheme
         if (std.mem.eql(u8, scheme, "quic")) {
@@ -424,87 +480,40 @@ pub fn parseDSNStrict(allocator: std.mem.Allocator, dsn: []const u8) !Config {
         } else {
             return error.UnsupportedScheme;
         }
-
-        return parseUrlFormat(allocator, rest, &config, true);
     }
 
-    // Simple format: host:port or host:port?params (defaults to QUIC)
-    return parseSimpleFormat(allocator, dsn, &config, true);
+    try parseAuthorityAndRest(allocator, rest, &config, strict);
+    return config;
 }
 
-/// Parse URL format: [user:pass@]host[:port][?params]
-fn parseUrlFormat(allocator: std.mem.Allocator, url: []const u8, config: *Config, strict: bool) !Config {
-    var remaining = url;
+/// Parse [user[:pass]@]host[:port][/graph][?params] (see parseDSN).
+fn parseAuthorityAndRest(allocator: std.mem.Allocator, input: []const u8, config: *Config, strict: bool) !void {
+    const authority = try redact.splitAuthority(input);
+    if (std.mem.indexOfScalar(u8, authority.rest, '#') != null) return error.InvalidDSN;
 
-    // Check for credentials (user:pass@)
-    if (std.mem.indexOf(u8, remaining, "@")) |at_pos| {
-        const creds = remaining[0..at_pos];
-        remaining = remaining[at_pos + 1 ..];
-
-        // Parse user:pass
-        if (std.mem.indexOf(u8, creds, ":")) |colon_pos| {
-            const username = creds[0..colon_pos];
-            const password = creds[colon_pos + 1 ..];
-
-            // URL decode credentials
-            config.username = try urlDecode(allocator, username);
-            config.password = try urlDecode(allocator, password);
-        } else {
-            // Username only
-            config.username = try urlDecode(allocator, creds);
-        }
+    if (authority.userinfo) |userinfo| {
+        const colon = std.mem.indexOfScalar(u8, userinfo, ':');
+        replaceOwned(allocator, &config.username, try urlDecode(allocator, if (colon) |c| userinfo[0..c] else userinfo), true);
+        if (colon) |c| replaceOwned(allocator, &config.password, try urlDecode(allocator, userinfo[c + 1 ..]), true);
     }
 
-    // Parse host[:port][?params]
-    return parseHostPortParams(allocator, remaining, config, strict);
-}
-
-/// Parse simple format: host:port[?params] or host
-fn parseSimpleFormat(allocator: std.mem.Allocator, dsn: []const u8, config: *Config, strict: bool) !Config {
-    return parseHostPortParams(allocator, dsn, config, strict);
-}
-
-/// Parse host[:port][/graph][?params]
-fn parseHostPortParams(allocator: std.mem.Allocator, input: []const u8, config: *Config, strict: bool) !Config {
-    var remaining = input;
-
-    // Check for query parameters
+    var path = authority.rest;
     var params_str: ?[]const u8 = null;
-    if (std.mem.indexOf(u8, remaining, "?")) |q_pos| {
-        params_str = remaining[q_pos + 1 ..];
-        remaining = remaining[0..q_pos];
+    if (std.mem.indexOfScalar(u8, path, '?')) |q_pos| {
+        params_str = path[q_pos + 1 ..];
+        path = path[0..q_pos];
     }
 
-    // Extract graph from URL path (everything after first / not inside brackets)
-    // Only look for slash outside of IPv6 brackets
-    if (!std.mem.startsWith(u8, remaining, "[")) {
-        if (std.mem.indexOf(u8, remaining, "/")) |slash_idx| {
-            const path = remaining[slash_idx + 1 ..];
-            if (path.len > 0) {
-                if (config.graph) |old| allocator.free(old);
-                config.graph = try allocator.dupe(u8, path);
-            }
-            remaining = remaining[0..slash_idx];
-        }
-    } else {
-        // IPv6: find closing bracket first, then look for slash after it
-        if (std.mem.indexOf(u8, remaining, "]")) |bracket_end| {
-            const after_bracket = remaining[bracket_end + 1 ..];
-            // after_bracket could be ":port/graph" or "/graph" or ":port"
-            if (std.mem.indexOf(u8, after_bracket, "/")) |slash_in_after| {
-                const path = after_bracket[slash_in_after + 1 ..];
-                if (path.len > 0) {
-                    if (config.graph) |old| allocator.free(old);
-                    config.graph = try allocator.dupe(u8, path);
-                }
-                remaining = remaining[0 .. bracket_end + 1 + slash_in_after];
-            }
-        }
+    // The graph is the path after its leading '/', percent-decoded like a
+    // graph= value (SONNY-6550).
+    if (path.len > 1) {
+        replaceOwned(allocator, &config.graph, try urlDecode(allocator, path[1..]), false);
     }
 
     // SONNY-6494: one grammar in both modes; a bad port is an error, never
-    // the default port.
-    const hp = try splitHostPort(remaining, config.port);
+    // the default port. SONNY-6550: nor is port 0, which cannot be dialled.
+    const hp = try splitHostPort(authority.host_port, config.port);
+    validate.port(hp.port) catch return error.InvalidPort;
     config.host = hp.host;
     config.port = hp.port;
 
@@ -512,8 +521,24 @@ fn parseHostPortParams(allocator: std.mem.Allocator, input: []const u8, config: 
     if (params_str) |params| {
         try parseQueryParams(allocator, params, config, strict);
     }
+}
 
-    return config.*;
+/// Free the value in `field` when this Config owns it (`owned.*`), then
+/// store `value`, which must be owned by `allocator`, and mark it owned.
+fn replaceOwnedString(allocator: std.mem.Allocator, field: *[]const u8, owned: *bool, value: []const u8) void {
+    if (owned.*) allocator.free(field.*);
+    field.* = value;
+    owned.* = true;
+}
+
+/// Free (zeroing it first when `secret`) the owned value in `field`, then
+/// store `value` there. `value` must be owned by `allocator`.
+fn replaceOwned(allocator: std.mem.Allocator, field: *?[]const u8, value: []const u8, secret: bool) void {
+    if (field.*) |old| {
+        if (secret) cb.secureZero(@constCast(old));
+        allocator.free(old);
+    }
+    field.* = value;
 }
 
 /// A DSN host and port, the host without brackets.
@@ -609,7 +634,12 @@ fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *C
                         if (strict) return error.InvalidTimeout;
                         continue;
                     };
-                    const ms = secs * 1000;
+                    // SONNY-6550: seconds whose milliseconds overflow u32
+                    // are out of range, not a panic.
+                    const ms = std.math.mul(u32, secs, 1000) catch {
+                        if (strict) return error.TimeoutOutOfRange;
+                        continue;
+                    };
                     if (strict) try validate.timeout(ms);
                     config.timeout_ms = ms;
                 } else {
@@ -623,69 +653,48 @@ fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *C
                     }
                 }
             } else if (std.mem.eql(u8, key, "username") or std.mem.eql(u8, key, "user")) {
-                config.username = try urlDecode(allocator, value);
+                replaceOwned(allocator, &config.username, try urlDecode(allocator, value), true);
             } else if (std.mem.eql(u8, key, "password") or std.mem.eql(u8, key, "pass")) {
-                config.password = try urlDecode(allocator, value);
+                replaceOwned(allocator, &config.password, try urlDecode(allocator, value), true);
             } else if (std.mem.eql(u8, key, "hello_name")) {
-                config.hello_name = try urlDecode(allocator, value);
+                replaceOwnedString(allocator, &config.hello_name, &config.owned_strings.hello_name, try urlDecode(allocator, value));
             } else if (std.mem.eql(u8, key, "hello_ver")) {
-                config.hello_ver = try urlDecode(allocator, value);
+                replaceOwnedString(allocator, &config.hello_ver, &config.owned_strings.hello_ver, try urlDecode(allocator, value));
             } else if (std.mem.eql(u8, key, "conformance")) {
-                config.conformance = try urlDecode(allocator, value);
+                replaceOwnedString(allocator, &config.conformance, &config.owned_strings.conformance, try urlDecode(allocator, value));
             } else if (std.mem.eql(u8, key, "ca") or std.mem.eql(u8, key, "ca_cert")) {
-                config.ca_cert = try urlDecode(allocator, value);
+                replaceOwned(allocator, &config.ca_cert, try urlDecode(allocator, value), false);
             } else if (std.mem.eql(u8, key, "cert") or std.mem.eql(u8, key, "client_cert")) {
-                config.client_cert = try urlDecode(allocator, value);
+                replaceOwned(allocator, &config.client_cert, try urlDecode(allocator, value), false);
             } else if (std.mem.eql(u8, key, "key") or std.mem.eql(u8, key, "client_key")) {
-                config.client_key = try urlDecode(allocator, value);
+                replaceOwned(allocator, &config.client_key, try urlDecode(allocator, value), true);
             } else if (std.mem.eql(u8, key, "server_name")) {
-                config.server_name = try urlDecode(allocator, value);
+                replaceOwned(allocator, &config.server_name, try urlDecode(allocator, value), false);
             } else if (std.mem.eql(u8, key, "graph")) {
-                if (config.graph) |old| allocator.free(old);
-                config.graph = try urlDecode(allocator, value);
+                replaceOwned(allocator, &config.graph, try urlDecode(allocator, value), false);
             } else if (std.mem.eql(u8, key, "tenant") or std.mem.eql(u8, key, "tenant_id")) {
-                if (config.tenant) |old| allocator.free(old);
-                config.tenant = try urlDecode(allocator, value);
+                replaceOwned(allocator, &config.tenant, try urlDecode(allocator, value), false);
             } else if (std.mem.eql(u8, key, "role")) {
-                if (config.role) |old| allocator.free(old);
-                config.role = try urlDecode(allocator, value);
+                replaceOwned(allocator, &config.role, try urlDecode(allocator, value), false);
             }
         }
     }
 }
 
-/// URL decode a string (handles %XX encoding)
+/// Strictly percent-decode a DSN credential, graph path or query value
+/// (RFC 3986 §2.1, SONNY-6550): `%` must be followed by two hex digits,
+/// anything else is error.InvalidPercentEncoding, and `+` is a literal plus (it used to become a space,
+/// which changed any password holding `+`). The caller owns the result.
 /// SECURITY: Enforces MAX_URL_DECODE_LENGTH to prevent resource exhaustion (CWE-400).
 fn urlDecode(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
     // SECURITY: Check input length to prevent resource exhaustion (CWE-400)
     if (input.len > MAX_URL_DECODE_LENGTH) {
         return error.InputTooLong;
     }
-
-    var result: std.ArrayListUnmanaged(u8) = .empty;
-    errdefer result.deinit(allocator);
-
-    var i: usize = 0;
-    while (i < input.len) {
-        if (input[i] == '%' and i + 2 < input.len) {
-            const hex = input[i + 1 .. i + 3];
-            const byte = std.fmt.parseInt(u8, hex, 16) catch {
-                try result.append(allocator, input[i]);
-                i += 1;
-                continue;
-            };
-            try result.append(allocator, byte);
-            i += 3;
-        } else if (input[i] == '+') {
-            try result.append(allocator, ' ');
-            i += 1;
-        } else {
-            try result.append(allocator, input[i]);
-            i += 1;
-        }
-    }
-
-    return result.toOwnedSlice(allocator);
+    return redact.percentDecode(allocator, input) catch |err| switch (err) {
+        error.InvalidPercentEncoding, error.OutOfMemory => |e| e,
+        error.UnencodedCredentialDelimiter => unreachable,
+    };
 }
 
 // =============================================================================
@@ -861,10 +870,10 @@ test "urlDecode handles percent encoding" {
     try std.testing.expectEqualStrings("hello world", decoded);
 }
 
-test "urlDecode handles plus as space" {
+test "urlDecode keeps '+' literal (SONNY-6550)" {
     const decoded = try urlDecode(std.testing.allocator, "hello+world");
     defer std.testing.allocator.free(decoded);
-    try std.testing.expectEqualStrings("hello world", decoded);
+    try std.testing.expectEqualStrings("hello+world", decoded);
 }
 
 test "urlDecode handles special characters" {
@@ -873,10 +882,10 @@ test "urlDecode handles special characters" {
     try std.testing.expectEqualStrings("user@domain:test", decoded);
 }
 
-test "urlDecode handles invalid percent encoding" {
-    const decoded = try urlDecode(std.testing.allocator, "hello%GGworld");
-    defer std.testing.allocator.free(decoded);
-    try std.testing.expectEqualStrings("hello%GGworld", decoded);
+test "urlDecode refuses a malformed percent-escape (SONNY-6550)" {
+    for ([_][]const u8{ "hello%GGworld", "%", "%4", "a%%41", "50%off" }) |text| {
+        try std.testing.expectError(error.InvalidPercentEncoding, urlDecode(std.testing.allocator, text));
+    }
 }
 
 test "Config.toConnectionString formats correctly" {
@@ -1465,6 +1474,11 @@ test "SONNY-6494: a port that is not 1-5 digits <= 65535 is InvalidPort in both 
         "[::1]:3141]",
         "quic://admin:secret@h:http/g",
         "grpc://h:99999",
+        // SONNY-6550: the grammar reads port 0, but a client cannot dial it.
+        "h:0",
+        "h:00000",
+        "[::1]:0",
+        "quic://admin:secret@h:0/g",
     }) |dsn| try expectDsnError(error.InvalidPort, dsn);
 }
 
@@ -1507,16 +1521,15 @@ test "SONNY-6494: every documented DSN form parses the same in both modes" {
         .{ .dsn = "[::1]/g", .host = "::1", .port = 3141, .graph = "g" },
         .{ .dsn = "[fe80::1%eth0]:3141/g", .host = "fe80::1%eth0", .port = 3141, .graph = "g" },
         .{ .dsn = "[::ffff:192.0.2.1]:3141", .host = "::ffff:192.0.2.1", .port = 3141 },
-        // the port boundaries geode's host_port.parsePort accepts
-        .{ .dsn = "h:0", .host = "h", .port = 0 },
+        // the port boundaries a client can dial (port 0 is InvalidPort,
+        // SONNY-6550)
         .{ .dsn = "h:1", .host = "h", .port = 1 },
         .{ .dsn = "h:65535", .host = "h", .port = 65535 },
         .{ .dsn = "h:03141", .host = "h", .port = 3141 },
     };
     for (cases) |c| {
         for ([_]bool{ false, true }) |strict| {
-            // An arena: hello_name/hello_ver/conformance are not freed by
-            // Config.deinit (they default to literals).
+            // An arena: frees whatever the parse allocated.
             var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
             defer arena.deinit();
             const cfg = (if (strict) parseDSNStrict(arena.allocator(), c.dsn) else parseDSN(arena.allocator(), c.dsn)) catch |err| {

@@ -218,3 +218,131 @@ test "property: malformed URLs don't crash" {
         _ = config.parseDSN(allocator, input) catch continue;
     }
 }
+
+// =============================================================================
+// SONNY-6550: credentials round-trip, and the host never holds userinfo
+// =============================================================================
+
+fn randomBytes(r: std.Random, buf: []u8) []u8 {
+    const len = r.uintAtMost(usize, buf.len);
+    r.bytes(buf[0..len]);
+    return buf[0..len];
+}
+
+test "property: parseDSN(toDSN(cfg)) == cfg for arbitrary credential bytes" {
+    const a = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(0x6550_0001);
+    const r = prng.random();
+    const hosts = [_][]const u8{ "localhost", "127.0.0.1", "db.example.com", "::1", "2001:db8::1", "fe80::1%eth0" };
+    for (0..3000) |_| {
+        var user_buf: [24]u8 = undefined;
+        var pass_buf: [40]u8 = undefined;
+        var graph_buf: [16]u8 = undefined;
+        var tenant_buf: [16]u8 = undefined;
+        const user = randomBytes(r, &user_buf);
+        const pass = randomBytes(r, &pass_buf);
+
+        var cfg = config.Config.initWithTransport(hosts[r.uintLessThan(usize, hosts.len)], r.intRangeAtMost(u16, 1, 65535), if (r.boolean()) .quic else .grpc);
+        defer cfg.deinit(a);
+        switch (r.uintLessThan(u8, 3)) {
+            0 => _ = try cfg.withCredentials(a, user, pass),
+            1 => cfg.password = try a.dupe(u8, pass), // password only: `pass=`
+            else => {},
+        }
+        if (r.boolean()) _ = try cfg.withGraph(a, randomBytes(r, &graph_buf));
+        if (r.boolean()) _ = try cfg.withTenant(a, randomBytes(r, &tenant_buf));
+
+        const dsn = try cfg.toDSN(a);
+        defer a.free(dsn);
+        for ([_]bool{ false, true }) |strict| {
+            var back = (if (strict) config.parseDSNStrict(a, dsn) else config.parseDSN(a, dsn)) catch |err| {
+                std.debug.print("parse(toDSN) failed: {s}\n  dsn: {f}\n", .{ @errorName(err), std.ascii.hexEscape(dsn, .lower) });
+                return err;
+            };
+            defer back.deinit(a);
+            errdefer std.debug.print("round trip differs\n  dsn: {f}\n", .{std.ascii.hexEscape(dsn, .lower)});
+            try std.testing.expectEqualStrings(cfg.host, back.host);
+            try std.testing.expectEqual(cfg.port, back.port);
+            try std.testing.expectEqual(cfg.transport, back.transport);
+            try expectEqualOpt(cfg.username, back.username);
+            try expectEqualOpt(cfg.password, back.password);
+            try expectEqualOpt(cfg.graph, back.graph);
+            try expectEqualOpt(cfg.tenant, back.tenant);
+        }
+    }
+}
+
+fn expectEqualOpt(want: ?[]const u8, got: ?[]const u8) !void {
+    if (want) |w| {
+        try std.testing.expectEqualSlices(u8, w, got orelse return error.TestExpectedEqual);
+    } else try std.testing.expect(got == null);
+}
+
+test "property: a parsed host never holds an '@', '/', '?' or '#'" {
+    var prng = std.Random.DefaultPrng.init(0x6550_0002);
+    const r = prng.random();
+    const alphabet = "ab1:@/?#%[]=&.";
+    var buffer: [16 * 1024]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buffer);
+    for (0..20000) |_| {
+        var text_buf: [32]u8 = undefined;
+        const len = r.uintAtMost(usize, text_buf.len);
+        for (text_buf[0..len]) |*b| b.* = alphabet[r.uintLessThan(usize, alphabet.len)];
+        const prefix: []const u8 = switch (r.uintLessThan(u8, 3)) {
+            0 => "quic://",
+            1 => "grpc://",
+            else => "",
+        };
+        var dsn_buf: [64]u8 = undefined;
+        const dsn = std.fmt.bufPrint(&dsn_buf, "{s}{s}", .{ prefix, text_buf[0..len] }) catch unreachable;
+        for ([_]bool{ false, true }) |strict| {
+            fba.reset();
+            const cfg = (if (strict) config.parseDSNStrict(fba.allocator(), dsn) else config.parseDSN(fba.allocator(), dsn)) catch continue;
+            if (std.mem.indexOfAny(u8, cfg.host, "@/?#") != null or cfg.port == 0) {
+                std.debug.print("parse(\"{s}\") gave host \"{s}\" port {d}\n", .{ dsn, cfg.host, cfg.port });
+                return error.TestUnexpectedResult;
+            }
+        }
+    }
+}
+
+test "property: parseDSN never panics or leaks on arbitrary bytes" {
+    // std.testing.allocator: a leak on any path (success or error) fails.
+    // Safe builds turn integer overflow into a panic, so this also proves no
+    // arithmetic on parsed input overflows.
+    const a = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(0x6550_0003);
+    const r = prng.random();
+    const keys = [_][]const u8{ "page_size", "pageSize", "timeout", "timeout_ms", "connect_timeout", "user", "pass", "hello_name", "hello_ver", "conformance", "ca", "cert", "key", "server_name", "graph", "tenant", "role", "tls", "insecure" };
+    const numbers = [_][]const u8{ "0", "1", "-1", "+1", "4294967", "4294968", "5000000", "4294967295", "4294967296", "18446744073709551616", "99999999999999999999999", "3_600", "1e9", "" };
+    const noise = "ab1:@/?#%[]=&.+ \x00\xff";
+    for (0..20000) |_| {
+        var buf: [256]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buf);
+        switch (r.uintLessThan(u8, 3)) {
+            0 => {
+                // Raw arbitrary bytes.
+                const len = r.uintAtMost(usize, 96);
+                for (0..len) |_| w.writeByte(r.int(u8)) catch break;
+            },
+            1 => {
+                // Noise from the DSN alphabet behind a scheme.
+                w.writeAll(if (r.boolean()) "quic://" else "") catch {};
+                for (0..r.uintAtMost(usize, 48)) |_| w.writeByte(noise[r.uintLessThan(usize, noise.len)]) catch break;
+            },
+            else => {
+                // A well-formed DSN with hostile query values, repeated keys.
+                w.writeAll("quic://u:p@h:1/g?") catch {};
+                for (0..r.uintAtMost(usize, 6)) |i| {
+                    if (i > 0) w.writeByte('&') catch break;
+                    w.print("{s}={s}", .{ keys[r.uintLessThan(usize, keys.len)], if (r.boolean()) numbers[r.uintLessThan(usize, numbers.len)] else "x%20y" }) catch break;
+                }
+            },
+        }
+        const dsn = w.buffered();
+        for ([_]bool{ false, true }) |strict| {
+            var cfg = (if (strict) config.parseDSNStrict(a, dsn) else config.parseDSN(a, dsn)) catch continue;
+            cfg.deinit(a);
+        }
+    }
+}
