@@ -132,15 +132,25 @@ pub const PooledConnection = struct {
 
     /// Mark connection as in use
     pub fn acquire(self: *PooledConnection) void {
+        self.acquireAt(nowMs());
+    }
+
+    /// Mark connection as in use at `now_ms` (monotonic milliseconds).
+    pub fn acquireAt(self: *PooledConnection, now_ms: i64) void {
         self.state = .in_use;
-        self.last_used_at = nowMs();
+        self.last_used_at = now_ms;
         self.use_count += 1;
     }
 
     /// Mark connection as idle (returned to pool)
     pub fn release(self: *PooledConnection) void {
+        self.releaseAt(nowMs());
+    }
+
+    /// Mark connection as idle at `now_ms` (monotonic milliseconds).
+    pub fn releaseAt(self: *PooledConnection, now_ms: i64) void {
         self.state = .idle;
-        self.last_used_at = nowMs();
+        self.last_used_at = now_ms;
     }
 
     /// Check if connection is idle
@@ -155,9 +165,14 @@ pub const PooledConnection = struct {
 
     /// Check if connection has exceeded idle timeout
     pub fn isIdleExpired(self: PooledConnection, timeout_ms: u32) bool {
+        return self.isIdleExpiredAt(timeout_ms, nowMs());
+    }
+
+    /// Check if connection has been idle for more than `timeout_ms` at
+    /// `now_ms` (monotonic milliseconds).
+    pub fn isIdleExpiredAt(self: PooledConnection, timeout_ms: u32, now_ms: i64) bool {
         if (self.state != .idle) return false;
-        const now = nowMs();
-        const idle_time = now - self.last_used_at;
+        const idle_time = now_ms - self.last_used_at;
         return idle_time > timeout_ms;
     }
 };
@@ -208,6 +223,11 @@ pub fn Pool(comptime ConnectionType: type) type {
         closed: bool,
         executor: ?PoolExecutor,
         sweeper_running: std.atomic.Value(bool),
+        /// Monotonic clock in milliseconds for idle tracking and expiry.
+        /// Tests replace it to drive idle expiry without sleeping.
+        now_ms: *const fn () i64 = nowMs,
+        /// Sweeps the idle sweeper has completed (see `startIdleSweeper`).
+        sweeps: std.atomic.Value(u64) = .init(0),
 
         // Phantom field to track connection type
         _connection_type: ?ConnectionType = null,
@@ -319,7 +339,7 @@ pub fn Pool(comptime ConnectionType: type) type {
                 // Try to find an idle connection
                 for (self.connections.items) |*conn| {
                     if (conn.isIdle()) {
-                        conn.acquire();
+                        conn.acquireAt(self.now_ms());
                         self.stats.acquire_count += 1;
                         self.stats.active_connections += 1;
                         self.stats.idle_connections -= 1;
@@ -330,7 +350,7 @@ pub fn Pool(comptime ConnectionType: type) type {
                 // Try to create a new connection if under max
                 if (self.connections.items.len < self.config.max_size) {
                     const new_conn = try self.createConnection();
-                    new_conn.acquire();
+                    new_conn.acquireAt(self.now_ms());
                     self.stats.acquire_count += 1;
                     self.stats.active_connections += 1;
                     return new_conn;
@@ -352,7 +372,7 @@ pub fn Pool(comptime ConnectionType: type) type {
             defer self.mutex.unlock();
 
             if (!self.closed and conn.state == .in_use) {
-                conn.release();
+                conn.releaseAt(self.now_ms());
                 self.stats.release_count += 1;
                 self.stats.active_connections -= 1;
                 self.stats.idle_connections += 1;
@@ -395,10 +415,11 @@ pub fn Pool(comptime ConnectionType: type) type {
             self.mutex.lock();
             defer self.mutex.unlock();
 
+            const now = self.now_ms();
             var removed: u32 = 0;
             var i: usize = 0;
             while (i < self.connections.items.len) {
-                if (self.connections.items[i].isIdleExpired(self.config.idle_timeout_ms)) {
+                if (self.connections.items[i].isIdleExpiredAt(self.config.idle_timeout_ms, now)) {
                     // Keep minimum connections
                     if (self.connections.items.len > self.config.min_size) {
                         _ = self.connections.swapRemove(i);
@@ -428,8 +449,9 @@ pub fn Pool(comptime ConnectionType: type) type {
         }
 
         /// Start a background loop on the executor that runs
-        /// `cleanupExpired` every `health_check_interval_ms`. Idempotent
-        /// (a second call is a no-op). Requires an executor.
+        /// `cleanupExpired` every `health_check_interval_ms`, counting each
+        /// completed pass in `sweeps`. Idempotent (a second call is a
+        /// no-op). Requires an executor.
         pub fn startIdleSweeper(self: *Self) !void {
             if (self.executor == null) return error.NoExecutor;
             if (self.sweeper_running.swap(true, .acq_rel)) return;
@@ -443,6 +465,7 @@ pub fn Pool(comptime ConnectionType: type) type {
                         std.time.ns_per_ms;
                     while (pool.sweeper_running.load(.acquire)) {
                         _ = pool.cleanupExpired();
+                        _ = pool.sweeps.fetchAdd(1, .acq_rel);
                         // Sleep in ≤100ms chunks so stopIdleSweeper
                         // observes the flag promptly — bounds shutdown
                         // latency to ~100ms regardless of interval.
@@ -471,7 +494,7 @@ pub fn Pool(comptime ConnectionType: type) type {
         // Note: stats.idle_connections is NOT incremented here because the caller
         // (acquire) will immediately mark it as in_use. Stats are managed by the caller.
         fn createConnection(self: *Self) !*PooledConnection {
-            const now = nowMs();
+            const now = self.now_ms();
             const conn = PooledConnection{
                 .id = self.next_id,
                 .state = .idle,
@@ -738,6 +761,34 @@ test "Pool without executor config has no executor" {
     try std.testing.expect(pool.getExecutor() == null);
 }
 
+// A test clock: idle expiry is driven by advancing it, never by sleeping,
+// so the outcome does not depend on how the runner schedules threads.
+var test_now_ms = std.atomic.Value(i64).init(1_000_000);
+
+fn testNowMs() i64 {
+    return test_now_ms.load(.acquire);
+}
+
+fn advanceTestClock(ms: i64) void {
+    _ = test_now_ms.fetchAdd(ms, .acq_rel);
+}
+
+/// Wait until the sweeper has completed `target` sweeps. The bound only
+/// turns a stalled sweeper into a failure instead of a hang.
+fn waitForSweeps(pool: anytype, target: u64) !void {
+    const deadline = nowNs() + 60 * std.time.ns_per_s;
+    while (pool.sweeps.load(.acquire) < target) {
+        if (nowNs() > deadline) return error.SweeperStalled;
+        tp.clock.sleep(std.time.ns_per_ms);
+    }
+}
+
+/// Wait for two more completed sweeps: the second one started after this
+/// call, so it read the clock and the pool as they are now.
+fn waitForFreshSweep(pool: anytype) !void {
+    try waitForSweeps(pool, pool.sweeps.load(.acquire) + 2);
+}
+
 test "Pool.cleanupExpiredAsync runs on the executor" {
     const TestPool = Pool(TestConnection);
     var cfg = PoolConfig.init();
@@ -747,11 +798,12 @@ test "Pool.cleanupExpiredAsync runs on the executor" {
 
     var pool = try TestPool.init(std.testing.allocator, Config.init(), cfg);
     defer pool.deinit();
+    pool.now_ms = testNowMs;
 
     // Seed an idle connection that will expire.
     const c = try pool.acquire();
     pool.release(c);
-    tp.clock.sleep(10 * std.time.ns_per_ms);
+    advanceTestClock(cfg.idle_timeout_ms + 1);
 
     const handle = try pool.cleanupExpiredAsync();
     try pool.executor.?.pool.wait(handle);
@@ -773,23 +825,39 @@ test "Pool.startIdleSweeper ticks and reaps idle connections" {
     var cfg = PoolConfig.init();
     _ = cfg.withExecutor(.{ .num_threads = 2 });
     cfg.idle_timeout_ms = 5;
-    cfg.health_check_interval_ms = 10;
+    cfg.health_check_interval_ms = 1;
     cfg.min_size = 0;
 
     var pool = try TestPool.init(std.testing.allocator, Config.init(), cfg);
     defer pool.deinit();
+    pool.now_ms = testNowMs;
 
-    // Seed an idle connection.
-    const c = try pool.acquire();
-    pool.release(c);
-    try std.testing.expect(pool.available() >= 1);
+    // One idle connection and one in use, both last used now.
+    const idle = try pool.acquire();
+    const busy = try pool.acquire();
+    pool.release(idle);
+    try std.testing.expectEqual(@as(u32, 1), pool.available());
+    try std.testing.expectEqual(@as(u32, 1), pool.inUse());
 
     try pool.startIdleSweeper();
 
-    // Give the sweeper several intervals to run.
-    tp.clock.sleep(80 * std.time.ns_per_ms);
+    // The sweeper ticks, and keeps an idle connection that is not past the
+    // threshold, including exactly at it.
+    try waitForFreshSweep(&pool);
+    try std.testing.expectEqual(@as(u32, 2), pool.size());
+    advanceTestClock(cfg.idle_timeout_ms);
+    try waitForFreshSweep(&pool);
+    try std.testing.expectEqual(@as(u32, 2), pool.size());
 
-    try std.testing.expectEqual(@as(u32, 0), pool.size());
+    // Past the threshold the idle connection is reaped; the one in use,
+    // last used just as long ago, is not.
+    advanceTestClock(1);
+    try waitForFreshSweep(&pool);
+    try std.testing.expectEqual(@as(u32, 1), pool.size());
+    try std.testing.expectEqual(@as(u32, 1), pool.inUse());
+    try std.testing.expectEqual(@as(u32, 0), pool.available());
+
+    pool.release(busy);
 }
 
 test "Pool.startIdleSweeper is idempotent" {

@@ -60,19 +60,14 @@ const TestConfig = struct {
             getEnvOpt("GEODE_DEFAULT_PASSWORD") orelse
             getEnvOr("GEODE_ADMIN_PASSWORD", "geode-test-password");
 
-        var host: []const u8 = "127.0.0.1";
-        var port: u16 = default_port;
-
-        if (std.mem.indexOf(u8, server, ":")) |colon_idx| {
-            host = server[0..colon_idx];
-            port = std.fmt.parseInt(u16, server[colon_idx + 1 ..], 10) catch default_port;
-        } else {
-            host = server;
-        }
+        // The DSN host grammar (`[::1]:3141` for IPv6); a bad address is a
+        // configuration error, not the default port (SONNY-6494).
+        const hp = geode_client.config.splitHostPort(server, default_port) catch |err|
+            std.debug.panic("GEODE_SERVER '{s}': {s}", .{ server, @errorName(err) });
 
         return .{
-            .host = host,
-            .port = port,
+            .host = hp.host,
+            .port = hp.port,
             .insecure = insecure,
             .timeout_ms = 5000,
             .transport = transport,
@@ -100,42 +95,11 @@ const TestContext = struct {
             return error.SkipZigTest;
         }
 
-        // Resolve hostname if needed
-        var resolved_host: []const u8 = config.host;
-        // initWithTransport copies the host, so this buffer only lives through init.
-        var resolved_host_buf: [64]u8 = undefined;
-        var needs_resolution = false;
-        for (config.host) |c| {
-            if ((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z')) {
-                needs_resolution = true;
-                break;
-            }
-        }
-
-        if (needs_resolution) {
-            // Resolve hostname via libc getaddrinfo (std.net was removed in zig 0.16.0).
-            const host_z = try allocator.dupeZ(u8, config.host);
-            defer allocator.free(host_z);
-
-            var hints: std.c.addrinfo = std.mem.zeroes(std.c.addrinfo);
-            hints.family = std.c.AF.INET;
-            hints.socktype = std.c.SOCK.STREAM;
-
-            var res: ?*std.c.addrinfo = null;
-            const rc = std.c.getaddrinfo(host_z.ptr, null, &hints, &res);
-            if (@intFromEnum(rc) != 0 or res == null) return error.DnsResolutionFailed;
-            defer std.c.freeaddrinfo(res.?);
-
-            const sa: *const std.c.sockaddr.in = @ptrCast(@alignCast(res.?.addr.?));
-            const ip_bytes: [4]u8 = @bitCast(sa.addr);
-            resolved_host = std.fmt.bufPrint(&resolved_host_buf, "{d}.{d}.{d}.{d}", .{
-                ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3],
-            }) catch return error.InvalidAddress;
-        }
-
+        // GeodeClient resolves a host name itself (IPv4 first, then IPv6)
+        // and dials an IPv6 literal from an IPv6 endpoint (SONNY-6494).
         var client = try GeodeClient.initWithTransport(
             allocator,
-            resolved_host,
+            config.host,
             config.port,
             config.insecure,
             config.username,

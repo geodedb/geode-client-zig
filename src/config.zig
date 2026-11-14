@@ -233,9 +233,10 @@ pub const Config = struct {
         return self.username != null and self.password != null;
     }
 
-    /// Format as connection string (without credentials)
+    /// Format as connection string (without credentials); an IPv6 host is
+    /// bracketed.
     pub fn toConnectionString(self: Config, allocator: std.mem.Allocator) ![]const u8 {
-        return std.fmt.allocPrint(allocator, "{s}:{d}", .{ self.host, self.port });
+        return formatHostPortAlloc(allocator, self.host, self.port);
     }
 
     /// Format as a DSN string that round-trips with parseDSN. Emits
@@ -362,10 +363,13 @@ pub const Config = struct {
 /// - Simple format: host:port[?params] - defaults to QUIC
 /// - Host only: host - defaults to QUIC
 ///
-/// Note: Invalid numeric values (port, page_size, timeout) silently fall back to defaults.
-/// Use parseDSNStrict() for strict validation that returns errors on invalid values.
+/// The host and port follow `splitHostPort` in both modes: an unbracketed
+/// IPv6 host is error.InvalidDSN and a bad port is error.InvalidPort
+/// (SONNY-6494). Invalid page_size and timeout values silently fall back to
+/// defaults; use parseDSNStrict() to have them return errors.
 pub fn parseDSN(allocator: std.mem.Allocator, dsn: []const u8) !Config {
     var config = Config.init();
+    errdefer config.deinit(allocator);
 
     if (dsn.len == 0) {
         return config;
@@ -399,6 +403,7 @@ pub fn parseDSN(allocator: std.mem.Allocator, dsn: []const u8) !Config {
 /// This is recommended for production use where misconfigurations should fail explicitly.
 pub fn parseDSNStrict(allocator: std.mem.Allocator, dsn: []const u8) !Config {
     var config = Config.init();
+    errdefer config.deinit(allocator);
 
     if (dsn.len == 0) {
         return config;
@@ -497,39 +502,11 @@ fn parseHostPortParams(allocator: std.mem.Allocator, input: []const u8, config: 
         }
     }
 
-    // Check for IPv6 address [host]:port
-    if (std.mem.startsWith(u8, remaining, "[")) {
-        if (std.mem.indexOf(u8, remaining, "]:")) |bracket_colon| {
-            // IPv6 with port: [::1]:3141
-            config.host = remaining[1..bracket_colon];
-            const port_str = remaining[bracket_colon + 2 ..];
-            if (strict) {
-                // SECURITY: Strict mode returns error for invalid port (CWE-20)
-                config.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
-            } else {
-                config.port = std.fmt.parseInt(u16, port_str, 10) catch DEFAULT_PORT;
-            }
-        } else if (std.mem.indexOf(u8, remaining, "]")) |bracket| {
-            // IPv6 without port: [::1]
-            config.host = remaining[1..bracket];
-        } else {
-            return error.InvalidDSN;
-        }
-    } else {
-        // Regular host:port or host
-        if (std.mem.lastIndexOf(u8, remaining, ":")) |colon_pos| {
-            config.host = remaining[0..colon_pos];
-            const port_str = remaining[colon_pos + 1 ..];
-            if (strict) {
-                // SECURITY: Strict mode returns error for invalid port (CWE-20)
-                config.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
-            } else {
-                config.port = std.fmt.parseInt(u16, port_str, 10) catch DEFAULT_PORT;
-            }
-        } else {
-            config.host = remaining;
-        }
-    }
+    // SONNY-6494: one grammar in both modes; a bad port is an error, never
+    // the default port.
+    const hp = try splitHostPort(remaining, config.port);
+    config.host = hp.host;
+    config.port = hp.port;
 
     // Parse query parameters
     if (params_str) |params| {
@@ -537,6 +514,67 @@ fn parseHostPortParams(allocator: std.mem.Allocator, input: []const u8, config: 
     }
 
     return config.*;
+}
+
+/// A DSN host and port, the host without brackets.
+pub const HostPort = struct {
+    host: []const u8,
+    port: u16,
+};
+
+/// SONNY-6494: split a DSN `host[:port]`, the grammar of geode's
+/// src/client/host_port.zig (docs/DSN.md, "Host Specification"):
+///
+///   host | host:port | [ipv6] | [ipv6]:port
+///
+/// An IPv6 address is always bracketed and may carry a zone
+/// (`[fe80::1%eth0]:3141`); the brackets are stripped from `host`. An
+/// unbracketed host with more than one colon (`::1`, `::1:3141`: its last
+/// colon cannot be told from a port separator), anything but `:port` after
+/// `]` (`[::1]3141`), brackets around anything but an IPv6 literal, a stray
+/// `]`, and an empty host are error.InvalidDSN. A port is 1-5 ASCII digits
+/// whose value fits in u16; anything else (empty, `+80`, `3_141`, `http`,
+/// 70000) is error.InvalidPort. A host without a port takes `default_port`.
+pub fn splitHostPort(addr: []const u8, default_port: u16) error{ InvalidDSN, InvalidPort }!HostPort {
+    if (addr.len == 0) return error.InvalidDSN;
+    if (addr[0] == '[') {
+        const close = std.mem.indexOfScalar(u8, addr, ']') orelse return error.InvalidDSN;
+        const host = addr[1..close];
+        if (!isIpv6Literal(host)) return error.InvalidDSN;
+        const rest = addr[close + 1 ..];
+        if (rest.len == 0) return .{ .host = host, .port = default_port };
+        if (rest[0] != ':') return error.InvalidDSN;
+        return .{ .host = host, .port = try parsePort(rest[1..]) };
+    }
+    if (std.mem.indexOfScalar(u8, addr, ']') != null) return error.InvalidDSN;
+    const colon = std.mem.indexOfScalar(u8, addr, ':') orelse return .{ .host = addr, .port = default_port };
+    if (std.mem.indexOfScalarPos(u8, addr, colon + 1, ':') != null) return error.InvalidDSN;
+    if (colon == 0) return error.InvalidDSN;
+    return .{ .host = addr[0..colon], .port = try parsePort(addr[colon + 1 ..]) };
+}
+
+/// A port: 1-5 ASCII digits whose value fits in u16. `std.fmt.parseInt`
+/// alone also accepts a sign and `_` separators.
+pub fn parsePort(text: []const u8) error{InvalidPort}!u16 {
+    if (text.len == 0 or text.len > 5) return error.InvalidPort;
+    for (text) |c| if (!std.ascii.isDigit(c)) return error.InvalidPort;
+    return std.fmt.parseInt(u16, text, 10) catch error.InvalidPort;
+}
+
+/// An IPv6 address, optionally with a `%zone` suffix (no brackets).
+pub fn isIpv6Literal(text: []const u8) bool {
+    return switch (std.Io.net.Ip6Address.Unresolved.parse(text)) {
+        .success => true,
+        else => false,
+    };
+}
+
+/// `host:port`, with the host bracketed when it is an IPv6 literal, so that
+/// `splitHostPort` (and the QUIC library's address parser) reads it back.
+pub fn formatHostPortAlloc(allocator: std.mem.Allocator, host: []const u8, port: u16) ![]u8 {
+    if (std.mem.indexOfScalar(u8, host, ':') != null and !std.mem.startsWith(u8, host, "["))
+        return std.fmt.allocPrint(allocator, "[{s}]:{d}", .{ host, port });
+    return std.fmt.allocPrint(allocator, "{s}:{d}", .{ host, port });
 }
 
 /// Parse query parameters (key=value&key=value)
@@ -807,10 +845,8 @@ test "parseDSN handles IP address" {
     try std.testing.expectEqual(@as(u16, 3141), cfg.port);
 }
 
-test "parseDSN uses default port for invalid port" {
-    const cfg = try parseDSN(std.testing.allocator, "localhost:invalid");
-    try std.testing.expectEqualStrings("localhost", cfg.host);
-    try std.testing.expectEqual(@as(u16, 3141), cfg.port);
+test "parseDSN rejects an invalid port instead of using the default (SONNY-6494)" {
+    try std.testing.expectError(error.InvalidPort, parseDSN(std.testing.allocator, "localhost:invalid"));
 }
 
 test "urlDecode handles plain string" {
@@ -848,6 +884,17 @@ test "Config.toConnectionString formats correctly" {
     const conn_str = try cfg.toConnectionString(std.testing.allocator);
     defer std.testing.allocator.free(conn_str);
     try std.testing.expectEqualStrings("localhost:8443", conn_str);
+}
+
+test "Config.toConnectionString brackets an IPv6 host so it parses back (SONNY-6494)" {
+    for ([_][]const u8{ "::1", "fe80::1%eth0" }) |host| {
+        const cfg = Config.initWithHost(host, 3141);
+        const conn_str = try cfg.toConnectionString(std.testing.allocator);
+        defer std.testing.allocator.free(conn_str);
+        const parsed = try parseDSNStrict(std.testing.allocator, conn_str);
+        try std.testing.expectEqualStrings(host, parsed.host);
+        try std.testing.expectEqual(@as(u16, 3141), parsed.port);
+    }
 }
 
 // =============================================================================
@@ -983,12 +1030,14 @@ test "parseDSNStrict handles empty string" {
 }
 
 test "parseDSN vs parseDSNStrict behavior comparison" {
-    // parseDSN silently uses default for invalid port
-    const lenient_cfg = try parseDSN(std.testing.allocator, "localhost:invalid");
-    try std.testing.expectEqual(@as(u16, 3141), lenient_cfg.port);
-
-    // parseDSNStrict returns error for invalid port
+    // Both refuse an invalid port (SONNY-6494).
+    try std.testing.expectError(error.InvalidPort, parseDSN(std.testing.allocator, "localhost:invalid"));
     try std.testing.expectError(error.InvalidPort, parseDSNStrict(std.testing.allocator, "localhost:invalid"));
+
+    // parseDSN silently uses the default for an invalid page_size; strict refuses it.
+    const lenient_cfg = try parseDSN(std.testing.allocator, "localhost:3141?page_size=invalid");
+    try std.testing.expectEqual(DEFAULT_PAGE_SIZE, lenient_cfg.page_size);
+    try std.testing.expectError(error.InvalidPageSize, parseDSNStrict(std.testing.allocator, "localhost:3141?page_size=invalid"));
 }
 
 // =============================================================================
@@ -1350,4 +1399,137 @@ test "Config.withCredentials safe with stack buffers" {
     const stack_pass = [_]u8{ 'p', 'a', 's', 's' };
     _ = try cfg.withCredentials(std.testing.allocator, &stack_user, &stack_pass);
     cfg.deinit(std.testing.allocator);
+}
+
+// =============================================================================
+// SONNY-6494: host grammar (docs/DSN.md, "Host Specification"), shared with
+// geode's src/client/host_port.zig:
+//   host | host:port | [ipv6] | [ipv6]:port, ipv6 may carry a zone
+// An unbracketed host with more than one colon, text after `]` other than
+// `:port`, and brackets around anything but an IPv6 literal are InvalidDSN;
+// a port that is not 1-5 ASCII digits <= 65535 is InvalidPort. Both hold
+// in lenient and strict mode: no port is replaced by a default.
+// =============================================================================
+
+fn expectDsnError(want: anyerror, dsn: []const u8) !void {
+    std.testing.expectError(want, parseDSN(std.testing.allocator, dsn)) catch |err| {
+        std.debug.print("parseDSN(\"{s}\") did not fail with {s}\n", .{ dsn, @errorName(want) });
+        return err;
+    };
+    std.testing.expectError(want, parseDSNStrict(std.testing.allocator, dsn)) catch |err| {
+        std.debug.print("parseDSNStrict(\"{s}\") did not fail with {s}\n", .{ dsn, @errorName(want) });
+        return err;
+    };
+}
+
+test "SONNY-6494: an unbracketed IPv6 host or a malformed bracket is InvalidDSN in both modes" {
+    for ([_][]const u8{
+        "::1",
+        "::1:3141",
+        "2001:db8::1",
+        "2001:db8::1:3141/g",
+        "quic://::1:3141",
+        "quic://admin:secret@::1:3141/g",
+        "[::1]3141",
+        "[::1]3141/g",
+        "quic://admin:secret@[::1]3141/g",
+        "[::1]x",
+        "[::1",
+        "quic://[::1",
+        "[127.0.0.1]:3141",
+        "[localhost]:3141",
+        "[]",
+        "[]:3141",
+        "host]:3141",
+        "quic://:3141",
+        ":3141",
+        "quic://",
+        "quic://admin:secret@",
+    }) |dsn| try expectDsnError(error.InvalidDSN, dsn);
+}
+
+test "SONNY-6494: a port that is not 1-5 digits <= 65535 is InvalidPort in both modes" {
+    for ([_][]const u8{
+        "h:http",
+        "h:+80",
+        "h:-1",
+        "h:3_141",
+        "h:",
+        "h:70000",
+        "h:123456",
+        "h:003141x",
+        "localhost:invalid",
+        "[::1]:",
+        "[::1]:abc",
+        "[::1]:+80",
+        "[::1]:3141]",
+        "quic://admin:secret@h:http/g",
+        "grpc://h:99999",
+    }) |dsn| try expectDsnError(error.InvalidPort, dsn);
+}
+
+test "SONNY-6494: every documented DSN form parses the same in both modes" {
+    const Case = struct {
+        dsn: []const u8,
+        host: []const u8,
+        port: u16,
+        graph: ?[]const u8 = null,
+        transport: Transport = .quic,
+    };
+    const cases = [_]Case{
+        // README.md / CLAUDE.md
+        .{ .dsn = "quic://admin:secret@localhost:3141?insecure_tls_skip_verify=true", .host = "localhost", .port = 3141 },
+        .{ .dsn = "grpc://localhost:50051?tls=false", .host = "localhost", .port = 50051, .transport = .grpc },
+        .{ .dsn = "localhost:3141", .host = "localhost", .port = 3141 },
+        .{ .dsn = "quic://db.example.com:3141?page_size=500&timeout=60000", .host = "db.example.com", .port = 3141 },
+        .{ .dsn = "localhost:8443", .host = "localhost", .port = 8443 },
+        // geode docs/DSN.md
+        .{ .dsn = "quic://192.168.1.100:3141", .host = "192.168.1.100", .port = 3141 },
+        .{ .dsn = "quic://127.0.0.1:3141", .host = "127.0.0.1", .port = 3141 },
+        .{ .dsn = "quic://[::1]:3141", .host = "::1", .port = 3141 },
+        .{ .dsn = "grpc://[2001:db8::1]:50051", .host = "2001:db8::1", .port = 50051, .transport = .grpc },
+        .{ .dsn = "quic://[fe80::1%eth0]:3141", .host = "fe80::1%eth0", .port = 3141 },
+        .{ .dsn = "quic://localhost:3141", .host = "localhost", .port = 3141 },
+        .{ .dsn = "quic://geode.example.com:3141", .host = "geode.example.com", .port = 3141 },
+        .{ .dsn = "quic://localhost:3141/social", .host = "localhost", .port = 3141, .graph = "social" },
+        .{ .dsn = "quic://admin:secret@geode.example.com:3141/analytics?page_size=500&hello_name=reporting-service", .host = "geode.example.com", .port = 3141, .graph = "analytics" },
+        .{ .dsn = "grpc://localhost:50051/my-graph?ca=/path/to/ca.crt&cert=/path/to/client.crt&key=/path/to/client.key", .host = "localhost", .port = 50051, .graph = "my-graph", .transport = .grpc },
+        .{ .dsn = "grpc://localhost:50051?tls=0", .host = "localhost", .port = 50051, .transport = .grpc },
+        .{ .dsn = "quic://admin:secret@[2001:db8::1]:3141/social", .host = "2001:db8::1", .port = 3141, .graph = "social" },
+        // host-only and bracketed forms take the scheme's default port
+        .{ .dsn = "myserver", .host = "myserver", .port = 3141 },
+        .{ .dsn = "quic://localhost", .host = "localhost", .port = 3141 },
+        .{ .dsn = "grpc://localhost", .host = "localhost", .port = 50051, .transport = .grpc },
+        .{ .dsn = "[::1]", .host = "::1", .port = 3141 },
+        .{ .dsn = "grpc://[::1]", .host = "::1", .port = 50051, .transport = .grpc },
+        .{ .dsn = "[::1]:3141", .host = "::1", .port = 3141 },
+        .{ .dsn = "[::1]:3141/g", .host = "::1", .port = 3141, .graph = "g" },
+        .{ .dsn = "[::1]/g", .host = "::1", .port = 3141, .graph = "g" },
+        .{ .dsn = "[fe80::1%eth0]:3141/g", .host = "fe80::1%eth0", .port = 3141, .graph = "g" },
+        .{ .dsn = "[::ffff:192.0.2.1]:3141", .host = "::ffff:192.0.2.1", .port = 3141 },
+        // the port boundaries geode's host_port.parsePort accepts
+        .{ .dsn = "h:0", .host = "h", .port = 0 },
+        .{ .dsn = "h:1", .host = "h", .port = 1 },
+        .{ .dsn = "h:65535", .host = "h", .port = 65535 },
+        .{ .dsn = "h:03141", .host = "h", .port = 3141 },
+    };
+    for (cases) |c| {
+        for ([_]bool{ false, true }) |strict| {
+            // An arena: hello_name/hello_ver/conformance are not freed by
+            // Config.deinit (they default to literals).
+            var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena.deinit();
+            const cfg = (if (strict) parseDSNStrict(arena.allocator(), c.dsn) else parseDSN(arena.allocator(), c.dsn)) catch |err| {
+                std.debug.print("{s}(\"{s}\") failed: {s}\n", .{ if (strict) "parseDSNStrict" else "parseDSN", c.dsn, @errorName(err) });
+                return err;
+            };
+            errdefer std.debug.print("{s}(\"{s}\") parsed wrong\n", .{ if (strict) "parseDSNStrict" else "parseDSN", c.dsn });
+            try std.testing.expectEqualStrings(c.host, cfg.host);
+            try std.testing.expectEqual(c.port, cfg.port);
+            try std.testing.expectEqual(c.transport, cfg.transport);
+            if (c.graph) |g| {
+                try std.testing.expectEqualStrings(g, cfg.graph orelse return error.GraphMissing);
+            } else try std.testing.expectEqual(@as(?[]const u8, null), cfg.graph);
+        }
+    }
 }

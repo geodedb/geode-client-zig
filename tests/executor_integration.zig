@@ -50,22 +50,13 @@ fn getServerAddr(allocator: std.mem.Allocator) !ServerAddr {
         };
     };
 
-    const colon = std.mem.lastIndexOfScalar(u8, dsn, ':') orelse {
-        const owned = try allocator.dupe(u8, dsn);
-        return .{
-            .host = owned,
-            .port = 3141,
-            .insecure = true,
-            .username = getEnvOr("GEODE_USERNAME", "geode"),
-            .password = defaultPassword(),
-            .host_owned = true,
-        };
-    };
-    const port = std.fmt.parseInt(u16, dsn[colon + 1 ..], 10) catch 3141;
-    const host_copy = try allocator.dupe(u8, dsn[0..colon]);
+    // The DSN host grammar (`[::1]:3141` for IPv6); a bad address is an
+    // error, not the default port (SONNY-6494).
+    const hp = try geode.config.splitHostPort(dsn, 3141);
+    const host_copy = try allocator.dupe(u8, hp.host);
     return .{
         .host = host_copy,
-        .port = port,
+        .port = hp.port,
         .insecure = true,
         .username = getEnvOr("GEODE_USERNAME", "geode"),
         .password = defaultPassword(),
