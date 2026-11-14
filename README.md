@@ -159,16 +159,21 @@ runs from after `scheme://` (or from the start of a scheme-less DSN such as
 `admin:secret@localhost:3141`) to the first `/`, `?` or `#`. The userinfo is
 everything before the **last** `@` of the authority and splits into user name
 and password at its **first** `:`, so `quic://admin:p@ss:word@[::1]:3141` is
-user `admin`, password `p@ss:word`, host `::1`. The user name, password and
-every query value are percent-decoded strictly: `%` must be followed by two
-hex digits, and `+` is a literal plus (write a space as `%20`). Refused with
-`error.InvalidDSN`, never guessed at:
+user `admin`, password `p@ss:word`, host `::1`. The user name, password, graph
+path and every query value are percent-decoded strictly: `%` must be followed
+by two hex digits, and `+` is a literal plus (write a space as `%20`).
+Refused, never guessed at:
 
-- an `@` after the authority: a credential holding an unencoded `/`, `?` or
-  `#` (`quic://admin:pa/ss@host`), or an `@` in the graph path or a query
-  value (`?pass=a@b`): encode it as `%40`, and `/ ? #` as `%2F %3F %23`;
-- a malformed escape (`%GG`, a trailing `%`, `50%off`);
-- a fragment (`#...`).
+- an `@` after the authority, `error.UnencodedCredentialDelimiter`: a
+  credential holding an unencoded `/`, `?` or `#` (`quic://admin:pa/ss@host`),
+  or an `@` in the graph path or a query value (`?pass=a@b`): encode it as
+  `%40`, and `/ ? #` as `%2F %3F %23`;
+- a malformed escape (`%GG`, a trailing `%`, `50%off`),
+  `error.InvalidPercentEncoding`;
+- a fragment (`#...`), `error.InvalidDSN`.
+
+A `connect_timeout` (seconds) above what fits in milliseconds is
+`error.TimeoutOutOfRange` in `parseDSNStrict` and ignored by `parseDSN`.
 
 `Config.toDSN` percent-encodes the credentials and query values, so
 `parseDSN(toDSN(cfg))` gives the same bytes back. Its result carries the

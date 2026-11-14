@@ -443,6 +443,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "uuid", .module = uuid_mod },
             .{ .name = "proto", .module = proto_mod },
             .{ .name = "config", .module = cfg_mod },
+            .{ .name = "validate", .module = validate_mod },
             .{ .name = "grpc", .module = grpc_mod },
             .{ .name = "encryption", .module = encryption_mod },
             .{ .name = "executor", .module = executor_mod },

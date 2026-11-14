@@ -109,6 +109,17 @@ pub const Config = struct {
     /// FLE role for field-level access control (optional, HELLO field 8).
     /// Sent in the HELLO handshake only when set (GAP-0841).
     role: ?[]const u8 = null,
+    /// Which of `hello_name` / `hello_ver` / `conformance` this Config owns
+    /// (decoded from a DSN; SONNY-6550). `deinit` frees only those and
+    /// restores the defaults. A value set in code is not owned: leave this
+    /// alone when assigning one.
+    owned_strings: OwnedStrings = .{},
+
+    pub const OwnedStrings = struct {
+        hello_name: bool = false,
+        hello_ver: bool = false,
+        conformance: bool = false,
+    };
 
     /// Initialize with default values (QUIC transport)
     pub fn init() Config {
@@ -389,6 +400,21 @@ pub const Config = struct {
             allocator.free(v);
             self.role = null;
         }
+        // SONNY-6550: the HELLO strings decoded from a DSN.
+        const defaults = Config.init();
+        if (self.owned_strings.hello_name) {
+            allocator.free(self.hello_name);
+            self.hello_name = defaults.hello_name;
+        }
+        if (self.owned_strings.hello_ver) {
+            allocator.free(self.hello_ver);
+            self.hello_ver = defaults.hello_ver;
+        }
+        if (self.owned_strings.conformance) {
+            allocator.free(self.conformance);
+            self.conformance = defaults.conformance;
+        }
+        self.owned_strings = .{};
     }
 };
 
@@ -411,10 +437,11 @@ pub const Config = struct {
 /// authority and splits into user name and password at its FIRST `:`. A raw
 /// `@` or `:` in a password therefore parses. An `@` after the authority (a
 /// credential holding an unencoded `/`, `?` or `#`, or an `@` in the path
-/// or a query value) and a fragment (`#`) are error.InvalidDSN. The user
-/// name, password and every query value are strictly percent-decoded: `%`
-/// must be followed by two hex digits (anything else is error.InvalidDSN)
-/// and `+` is a literal plus. A `://` after a `/`, `?`, `#` or `@` does not
+/// or a query value) is error.UnencodedCredentialDelimiter; a fragment
+/// (`#`) is error.InvalidDSN. The user name, password, graph path and every
+/// query value are strictly percent-decoded: `%` must be followed by two
+/// hex digits (anything else is error.InvalidPercentEncoding) and `+` is a
+/// literal plus. A `://` after a `/`, `?`, `#` or `@` does not
 /// start a scheme.
 ///
 /// Invalid page_size and timeout values silently fall back to defaults; use
@@ -461,7 +488,7 @@ fn parseDSNMode(allocator: std.mem.Allocator, dsn: []const u8, strict: bool) !Co
 
 /// Parse [user[:pass]@]host[:port][/graph][?params] (see parseDSN).
 fn parseAuthorityAndRest(allocator: std.mem.Allocator, input: []const u8, config: *Config, strict: bool) !void {
-    const authority = redact.splitAuthority(input) catch return error.InvalidDSN;
+    const authority = try redact.splitAuthority(input);
     if (std.mem.indexOfScalar(u8, authority.rest, '#') != null) return error.InvalidDSN;
 
     if (authority.userinfo) |userinfo| {
@@ -477,9 +504,10 @@ fn parseAuthorityAndRest(allocator: std.mem.Allocator, input: []const u8, config
         path = path[0..q_pos];
     }
 
-    // The graph is the path after its leading '/'.
+    // The graph is the path after its leading '/', percent-decoded like a
+    // graph= value (SONNY-6550).
     if (path.len > 1) {
-        replaceOwned(allocator, &config.graph, try allocator.dupe(u8, path[1..]), false);
+        replaceOwned(allocator, &config.graph, try urlDecode(allocator, path[1..]), false);
     }
 
     // SONNY-6494: one grammar in both modes; a bad port is an error, never
@@ -493,6 +521,14 @@ fn parseAuthorityAndRest(allocator: std.mem.Allocator, input: []const u8, config
     if (params_str) |params| {
         try parseQueryParams(allocator, params, config, strict);
     }
+}
+
+/// Free the value in `field` when this Config owns it (`owned.*`), then
+/// store `value`, which must be owned by `allocator`, and mark it owned.
+fn replaceOwnedString(allocator: std.mem.Allocator, field: *[]const u8, owned: *bool, value: []const u8) void {
+    if (owned.*) allocator.free(field.*);
+    field.* = value;
+    owned.* = true;
 }
 
 /// Free (zeroing it first when `secret`) the owned value in `field`, then
@@ -598,7 +634,12 @@ fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *C
                         if (strict) return error.InvalidTimeout;
                         continue;
                     };
-                    const ms = secs * 1000;
+                    // SONNY-6550: seconds whose milliseconds overflow u32
+                    // are out of range, not a panic.
+                    const ms = std.math.mul(u32, secs, 1000) catch {
+                        if (strict) return error.TimeoutOutOfRange;
+                        continue;
+                    };
                     if (strict) try validate.timeout(ms);
                     config.timeout_ms = ms;
                 } else {
@@ -616,11 +657,11 @@ fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *C
             } else if (std.mem.eql(u8, key, "password") or std.mem.eql(u8, key, "pass")) {
                 replaceOwned(allocator, &config.password, try urlDecode(allocator, value), true);
             } else if (std.mem.eql(u8, key, "hello_name")) {
-                config.hello_name = try urlDecode(allocator, value);
+                replaceOwnedString(allocator, &config.hello_name, &config.owned_strings.hello_name, try urlDecode(allocator, value));
             } else if (std.mem.eql(u8, key, "hello_ver")) {
-                config.hello_ver = try urlDecode(allocator, value);
+                replaceOwnedString(allocator, &config.hello_ver, &config.owned_strings.hello_ver, try urlDecode(allocator, value));
             } else if (std.mem.eql(u8, key, "conformance")) {
-                config.conformance = try urlDecode(allocator, value);
+                replaceOwnedString(allocator, &config.conformance, &config.owned_strings.conformance, try urlDecode(allocator, value));
             } else if (std.mem.eql(u8, key, "ca") or std.mem.eql(u8, key, "ca_cert")) {
                 replaceOwned(allocator, &config.ca_cert, try urlDecode(allocator, value), false);
             } else if (std.mem.eql(u8, key, "cert") or std.mem.eql(u8, key, "client_cert")) {
@@ -640,9 +681,9 @@ fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *C
     }
 }
 
-/// Strictly percent-decode a DSN credential or query value (RFC 3986 §2.1,
-/// SONNY-6550): `%` must be followed by two hex digits, anything else is
-/// error.InvalidDSN, and `+` is a literal plus (it used to become a space,
+/// Strictly percent-decode a DSN credential, graph path or query value
+/// (RFC 3986 §2.1, SONNY-6550): `%` must be followed by two hex digits,
+/// anything else is error.InvalidPercentEncoding, and `+` is a literal plus (it used to become a space,
 /// which changed any password holding `+`). The caller owns the result.
 /// SECURITY: Enforces MAX_URL_DECODE_LENGTH to prevent resource exhaustion (CWE-400).
 fn urlDecode(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
@@ -651,8 +692,7 @@ fn urlDecode(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
         return error.InputTooLong;
     }
     return redact.percentDecode(allocator, input) catch |err| switch (err) {
-        error.InvalidPercentEncoding => error.InvalidDSN,
-        error.OutOfMemory => error.OutOfMemory,
+        error.InvalidPercentEncoding, error.OutOfMemory => |e| e,
         error.UnencodedCredentialDelimiter => unreachable,
     };
 }
@@ -1489,8 +1529,7 @@ test "SONNY-6494: every documented DSN form parses the same in both modes" {
     };
     for (cases) |c| {
         for ([_]bool{ false, true }) |strict| {
-            // An arena: hello_name/hello_ver/conformance are not freed by
-            // Config.deinit (they default to literals).
+            // An arena: frees whatever the parse allocated.
             var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
             defer arena.deinit();
             const cfg = (if (strict) parseDSNStrict(arena.allocator(), c.dsn) else parseDSN(arena.allocator(), c.dsn)) catch |err| {

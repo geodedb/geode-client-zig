@@ -25,16 +25,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in the host (`pw@host`).
 - **BREAKING:** an `@` after the authority (a credential holding an
   unencoded `/`, `?` or `#`, or an `@` in the graph path or a query value)
-  is `error.InvalidDSN`; encode it as `%40`. A fragment (`#...`) is
-  `error.InvalidDSN`.
-- **BREAKING:** the user name, the password and every query value are
-  strictly percent-decoded: `%` must be followed by two hex digits
-  (`%GG`, a trailing `%` and `50%off` used to pass through as typed and
-  are now `error.InvalidDSN`), and `+` is a literal plus (it used to become
-  a space, which changed any password holding `+`).
+  is `error.UnencodedCredentialDelimiter`; encode it as `%40`. A fragment
+  (`#...`) is `error.InvalidDSN`.
+- **BREAKING:** the user name, the password, the graph path and every query
+  value are strictly percent-decoded: `%` must be followed by two hex digits
+  (`%GG`, a trailing `%` and `50%off` used to pass through as typed and are
+  now `error.InvalidPercentEncoding`), and `+` is a literal plus (it used to
+  become a space, which changed any password holding `+`). The graph in the
+  path was not decoded at all (`/my%20graph` gave `my%20graph`; a
+  `graph=` value gave `my graph`).
+  `InvalidPercentEncoding` and `UnencodedCredentialDelimiter` are the names
+  geode's `endpointErrorMessage` already maps.
 - **BREAKING:** port 0 (`host:0`) is `error.InvalidPort` in both modes; a
   client cannot dial it. `splitHostPort` still reads it (it is the
-  grammar, also used for listeners).
+  grammar, also used for listeners). `GeodeClient.connect` refuses port 0
+  too (`error.InvalidPort`), for a client built in code; it used to fail at
+  the first send with `error.Unexpected`.
+- `?connect_timeout=` seconds whose milliseconds overflow u32 (e.g.
+  `5000000`) panicked `parseDSN` / `parseDSNStrict` in safe builds; strict
+  mode now returns `error.TimeoutOutOfRange` and lenient mode keeps the
+  default timeout. `zig build test-fuzz` gains "parseDSN never panics or
+  leaks on arbitrary bytes" (raw bytes, DSN-alphabet noise, hostile numeric
+  query values, `std.testing.allocator`).
 - `Config.toDSN` percent-encodes the user name, password and every query
   value, so `parseDSN(toDSN(cfg))` gives back the same bytes for any
   credential (seeded property test in `zig build test-fuzz`); it is
@@ -59,6 +71,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   credential, certificate path, key path, graph, tenant or role given twice
   in the query frees (zeroing the secrets) the first value instead of
   leaking it.
+
+### Fixed
+
+- `hello_name`, `hello_ver` and `conformance` decoded from a DSN were never
+  freed: `Config.deinit` could not tell them from the default literals, so
+  every DSN that set them leaked (SONNY-6550). `Config` has a new
+  `owned_strings` field (all false by default) recording which of the three
+  it owns; `deinit` frees those and restores the defaults, and a value
+  repeated in the query frees the earlier copy. A value assigned in code is
+  not owned and is left alone.
 
 ### Changed
 
