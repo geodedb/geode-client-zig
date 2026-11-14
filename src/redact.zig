@@ -129,3 +129,27 @@ test "redactDSN is empty-safe" {
     defer a.free(out);
     try std.testing.expectEqualStrings("", out);
 }
+
+test "redactDSN shows no userinfo cut short by an unencoded '/', '?' or '#' (SONNY-6550)" {
+    const a = std.testing.allocator;
+    for ([_][]const u8{
+        "quic://admin:pa?ss@host:3141",
+        "quic://admin:pa/ss@host:3141",
+        "quic://admin:pa#ss@host:3141",
+        "admin:pa?ss@host:3141",
+    }) |dsn| {
+        const out = try redactDSN(a, dsn);
+        defer a.free(out);
+        std.testing.expect(std.mem.indexOf(u8, out, "admin") == null and std.mem.indexOf(u8, out, "pa") == null) catch |err| {
+            std.debug.print("redactDSN(\"{s}\") = \"{s}\"\n", .{ dsn, out });
+            return err;
+        };
+    }
+}
+
+test "redactDSN masks every secret-looking query parameter (SONNY-6550)" {
+    const a = std.testing.allocator;
+    const out = try redactDSN(a, "quic://host:3141?token=t&api_key=k&client_secret=s&page_size=5");
+    defer a.free(out);
+    try std.testing.expectEqualStrings("quic://host:3141?token=***&api_key=***&client_secret=***&page_size=5", out);
+}

@@ -861,10 +861,10 @@ test "urlDecode handles percent encoding" {
     try std.testing.expectEqualStrings("hello world", decoded);
 }
 
-test "urlDecode handles plus as space" {
+test "urlDecode keeps '+' literal (SONNY-6550)" {
     const decoded = try urlDecode(std.testing.allocator, "hello+world");
     defer std.testing.allocator.free(decoded);
-    try std.testing.expectEqualStrings("hello world", decoded);
+    try std.testing.expectEqualStrings("hello+world", decoded);
 }
 
 test "urlDecode handles special characters" {
@@ -873,10 +873,10 @@ test "urlDecode handles special characters" {
     try std.testing.expectEqualStrings("user@domain:test", decoded);
 }
 
-test "urlDecode handles invalid percent encoding" {
-    const decoded = try urlDecode(std.testing.allocator, "hello%GGworld");
-    defer std.testing.allocator.free(decoded);
-    try std.testing.expectEqualStrings("hello%GGworld", decoded);
+test "urlDecode refuses a malformed percent-escape (SONNY-6550)" {
+    for ([_][]const u8{ "hello%GGworld", "%", "%4", "a%%41", "50%off" }) |text| {
+        try std.testing.expectError(error.InvalidDSN, urlDecode(std.testing.allocator, text));
+    }
 }
 
 test "Config.toConnectionString formats correctly" {
@@ -1465,6 +1465,11 @@ test "SONNY-6494: a port that is not 1-5 digits <= 65535 is InvalidPort in both 
         "[::1]:3141]",
         "quic://admin:secret@h:http/g",
         "grpc://h:99999",
+        // SONNY-6550: the grammar reads port 0, but a client cannot dial it.
+        "h:0",
+        "h:00000",
+        "[::1]:0",
+        "quic://admin:secret@h:0/g",
     }) |dsn| try expectDsnError(error.InvalidPort, dsn);
 }
 
@@ -1507,8 +1512,8 @@ test "SONNY-6494: every documented DSN form parses the same in both modes" {
         .{ .dsn = "[::1]/g", .host = "::1", .port = 3141, .graph = "g" },
         .{ .dsn = "[fe80::1%eth0]:3141/g", .host = "fe80::1%eth0", .port = 3141, .graph = "g" },
         .{ .dsn = "[::ffff:192.0.2.1]:3141", .host = "::ffff:192.0.2.1", .port = 3141 },
-        // the port boundaries geode's host_port.parsePort accepts
-        .{ .dsn = "h:0", .host = "h", .port = 0 },
+        // the port boundaries a client can dial (port 0 is InvalidPort,
+        // SONNY-6550)
         .{ .dsn = "h:1", .host = "h", .port = 1 },
         .{ .dsn = "h:65535", .host = "h", .port = 65535 },
         .{ .dsn = "h:03141", .host = "h", .port = 3141 },

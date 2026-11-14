@@ -910,6 +910,26 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_dial_host_tests.step);
     ipv6_dial_step.dependOn(&run_dial_host_tests.step);
 
+    // SONNY-6550: DSN userinfo (RFC 3986 §3.2), strict percent-decoding,
+    // port 0, credential round trip and redaction; a real QUIC dial proves a
+    // password holding '@' does not redirect the client.
+    const dsn_userinfo_step = b.step("test-dsn-userinfo", "Test DSN credential parsing, encoding and redaction (SONNY-6550)");
+    for ([_][]const u8{ "tests/dsn_userinfo_test.zig", "tests/dsn_redaction_test.zig" }) |path| {
+        const dsn_tests = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(path),
+                .target = target,
+                .optimize = optimize,
+            }),
+        });
+        dsn_tests.root_module.addImport("geode_client", geode_client_mod);
+        dsn_tests.root_module.addImport("quic", quic_mod);
+        linkSystemDeps(dsn_tests, target);
+        const run_dsn_tests = b.addRunArtifact(dsn_tests);
+        test_step.dependOn(&run_dsn_tests.step);
+        dsn_userinfo_step.dependOn(&run_dsn_tests.step);
+    }
+
     // Test geode_client module — DELETED 2026-05-01. Previously this
     // block did `b.addTest(.{ .root_module = geode_client_mod })`
     // followed by `linkSystemDeps(client_tests, target)`. Because
