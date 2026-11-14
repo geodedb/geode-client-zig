@@ -844,7 +844,7 @@ test "urlDecode handles special characters" {
 
 test "urlDecode refuses a malformed percent-escape (SONNY-6550)" {
     for ([_][]const u8{ "hello%GGworld", "%", "%4", "a%%41", "50%off" }) |text| {
-        try std.testing.expectError(error.InvalidDSN, urlDecode(std.testing.allocator, text));
+        try std.testing.expectError(error.InvalidPercentEncoding, urlDecode(std.testing.allocator, text));
     }
 }
 

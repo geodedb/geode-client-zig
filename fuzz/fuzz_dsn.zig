@@ -305,3 +305,44 @@ test "property: a parsed host never holds an '@', '/', '?' or '#'" {
         }
     }
 }
+
+test "property: parseDSN never panics or leaks on arbitrary bytes" {
+    // std.testing.allocator: a leak on any path (success or error) fails.
+    // Safe builds turn integer overflow into a panic, so this also proves no
+    // arithmetic on parsed input overflows.
+    const a = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(0x6550_0003);
+    const r = prng.random();
+    const keys = [_][]const u8{ "page_size", "pageSize", "timeout", "timeout_ms", "connect_timeout", "user", "pass", "hello_name", "hello_ver", "conformance", "ca", "cert", "key", "server_name", "graph", "tenant", "role", "tls", "insecure" };
+    const numbers = [_][]const u8{ "0", "1", "-1", "+1", "4294967", "4294968", "5000000", "4294967295", "4294967296", "18446744073709551616", "99999999999999999999999", "3_600", "1e9", "" };
+    const noise = "ab1:@/?#%[]=&.+ \x00\xff";
+    for (0..20000) |_| {
+        var buf: [256]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buf);
+        switch (r.uintLessThan(u8, 3)) {
+            0 => {
+                // Raw arbitrary bytes.
+                const len = r.uintAtMost(usize, 96);
+                for (0..len) |_| w.writeByte(r.int(u8)) catch break;
+            },
+            1 => {
+                // Noise from the DSN alphabet behind a scheme.
+                w.writeAll(if (r.boolean()) "quic://" else "") catch {};
+                for (0..r.uintAtMost(usize, 48)) |_| w.writeByte(noise[r.uintLessThan(usize, noise.len)]) catch break;
+            },
+            else => {
+                // A well-formed DSN with hostile query values, repeated keys.
+                w.writeAll("quic://u:p@h:1/g?") catch {};
+                for (0..r.uintAtMost(usize, 6)) |i| {
+                    if (i > 0) w.writeByte('&') catch break;
+                    w.print("{s}={s}", .{ keys[r.uintLessThan(usize, keys.len)], if (r.boolean()) numbers[r.uintLessThan(usize, numbers.len)] else "x%20y" }) catch break;
+                }
+            },
+        }
+        const dsn = w.buffered();
+        for ([_]bool{ false, true }) |strict| {
+            var cfg = (if (strict) config.parseDSNStrict(a, dsn) else config.parseDSN(a, dsn)) catch continue;
+            cfg.deinit(a);
+        }
+    }
+}

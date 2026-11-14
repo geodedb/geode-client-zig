@@ -111,7 +111,7 @@ fn expectRefused(want: anyerror, dsn: []const u8) !void {
     }
 }
 
-test "SONNY-6550: an '@' after the authority is InvalidDSN, never part of the host" {
+test "SONNY-6550: an '@' after the authority is UnencodedCredentialDelimiter, never part of the host" {
     for ([_][]const u8{
         // An unencoded '/', '?' or '#' in a password ends the authority.
         "quic://admin:pa/ss@host:3141",
@@ -125,10 +125,10 @@ test "SONNY-6550: an '@' after the authority is InvalidDSN, never part of the ho
         "quic://admin:secret@h:1/g?user=a@b",
         // The old parser dialled evil.example here, with user "db.internal".
         "quic://db.internal:3141?pass=a@evil.example",
-    }) |dsn| try expectRefused(error.InvalidDSN, dsn);
+    }) |dsn| try expectRefused(error.UnencodedCredentialDelimiter, dsn);
 }
 
-test "SONNY-6550: a malformed percent-escape is InvalidDSN, in the userinfo or the query" {
+test "SONNY-6550: a malformed percent-escape is InvalidPercentEncoding, in the userinfo, the path or the query" {
     for ([_][]const u8{
         "quic://a:%@h",
         "quic://a:%4@h",
@@ -141,11 +141,80 @@ test "SONNY-6550: a malformed percent-escape is InvalidDSN, in the userinfo or t
         "h:1?password=50%off",
         "h:1?hello_name=%",
         "h:1?graph=%G0",
-    }) |dsn| try expectRefused(error.InvalidDSN, dsn);
+        "quic://h:1/g%G0",
+        "h:1/%",
+        "h:1?hello_ver=%4",
+    }) |dsn| try expectRefused(error.InvalidPercentEncoding, dsn);
 }
 
 test "SONNY-6550: a fragment is InvalidDSN" {
     for ([_][]const u8{ "quic://h:1#x", "quic://h:1/g#x", "quic://h:1?a=b#x", "h#x" }) |dsn| try expectRefused(error.InvalidDSN, dsn);
+}
+
+test "SONNY-6550: the graph in the path is percent-decoded like a graph= value" {
+    for ([_][2][]const u8{
+        .{ "quic://h:1/my%20graph", "my graph" },
+        .{ "quic://h:1/a%2Fb", "a/b" },
+        .{ "quic://h:1/a+b", "a+b" },
+        .{ "h:1/g", "g" },
+        .{ "h:1?graph=my%20graph", "my graph" },
+    }) |c| {
+        for ([_]bool{ false, true }) |strict| {
+            var cfg = try parse(strict, c[0]);
+            defer cfg.deinit(testing.allocator);
+            testing.expectEqualStrings(c[1], cfg.graph.?) catch |err| {
+                std.debug.print("{s}(\"{s}\")\n", .{ modeName(strict), c[0] });
+                return err;
+            };
+        }
+    }
+}
+
+test "SONNY-6550: hello_name, hello_ver and conformance from a DSN are freed by deinit" {
+    // std.testing.allocator fails the test on a leak; given twice, the
+    // first copy is freed when the second replaces it.
+    for ([_][]const u8{
+        "h:1?hello_name=app%20one&hello_ver=1.2&conformance=full",
+        "h:1?hello_name=a&hello_name=b&hello_ver=1&hello_ver=2&conformance=x&conformance=y",
+    }) |dsn| {
+        for ([_]bool{ false, true }) |strict| {
+            var cfg = try parse(strict, dsn);
+            defer cfg.deinit(testing.allocator);
+            try testing.expect(!std.mem.eql(u8, cfg.hello_name, "geode-zig"));
+            try testing.expect(!std.mem.eql(u8, cfg.conformance, "min"));
+        }
+    }
+    {
+        var cfg = try parse(false, "h:1?hello_name=app%20one");
+        defer cfg.deinit(testing.allocator);
+        try testing.expectEqualStrings("app one", cfg.hello_name);
+    }
+    // A literal set in code is not freed.
+    var cfg = config.Config.init();
+    cfg.hello_name = "set-in-code";
+    cfg.deinit(testing.allocator);
+}
+
+test "SONNY-6550: an out-of-range connect_timeout is TimeoutOutOfRange (strict) or ignored, never a panic" {
+    // Seconds whose milliseconds overflow u32: strict refuses them, lenient
+    // keeps the default (as for any other unusable value).
+    for ([_][]const u8{ "h:1?connect_timeout=5000000", "h:1?connect_timeout=4294967295", "h:1?connect_timeout=4294968" }) |dsn| {
+        try testing.expectError(error.TimeoutOutOfRange, config.parseDSNStrict(testing.allocator, dsn));
+        const cfg = try config.parseDSN(testing.allocator, dsn);
+        try testing.expectEqual(config.DEFAULT_TIMEOUT_MS, cfg.timeout_ms);
+    }
+    try testing.expectError(error.TimeoutOutOfRange, config.parseDSNStrict(testing.allocator, "h:1?connect_timeout=3601"));
+    const cfg = try config.parseDSNStrict(testing.allocator, "h:1?connect_timeout=3600");
+    try testing.expectEqual(@as(u32, 3_600_000), cfg.timeout_ms);
+}
+
+test "SONNY-6550: GeodeClient.connect refuses port 0 from a Config built in code" {
+    var client = try GeodeClient.init(testing.allocator, "127.0.0.1", 0, true, "", "");
+    defer client.deinit();
+    try testing.expectError(error.InvalidPort, client.connect());
+    var grpc_client = try GeodeClient.initWithTransport(testing.allocator, "127.0.0.1", 0, true, "", "", .grpc);
+    defer grpc_client.deinit();
+    try testing.expectError(error.InvalidPort, grpc_client.connect());
 }
 
 test "SONNY-6550: port 0 is InvalidPort in both modes" {
