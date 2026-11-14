@@ -147,6 +147,13 @@ const cfg3 = try parseDSN(allocator, "localhost:3141");
 const cfg5 = try parseDSN(allocator, "quic://db.example.com:3141?page_size=500&timeout=60000");
 ```
 
+**Host and port** (the grammar geode uses): `host`, `host:port`, `[ipv6]`,
+`[ipv6]:port`; an IPv6 address is always bracketed and may carry a zone
+(`quic://[fe80::1%eth0]:3141`). An unbracketed IPv6 host (`::1:3141`) or text
+after `]` other than `:port` is `error.InvalidDSN`; a port that is not 1-5
+digits up to 65535 is `error.InvalidPort` in both `parseDSN` and
+`parseDSNStrict`.
+
 **Supported URL Schemes:**
 
 | Scheme | Transport | Default Port | Description |

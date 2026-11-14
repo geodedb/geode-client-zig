@@ -536,6 +536,21 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_identity_tests.step);
     const identity_step = b.step("test-client-identity", "Test owned client certificate and key loading for mutual TLS");
     identity_step.dependOn(&run_identity_tests.step);
+    // SONNY-6494: the same tests in ReleaseFast. Debug and ReleaseSafe
+    // overwrite freed memory with 0xAA in Allocator.free, which hides a key
+    // copy freed without zeroing; ReleaseFast leaves it, so the
+    // freed-memory scan proves the zeroing.
+    const identity_fast_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/client_identity.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+        }),
+    });
+    identity_fast_tests.root_module.addImport("quic", quic_mod);
+    const run_identity_fast_tests = b.addRunArtifact(identity_fast_tests);
+    test_step.dependOn(&run_identity_fast_tests.step);
+    identity_step.dependOn(&run_identity_fast_tests.step);
 
     // Exercise the non-FIPS backend with real OS entropy on each native target.
     const entropy_tests = b.addTest(.{
@@ -866,6 +881,34 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_client_cert_tests.step);
     const client_cert_step = b.step("test-client-cert-presentation", "Test that a client certificate is presented over QUIC (SONNY-6457)");
     client_cert_step.dependOn(&run_client_cert_tests.step);
+
+    // SONNY-6494: a GeodeClient dials an IPv6 server (endpoint family, bracketed
+    // dial address, IPv4-preferred name resolution) over a real loopback QUIC
+    // server.
+    const ipv6_dial_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/ipv6_dial_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    ipv6_dial_tests.root_module.addImport("geode_client", geode_client_mod);
+    ipv6_dial_tests.root_module.addImport("quic", quic_mod);
+    linkSystemDeps(ipv6_dial_tests, target);
+    const run_ipv6_dial_tests = b.addRunArtifact(ipv6_dial_tests);
+    test_step.dependOn(&run_ipv6_dial_tests.step);
+    const ipv6_dial_step = b.step("test-ipv6-dial", "Test that the client reaches a QUIC server on an IPv6 address (SONNY-6494)");
+    ipv6_dial_step.dependOn(&run_ipv6_dial_tests.step);
+    const dial_host_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/dial_host.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_dial_host_tests = b.addRunArtifact(dial_host_tests);
+    test_step.dependOn(&run_dial_host_tests.step);
+    ipv6_dial_step.dependOn(&run_dial_host_tests.step);
 
     // Test geode_client module — DELETED 2026-05-01. Previously this
     // block did `b.addTest(.{ .root_module = geode_client_mod })`

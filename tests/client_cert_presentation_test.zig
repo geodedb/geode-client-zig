@@ -120,8 +120,8 @@ test "SONNY-6457: incomplete or unreadable client identity material is refused b
     defer fx.deinit();
     const Case = struct { cert: ?[]const u8, key: ?[]const u8, want: anyerror };
     const cases = [_]Case{
-        .{ .cert = "client.crt", .key = null, .want = error.ClientCertificateKeyMismatch },
-        .{ .cert = null, .key = "client.key", .want = error.ClientCertificateKeyMismatch },
+        .{ .cert = "client.crt", .key = null, .want = error.ClientKeyMissing },
+        .{ .cert = null, .key = "client.key", .want = error.ClientCertificateMissing },
         .{ .cert = "missing.crt", .key = "client.key", .want = error.FileNotFound },
         .{ .cert = "client.crt", .key = "missing.key", .want = error.FileNotFound },
         .{ .cert = "client.key", .key = "client.key", .want = error.NoCertificateFound },

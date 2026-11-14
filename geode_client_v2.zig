@@ -9,6 +9,7 @@ pub const tp = @import("thread_pool");
 const obs = @import("observability");
 const ca_bundle = @import("src/ca_bundle.zig");
 const client_identity = @import("src/client_identity.zig");
+const dial_host = @import("src/dial_host.zig");
 // Re-export the otel bootstrap helper so consumers can call
 // `geode_client.observability_init.Otel.init(...)` from `main()`. The
 // import is gated by the seam's `enabled` const: when `-Dwith_otel=false`,
@@ -52,6 +53,8 @@ pub const GeodeClient = struct {
 
     // QUIC transport state
     endpoint: ?*quic.QuicEndpoint = null,
+    /// Address family `endpoint` is bound to (SONNY-6494).
+    endpoint_family: dial_host.Family = .ip4,
     conn: ?*quic.QuicConnection = null,
     stream_id: ?u64 = null,
     recv_buffer: std.ArrayList(u8),
@@ -267,9 +270,30 @@ pub const GeodeClient = struct {
     }
 
     /// Create the QUIC endpoint (TLS trust anchors and client identity
-    /// loaded) without dialling; `connect` calls it.
+    /// loaded) without dialling; `connect` calls it. The endpoint is bound
+    /// to the family of an address literal host, and to IPv4 for a host
+    /// name; `connect` rebuilds it when the name resolves to IPv6 only.
     pub fn ensureEndpoint(self: *GeodeClient) !void {
-        if (self.endpoint != null) return;
+        return self.ensureEndpointFor(dial_host.literalFamily(self.host) orelse .ip4);
+    }
+
+    /// SONNY-6494: an endpoint bound to `family` (0.0.0.0:0 or [::]:0); the
+    /// vendored quic endpoint sends from one socket of one family.
+    fn ensureEndpointFor(self: *GeodeClient, family: dial_host.Family) !void {
+        if (self.endpoint) |ep| {
+            if (self.endpoint_family == family) return;
+            if (self.conn != null) return error.AlreadyConnected;
+            quic.endpointDeinit(ep);
+            self.endpoint = null;
+            if (self.ca_chain_der) |owned| {
+                ca_bundle.deinit(self.allocator, owned);
+                self.ca_chain_der = null;
+            }
+            if (self.client_identity) |*owned| {
+                owned.deinit(self.allocator);
+                self.client_identity = null;
+            }
+        }
 
         const chain = if (self.ca_cert_path) |path| try ca_bundle.load(self.allocator, path) else null;
         errdefer if (chain) |owned| ca_bundle.deinit(self.allocator, owned);
@@ -306,7 +330,8 @@ pub const GeodeClient = struct {
 
         client_identity.apply(&cfg, identity);
 
-        self.endpoint = try quic.endpointInit(&self.allocator, "0.0.0.0:0", &cfg);
+        self.endpoint = try quic.endpointInit(&self.allocator, dial_host.bindAddress(family), &cfg);
+        self.endpoint_family = family;
         self.ca_chain_der = chain;
         self.client_identity = identity;
     }
@@ -327,15 +352,19 @@ pub const GeodeClient = struct {
 
     /// Connect using QUIC transport.
     fn connectQuic(self: *GeodeClient) !void {
-        try self.ensureEndpoint();
+        // SONNY-6494: dial a numeric address from an endpoint of its family;
+        // an IPv6 address is bracketed. A name prefers IPv4, else IPv6.
+        var dial = try dial_host.resolveAlloc(self.allocator, self.host);
+        defer dial.deinit(self.allocator);
+        try self.ensureEndpointFor(dial.family);
         const ep = self.endpoint.?;
 
-        const server_addr = try std.fmt.allocPrint(self.allocator, "{s}:{d}", .{ self.host, self.port });
+        const server_addr = try dial.formatAlloc(self.allocator, self.port);
         defer self.allocator.free(server_addr);
 
         // When skipping verification, empty server_name is acceptable; otherwise pass host for SNI.
         // Always provide SNI; allow_insecure disables verification when requested.
-        self.conn = try quic.connect(ep, server_addr, self.server_name orelse self.host);
+        self.conn = try quic.connect(ep, server_addr, self.server_name orelse dial_host.unbracket(self.host));
 
         // Wait for handshake confirmation using poll()-based blocking.
         // poll() blocks on epoll/kqueue until packets arrive, so there is no
