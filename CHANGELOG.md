@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.17] - 2026-11-14
+
 ### Security
 
 - DSN credentials follow RFC 3986 §3.2, the rules geode's CLI uses
