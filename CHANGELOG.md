@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.18] - 2026-11-15
+
+### Security
+
+- **BREAKING:** a gRPC client built from a `Config` uses `Config.tls`
+  (SONNY-6589). It used `!insecure`, so `grpc://h:50051?insecure=true`
+  (skip certificate verification) silently connected in plaintext, and the
+  documented `grpc://h:50051?tls=0` could not connect
+  (`error.TlsNotImplemented`). Now `?tls=0` connects in plaintext and
+  `?insecure=true` keeps TLS on, which the gRPC transport does not
+  implement yet, so it is refused (`error.TlsNotImplemented`) instead of
+  sent in the clear; write `?tls=0` for a plaintext connection. A client
+  built in code (`init` / `initWithTransport`) keeps `!insecure` unless
+  its new `tls` field is set.
+
+### Fixed
+
+- `GeodeClient.initFromConfig` applies `timeout_ms`, `page_size`, `tls`,
+  `hello_name`, `hello_ver` and `conformance`; it dropped all six
+  (SONNY-6589). `connect` waited a fixed 30 s for the QUIC handshake and
+  `sendHello` a fixed 30 s for the HELLO answer; both now wait
+  `timeout_ms` (DSN `timeout_ms` / `timeout`, or `connect_timeout` in
+  seconds). HELLO fields 4-6 (`client_name`, `client_version`,
+  `wanted_conformance`, the numbers geode.proto gives them) carry the
+  configured strings: a `Config`-built client sends `Config`'s defaults
+  (`geode-zig`, `0.1.0`, `min`) unless the DSN sets them; a client built
+  in code still sends the protocol defaults (`wanted_conformance` =
+  `minimum`). The gRPC transport is also given `timeout_ms`.
+- **BREAKING:** `connect` refuses a `timeout_ms` outside 1..3600000 with
+  `error.InvalidTimeout` (SONNY-6589). The lenient `parseDSN` keeps
+  `?timeout_ms=0`, which would otherwise give up at once.
+- `initFromConfig` frees what it had already copied when a later copy
+  fails (out of memory); it leaked them.
+
+### Added
+
+- `GeodeClient` fields `timeout_ms`, `page_size`, `tls` (`?bool`),
+  `hello_name`, `hello_ver` and `conformance` (owned, freed by `deinit`).
+  `page_size` is stored for callers; no client call reads it yet.
+- `zig build test-config-timeouts` (also run by `zig build test`): a real
+  UDP socket that never answers (connect gives up after about 500 ms with
+  `timeout_ms=500`), a QUIC server that never answers the HELLO (sendHello
+  gives up after about 500 ms, and the HELLO bytes it read hold the
+  configured fields 4-6), gRPC `tls` against a TCP listener, and
+  `initFromConfig` under every allocation failure. The QUIC test server in
+  `tests/quic_echo_fixture.zig` gains a silent mode and keeps the bytes it
+  reads.
+
+### Changed
+
+- dns v0.1.28, thread_pool v0.2.11 (Renovate, since v0.3.17).
+
 ## [0.3.17] - 2026-11-14
 
 ### Security
