@@ -105,8 +105,8 @@ pub fn makePki() !Pki {
 
 /// A QUIC server endpoint on `bind_addr` that echoes every stream byte.
 /// With `echo = false` it completes the handshake and reads, but never
-/// answers. The first `captured.len` bytes read are kept in `captured`; read
-/// them after `stop` (which joins the server thread).
+/// answers. The first `captured.len` bytes read are kept in `captured`;
+/// `capturedLen` says how many are published so far.
 pub const EchoServer = struct {
     ep: *quic.QuicEndpoint,
     cfg: quic.QuicConfig,
@@ -115,7 +115,7 @@ pub const EchoServer = struct {
     thread: ?std.Thread = null,
     echo: bool = true,
     captured: [4096]u8 = undefined,
-    captured_len: usize = 0,
+    captured_len: std.atomic.Value(usize) = .init(0),
 
     const alpn = [_][]const u8{"geode/1"};
 
@@ -127,7 +127,7 @@ pub const EchoServer = struct {
             .inline_server_priv_p256 = pki.key_der,
         };
         self.done = .init(false);
-        self.captured_len = 0;
+        self.captured_len = .init(0);
         self.ep = try quic.endpointInit(&self.alloc, bind_addr, &self.cfg);
         errdefer quic.endpointDeinit(self.ep);
         self.thread = try std.Thread.spawn(.{}, run, .{self});
@@ -143,6 +143,11 @@ pub const EchoServer = struct {
             posix.AF.INET6 => std.mem.bigToNative(u16, @as(*const posix.sockaddr.in6, @ptrCast(@alignCast(&addr.storage))).port),
             else => 0,
         };
+    }
+
+    /// Bytes of `captured` written so far (only the server thread writes).
+    pub fn capturedLen(self: *EchoServer) usize {
+        return self.captured_len.load(.acquire);
     }
 
     pub fn stop(self: *EchoServer) void {
@@ -169,9 +174,10 @@ pub const EchoServer = struct {
                 }
                 const sid = streams[i] orelse continue;
                 const got = quic.readStream(c, sid, &buf) catch continue;
-                const keep = @min(got, self.captured.len - self.captured_len);
-                @memcpy(self.captured[self.captured_len..][0..keep], buf[0..keep]);
-                self.captured_len += keep;
+                const have = self.captured_len.load(.monotonic);
+                const keep = @min(got, self.captured.len - have);
+                @memcpy(self.captured[have..][0..keep], buf[0..keep]);
+                self.captured_len.store(have + keep, .release);
                 if (!self.echo) continue;
                 var sent: usize = 0;
                 while (sent < got and !self.done.load(.acquire)) {

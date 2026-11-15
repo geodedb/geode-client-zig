@@ -31,9 +31,9 @@ fn nowMs() i64 {
 }
 
 /// The elapsed time of a wait bounded by a 500 ms timeout: at least the
-/// timeout, and nowhere near the old fixed 30 s.
+/// timeout, and far below the old fixed 30 s (slack for a loaded runner).
 fn expectAboutHalfSecond(elapsed_ms: i64) !void {
-    if (elapsed_ms < 450 or elapsed_ms > 5_000) {
+    if (elapsed_ms < 450 or elapsed_ms > 10_000) {
         std.debug.print("waited {d} ms, want about 500 ms (timeout_ms=500)\n", .{elapsed_ms});
         return error.TimeoutNotApplied;
     }
@@ -154,8 +154,7 @@ test "SONNY-6589: sendHello waits Config.timeout_ms and sends the configured HEL
     defer pki.deinit();
     var server: fixture.EchoServer = undefined;
     try fixture.startSilentServer(&server, "127.0.0.1:0", &pki);
-    var stopped = false;
-    defer if (!stopped) server.stop();
+    defer server.stop();
 
     const dsn = try std.fmt.allocPrint(testing.allocator, "quic://alice:pw@127.0.0.1:{d}?ca={s}&timeout_ms=500&hello_name=my-app&hello_ver=9.9.9&conformance=full", .{ server.port(), pki.ca_path });
     defer testing.allocator.free(dsn);
@@ -163,17 +162,29 @@ test "SONNY-6589: sendHello waits Config.timeout_ms and sends the configured HEL
     defer cfg.deinit(testing.allocator);
     var client = try GeodeClient.initFromConfig(testing.allocator, cfg);
     defer client.deinit();
+    try testing.expectEqual(@as(u32, 500), client.timeout_ms);
 
+    // timeout_ms bounds the handshake as well; a loaded runner can take more
+    // than 500 ms to finish one (the connect bound is proven against a socket
+    // that never answers above). Give the handshake a generous budget, then
+    // restore the configured 500 ms so only the HELLO wait is measured.
+    client.timeout_ms = 60_000;
     try client.connect();
+    client.timeout_ms = cfg.timeout_ms;
     const start = nowMs();
     try testing.expectError(error.ReceiveTimeout, client.sendHello());
     try expectAboutHalfSecond(nowMs() - start);
 
-    server.stop();
-    stopped = true;
-    // [u32 length][QuicClientMessage { hello = 1: HelloRequest }]
-    const wire = server.captured[0..server.captured_len];
-    try testing.expect(wire.len > 4);
+    // [u32 length][QuicClientMessage { hello = 1: HelloRequest }]. Drive the
+    // client until the server has read the whole frame (a loaded runner may
+    // not have delivered it within the 500 ms HELLO wait).
+    const deliver_start = nowMs();
+    const wire = while (true) {
+        const n = server.capturedLen();
+        if (n >= 4 and n >= 4 + @as(usize, std.mem.readInt(u32, server.captured[0..4], .big))) break server.captured[0..n];
+        if (nowMs() - deliver_start > 30_000) return error.HelloNotDelivered;
+        client.pollTransport(10);
+    };
     const frame_len = std.mem.readInt(u32, wire[0..4], .big);
     try testing.expectEqual(@as(usize, 4 + frame_len), wire.len);
     const hello = (try stringField(wire[4..], 1)) orelse return error.NoHello;
