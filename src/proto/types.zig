@@ -25,8 +25,10 @@ pub const HelloRequest = struct {
     password: []const u8 = "",
     tenant_id: ?[]const u8 = null,
     client_name: []const u8 = "geode-zig",
-    client_version: []const u8 = "0.1.0",
-    wanted_conformance: []const u8 = "minimum",
+    // SONNY-6617: the library's version (was "0.1.0") and docs/DSN.md's
+    // "min" (was "minimum").
+    client_version: []const u8 = @import("version").VERSION,
+    wanted_conformance: []const u8 = "min",
     graph: ?[]const u8 = null,
     // FLE role for field-level access control (geode.proto HelloRequest field 8).
     role: ?[]const u8 = null,

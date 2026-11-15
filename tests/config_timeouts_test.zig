@@ -106,13 +106,12 @@ test "SONNY-6589: connect refuses a timeout_ms outside 1..3600000" {
         defer client.deinit();
         try testing.expectError(error.InvalidTimeout, client.connect());
     }
-    // The lenient parser keeps a 0 it reads; connect refuses it instead of
-    // timing out at once.
+    // SONNY-6617: the lenient parser no longer keeps a 0 it reads; it falls
+    // back to the default, as documented (tests/request_timeouts_test.zig),
+    // so only a Config built in code reaches connect's InvalidTimeout.
     var cfg = try config.parseDSN(testing.allocator, "quic://127.0.0.1:3141?timeout_ms=0");
     defer cfg.deinit(testing.allocator);
-    var client = try GeodeClient.initFromConfig(testing.allocator, cfg);
-    defer client.deinit();
-    try testing.expectError(error.InvalidTimeout, client.connect());
+    try testing.expectEqual(config.DEFAULT_TIMEOUT_MS, cfg.timeout_ms);
 }
 
 /// The length-delimited fields of one protobuf message, by field number.

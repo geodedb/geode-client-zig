@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.19] - 2026-11-15
+
+### Fixed
+
+- Every wait of a `GeodeClient` honours `timeout_ms` (SONNY-6617). v0.3.18
+  applied it to the QUIC handshake and the HELLO answer only: `query`
+  (its first answer), `begin`, `commit`, `rollback` and `ping` waited a
+  fixed 30 s, and a write held up by flow control (`writeAll`) a fixed
+  30 s. A query's later pages wait at most 5 s each, or `timeout_ms` if
+  shorter.
+- The gRPC transport honours `timeout_ms` (SONNY-6617).
+  `GrpcClient.connect` was a blocking TCP connect (std.Io's connect has no
+  timeout yet), so a server that never answered the SYN held it for the
+  kernel's SYN retries, about two minutes; it now connects non-blocking
+  and gives up after `timeout_ms` (`GeodeClient.connect`:
+  `error.ConnectionTimeout`, as for QUIC). Every gRPC read and write waited
+  until the server answered or closed; each message now waits at most
+  `timeout_ms` (`GrpcClient.receiveTimeout` / `receiveProtoTimeout`;
+  `GeodeClient`: `error.ReceiveTimeout`). Windows keeps the blocking path.
+- **Behaviour change:** the lenient `parseDSN` falls back to the default
+  for an out-of-range timeout (outside 1..3600000 ms) or `page_size`
+  (outside 1..100000), as its doc always said (SONNY-6617). It kept the
+  number, so `?timeout_ms=0` parsed and `connect` then refused it with
+  `error.InvalidTimeout` (v0.3.18). `parseDSNStrict` still refuses them;
+  `connect`'s `InvalidTimeout` now comes only from a `Config` or client
+  built or changed in code.
+- HELLO defaults (SONNY-6617): `Config.init().hello_ver`, the protocol
+  default `client_version` (a client built in code) and the gRPC HELLO
+  sent `0.1.0`; they send the library version (`config.VERSION`, from
+  `src/version.zig`, checked against `build.zig.zon`). The protocol default
+  and the gRPC HELLO sent conformance `minimum`; they send `min`, the
+  documented value and `Config`'s default.
+
+### Added
+
+- `zig build test-request-timeouts` (also in `zig build test`): every
+  request, write and gRPC wait against real sockets (a QUIC server that
+  never answers, one that never reads a stream, a TCP listener whose accept
+  queue is full, one that never answers), the lenient fallbacks and the
+  HELLO defaults. The QUIC test server gains a mode that never reads.
+- `zig build test-client-inline` (also in `zig build test`): the inline
+  tests of `geode_client_v2.zig`, unwired since 2026-05-01. They run in a
+  test module of their own, so the public `geode_client` module is not
+  given the test's system libraries.
+
+### Removed
+
+- `proto/schema.zig`, unreferenced (no build step, import or package path
+  used it; QUALITY_GAP_ANALYSIS Q-010).
+
 ## [0.3.18] - 2026-11-15
 
 ### Security
