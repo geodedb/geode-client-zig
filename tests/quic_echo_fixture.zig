@@ -105,7 +105,8 @@ pub fn makePki() !Pki {
 
 /// A QUIC server endpoint on `bind_addr` that echoes every stream byte.
 /// With `echo = false` it completes the handshake and reads, but never
-/// answers. The first `captured.len` bytes read are kept in `captured`;
+/// answers. With `read = false` (SONNY-6617) it completes the handshake
+/// and never reads a stream either, so a writer runs into flow control. The first `captured.len` bytes read are kept in `captured`;
 /// `capturedLen` says how many are published so far.
 pub const EchoServer = struct {
     ep: *quic.QuicEndpoint,
@@ -114,6 +115,7 @@ pub const EchoServer = struct {
     done: std.atomic.Value(bool) = .init(false),
     thread: ?std.Thread = null,
     echo: bool = true,
+    read: bool = true,
     captured: [4096]u8 = undefined,
     captured_len: std.atomic.Value(usize) = .init(0),
 
@@ -168,6 +170,7 @@ pub const EchoServer = struct {
                 conns[n_conns] = c;
                 n_conns += 1;
             }
+            if (!self.read) continue;
             for (conns[0..n_conns], 0..) |c, i| {
                 if (streams[i] == null and quic.hasIncomingStreams(c)) {
                     streams[i] = quic.acceptStream(c) catch null;
@@ -194,12 +197,21 @@ pub const EchoServer = struct {
 /// Start an echo server on `bind_addr`, or skip when the host cannot bind it.
 pub fn startServer(server: *EchoServer, bind_addr: []const u8, pki: *const Pki) !void {
     server.echo = true;
+    server.read = true;
     return startConfigured(server, bind_addr, pki);
 }
 
 /// Start a server that completes the handshake but never answers.
 pub fn startSilentServer(server: *EchoServer, bind_addr: []const u8, pki: *const Pki) !void {
     server.echo = false;
+    server.read = true;
+    return startConfigured(server, bind_addr, pki);
+}
+
+/// Start a server that completes the handshake and never reads a stream.
+pub fn startDeafServer(server: *EchoServer, bind_addr: []const u8, pki: *const Pki) !void {
+    server.echo = false;
+    server.read = false;
     return startConfigured(server, bind_addr, pki);
 }
 

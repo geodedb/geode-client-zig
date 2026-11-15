@@ -951,6 +951,26 @@ pub fn build(b: *std.Build) void {
     const config_timeouts_step = b.step("test-config-timeouts", "Test that the client applies Config timeouts, TLS and HELLO fields (SONNY-6589)");
     config_timeouts_step.dependOn(&run_config_timeouts_tests.step);
 
+    // SONNY-6617: every request, write and gRPC wait honours timeout_ms; the
+    // lenient parser's documented fallbacks; the HELLO version/conformance.
+    const test_paths = b.addOptions();
+    test_paths.addOptionPath("build_zon", b.path("build.zig.zon"));
+    const request_timeouts_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/request_timeouts_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    request_timeouts_tests.root_module.addImport("geode_client", geode_client_mod);
+    request_timeouts_tests.root_module.addImport("quic", quic_mod);
+    request_timeouts_tests.root_module.addImport("test_paths", test_paths.createModule());
+    linkSystemDeps(request_timeouts_tests, target);
+    const run_request_timeouts_tests = b.addRunArtifact(request_timeouts_tests);
+    test_step.dependOn(&run_request_timeouts_tests.step);
+    const request_timeouts_step = b.step("test-request-timeouts", "Test that every request, write and gRPC wait honours timeout_ms, the lenient parser's fallbacks and the HELLO defaults (SONNY-6617)");
+    request_timeouts_step.dependOn(&run_request_timeouts_tests.step);
+
     // Test geode_client module — DELETED 2026-05-01. Previously this
     // block did `b.addTest(.{ .root_module = geode_client_mod })`
     // followed by `linkSystemDeps(client_tests, target)`. Because
