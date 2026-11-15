@@ -43,7 +43,7 @@ Sorted by PriorityScore descending. PriorityScore = Impact(1-5) x Likelihood(1-5
 | 7 | Q-007 | Medium | 36 | complexity | proto.zig exceeds 800-line limit (1,273 LOC) | src/proto.zig | `wc -l` = 1273; contains duplicated encode/decode patterns | -- | Extract transaction, schema, and message encoding into sub-modules | TBD | 2-3 days | Open |
 | 8 | Q-009 | Medium | 36 | build | Duplicate system library linking blocks (5x) | build.zig:271-281, 298-309, 513-520, 543-553, 603-614 | 5 near-identical `linkLibC`/`linkSystemLibrary` blocks | -- | Extract a helper function `linkQuicSystemLibs(exe, target)` | TBD | < 1 day | Open |
 | 9 | Q-004 | Medium | 36 | docs | CLAUDE.md references deleted `src/protocol.zig` | CLAUDE.md (Wire Protocol section) | Documents `protocol.buildHello`, `protocol.buildRunGql`, etc.; actual impl is `src/proto.zig` with protobuf | -- | Update CLAUDE.md to reflect protobuf/gRPC architecture | TBD | < 1 day | Open |
-| 10 | Q-010 | Medium | 32 | dead-code | `proto/schema.zig` unreferenced (381 LOC dead code) | src/proto/schema.zig (does not exist on disk) | Finding references 381 LOC; directory `src/proto/` absent -- likely deleted but finding may be stale | -- | Confirm removal or re-integrate if needed | TBD | < 1 day | Open |
+| 10 | Q-010 | Medium | 32 | dead-code | `proto/schema.zig` unreferenced (381 LOC dead code) | proto/schema.zig | Unreferenced by any build step, import or package path | -- | Removed (SONNY-6617) | TBD | < 1 day | Closed |
 | 11 | Q-014 | Low | 24 | code-quality | `@constCast` + `@memset` zeroing may be elided by optimizer | src/config.zig:206,226; src/auth.zig:212,393,410 | `@memset(@constCast(pass), 0)` -- optimizer may remove dead store | -- | Replace with `std.crypto.utils.secureZero` | TBD | < 1 day | Open |
 | 12 | Q-011 | Low | 16 | duplication | 4 duplicated bool response decoders in proto.zig | src/proto.zig:987,1002,1017,1032 | `decodeCommitResponse`, `decodeRollbackResponse`, `decodeSavepointResponse`, `decodeRollbackToResponse` are identical | -- | Extract generic `decodeBoolResponse` and alias | TBD | < 1 day | Open |
 | 13 | Q-012 | Low | 16 | duplication | 4 duplicated single-string request encoders in proto.zig | src/proto.zig:472,480,488,497 | `encodeCommitRequest`, `encodeRollbackRequest`, `encodeSavepointRequest`, `encodeRollbackToRequest` near-identical | -- | Extract generic `encodeSingleStringRequest` and alias | TBD | < 1 day | Open |
@@ -202,6 +202,7 @@ Sorted by PriorityScore descending. PriorityScore = Impact(1-5) x Likelihood(1-5
 
 #### Q-010: proto/schema.zig unreferenced (381 LOC dead code)
 
+- **Status:** Closed 2026-11-15 (SONNY-6617): `proto/schema.zig` (repository root, 390 lines) was unreferenced by any build step, import or package path and was removed.
 - **Severity:** Medium | **PriorityScore:** 32 | **Confidence:** suspected
 - **Summary:** Finding references a 381-line `proto/schema.zig` file. However, the `src/proto/` directory does not exist on disk. This finding may be stale or the file may have been deleted in a prior commit.
 - **What would confirm:** Check git log for deletion of `src/proto/schema.zig`. If it was deleted, this finding can be closed. If it exists elsewhere, it should be removed or integrated.

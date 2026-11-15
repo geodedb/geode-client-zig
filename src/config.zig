@@ -12,6 +12,9 @@ const GeodeError = @import("error").GeodeError;
 const validate = @import("validate");
 const cb = @import("crypto_backend");
 
+/// The library version; the HELLO's default `client_version` (SONNY-6617).
+pub const VERSION = @import("version").VERSION;
+
 /// DSN credential parsing and redaction (SONNY-6550; the rules of geode's
 /// src/client/dsn_credentials.zig).
 pub const redact = @import("redact");
@@ -135,7 +138,7 @@ pub const Config = struct {
             .transport = .quic,
             .tls = true,
             .hello_name = "geode-zig",
-            .hello_ver = "0.1.0",
+            .hello_ver = VERSION,
             .conformance = "min",
             .ca_cert = null,
             .client_cert = null,
@@ -324,7 +327,7 @@ pub const Config = struct {
             try addParam(w, &first, "page_size", s);
         }
         if (!std.mem.eql(u8, self.hello_name, "geode-zig")) try addParam(w, &first, "hello_name", self.hello_name);
-        if (!std.mem.eql(u8, self.hello_ver, "0.1.0")) try addParam(w, &first, "hello_ver", self.hello_ver);
+        if (!std.mem.eql(u8, self.hello_ver, VERSION)) try addParam(w, &first, "hello_ver", self.hello_ver);
         if (!std.mem.eql(u8, self.conformance, "min")) try addParam(w, &first, "conformance", self.conformance);
         if (self.ca_cert) |v| try addParam(w, &first, "ca", v);
         if (self.client_cert) |v| try addParam(w, &first, "cert", v);
@@ -445,7 +448,10 @@ pub const Config = struct {
 /// start a scheme.
 ///
 /// Invalid page_size and timeout values silently fall back to defaults; use
-/// parseDSNStrict() to have them return errors.
+/// parseDSNStrict() to have them return errors. "Invalid" includes out of
+/// range (a timeout outside 1..3600000 ms, a page_size outside 1..100000;
+/// SONNY-6617: the number was kept, and `GeodeClient.connect` then refused
+/// the timeout with InvalidTimeout), so every Config this returns connects.
 pub fn parseDSN(allocator: std.mem.Allocator, dsn: []const u8) !Config {
     return parseDSNMode(allocator, dsn, false);
 }
@@ -455,6 +461,16 @@ pub fn parseDSN(allocator: std.mem.Allocator, dsn: []const u8) !Config {
 /// This is recommended for production use where misconfigurations should fail explicitly.
 pub fn parseDSNStrict(allocator: std.mem.Allocator, dsn: []const u8) !Config {
     return parseDSNMode(allocator, dsn, true);
+}
+
+/// A timeout read from a DSN: refused out of range when `strict`, the
+/// default out of range otherwise (SONNY-6617).
+fn lenientTimeout(ms: u32, strict: bool) !u32 {
+    validate.timeout(ms) catch |err| {
+        if (strict) return err;
+        return DEFAULT_TIMEOUT_MS;
+    };
+    return ms;
 }
 
 fn parseDSNMode(allocator: std.mem.Allocator, dsn: []const u8, strict: bool) !Config {
@@ -624,7 +640,9 @@ fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *C
                     try validate.pageSize(parsed);
                     config.page_size = parsed;
                 } else {
-                    config.page_size = std.fmt.parseInt(u32, value, 10) catch DEFAULT_PAGE_SIZE;
+                    // SONNY-6617: out of range falls back too, as documented.
+                    const parsed = std.fmt.parseInt(u32, value, 10) catch DEFAULT_PAGE_SIZE;
+                    config.page_size = if (validate.pageSize(parsed)) parsed else |_| DEFAULT_PAGE_SIZE;
                 }
             } else if (std.mem.eql(u8, key, "timeout") or std.mem.eql(u8, key, "timeout_ms") or std.mem.eql(u8, key, "connect_timeout")) {
                 // connect_timeout is in seconds, timeout_ms is in milliseconds
@@ -632,16 +650,17 @@ fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *C
                     // Convert seconds to milliseconds
                     const secs = std.fmt.parseInt(u32, value, 10) catch {
                         if (strict) return error.InvalidTimeout;
+                        config.timeout_ms = DEFAULT_TIMEOUT_MS;
                         continue;
                     };
                     // SONNY-6550: seconds whose milliseconds overflow u32
                     // are out of range, not a panic.
                     const ms = std.math.mul(u32, secs, 1000) catch {
                         if (strict) return error.TimeoutOutOfRange;
+                        config.timeout_ms = DEFAULT_TIMEOUT_MS;
                         continue;
                     };
-                    if (strict) try validate.timeout(ms);
-                    config.timeout_ms = ms;
+                    config.timeout_ms = lenientTimeout(ms, strict) catch |err| return err;
                 } else {
                     if (strict) {
                         // SECURITY: Strict mode returns error for invalid timeout (CWE-20)
@@ -649,7 +668,8 @@ fn parseQueryParams(allocator: std.mem.Allocator, params: []const u8, config: *C
                         try validate.timeout(parsed);
                         config.timeout_ms = parsed;
                     } else {
-                        config.timeout_ms = std.fmt.parseInt(u32, value, 10) catch DEFAULT_TIMEOUT_MS;
+                        const parsed = std.fmt.parseInt(u32, value, 10) catch DEFAULT_TIMEOUT_MS;
+                        config.timeout_ms = lenientTimeout(parsed, false) catch unreachable;
                     }
                 }
             } else if (std.mem.eql(u8, key, "username") or std.mem.eql(u8, key, "user")) {

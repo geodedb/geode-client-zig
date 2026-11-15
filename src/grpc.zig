@@ -17,6 +17,7 @@
 // skipped in insecure mode (development only).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const proto = @import("proto");
 const cb = @import("crypto_backend");
 
@@ -94,7 +95,8 @@ pub const GrpcConfig = struct {
     port: u16,
     /// Use TLS
     tls: bool,
-    /// Connection timeout in milliseconds
+    /// How long `connect` waits for the TCP connection and each `receive` /
+    /// `send` for the server (SONNY-6617; connect and reads ignored it).
     timeout_ms: u32,
     /// Maximum message size
     max_message_size: usize,
@@ -234,14 +236,103 @@ pub const GrpcClient = struct {
 
         // Resolve server address
         const address = try std.Io.net.IpAddress.parse(self.config.host, self.config.port);
-        const io = std.Io.Threaded.global_single_threaded.io();
 
         // Connect TCP stream (plaintext only when tls=false)
-        const tcp_stream = try std.Io.net.IpAddress.connect(&address, io, .{ .mode = .stream });
-        errdefer tcp_stream.close(io);
-
-        self.tcp_stream = tcp_stream;
+        self.tcp_stream = try connectWithin(&address, self.config.timeout_ms);
         self.connected = true;
+    }
+
+    /// SONNY-6617: a TCP connection to `address` within `timeout_ms`
+    /// (std.Io's connect has no timeout yet: a server that never answers the
+    /// SYN held `connect` for the kernel's SYN retries, about two minutes).
+    /// The socket stays non-blocking; `readExact` / `writeAll` poll it.
+    fn connectWithin(address: *const std.Io.net.IpAddress, timeout_ms: u32) !std.Io.net.Stream {
+        if (builtin.os.tag == .windows) {
+            // No poll-based path on Windows yet: the blocking connect.
+            const io = std.Io.Threaded.global_single_threaded.io();
+            return std.Io.net.IpAddress.connect(address, io, .{ .mode = .stream });
+        }
+        const posix = std.posix;
+        var storage: posix.sockaddr.storage = undefined;
+        var len: posix.socklen_t = undefined;
+        switch (address.*) {
+            .ip4 => |a| {
+                const sa: *posix.sockaddr.in = @ptrCast(@alignCast(&storage));
+                sa.* = .{ .port = std.mem.nativeToBig(u16, a.port), .addr = @bitCast(a.bytes) };
+                len = @sizeOf(posix.sockaddr.in);
+            },
+            .ip6 => |a| {
+                const sa: *posix.sockaddr.in6 = @ptrCast(@alignCast(&storage));
+                sa.* = .{ .port = std.mem.nativeToBig(u16, a.port), .flowinfo = a.flow, .addr = a.bytes, .scope_id = 0 };
+                len = @sizeOf(posix.sockaddr.in6);
+            },
+        }
+        const family: c_uint = if (address.* == .ip4) posix.AF.INET else posix.AF.INET6;
+        // A plain socket, then O_NONBLOCK and FD_CLOEXEC by fcntl: portable
+        // to Linux, macOS and the BSDs. SOCK_NONBLOCK / SOCK_CLOEXEC are type
+        // flags only some kernels take; std.posix.SOCK declares them on
+        // Darwin as shim bits for std's own socket wrapper, and the kernel
+        // refuses them (the socket() call failed on macOS).
+        const fd = std.c.socket(family, posix.SOCK.STREAM, 0);
+        if (fd < 0) return GrpcError.ConnectionFailed;
+        errdefer _ = std.c.close(fd);
+        const fd_flags = std.c.fcntl(fd, posix.F.GETFD);
+        if (fd_flags < 0 or std.c.fcntl(fd, posix.F.SETFD, fd_flags | posix.FD_CLOEXEC) < 0) return GrpcError.ConnectionFailed;
+        const fl = std.c.fcntl(fd, posix.F.GETFL);
+        if (fl < 0) return GrpcError.ConnectionFailed;
+        const OInt = @typeInfo(posix.O).@"struct".backing_integer.?;
+        const nonblock: c_int = @intCast(@as(OInt, @bitCast(posix.O{ .NONBLOCK = true })));
+        if (std.c.fcntl(fd, posix.F.SETFL, fl | nonblock) < 0) return GrpcError.ConnectionFailed;
+        // A write to a closed peer must fail, not raise SIGPIPE: SO_NOSIGPIPE
+        // where the OS has it (macOS, the BSDs), MSG_NOSIGNAL per send
+        // otherwise (`send_flags`).
+        if (comptime @hasDecl(posix.SO, "NOSIGPIPE")) {
+            const one: c_int = 1;
+            if (std.c.setsockopt(fd, posix.SOL.SOCKET, posix.SO.NOSIGPIPE, @ptrCast(&one), @sizeOf(c_int)) != 0) return GrpcError.ConnectionFailed;
+        }
+        if (std.c.connect(fd, @ptrCast(&storage), len) != 0) {
+            switch (posix.errno(-1)) {
+                .INPROGRESS, .INTR => {},
+                .CONNREFUSED => return error.ConnectionRefused,
+                .NETUNREACH => return error.NetworkUnreachable,
+                .HOSTUNREACH => return error.HostUnreachable,
+                else => return GrpcError.ConnectionFailed,
+            }
+            try waitFd(fd, posix.POLL.OUT, nowMs(), timeout_ms);
+            var so_error: c_int = 0;
+            var so_len: posix.socklen_t = @sizeOf(c_int);
+            if (std.c.getsockopt(fd, posix.SOL.SOCKET, posix.SO.ERROR, @ptrCast(&so_error), &so_len) != 0) return GrpcError.ConnectionFailed;
+            if (so_error != 0) {
+                return switch (@as(posix.E, @enumFromInt(so_error))) {
+                    .CONNREFUSED => error.ConnectionRefused,
+                    .NETUNREACH => error.NetworkUnreachable,
+                    .HOSTUNREACH => error.HostUnreachable,
+                    .TIMEDOUT => GrpcError.Timeout,
+                    else => GrpcError.ConnectionFailed,
+                };
+            }
+        }
+        return .{ .socket = .{ .handle = fd, .address = address.* } };
+    }
+
+    /// MSG_NOSIGNAL where the socket has no SO_NOSIGPIPE (Linux).
+    const send_flags: u32 = if (@hasDecl(std.posix.SO, "NOSIGPIPE")) 0 else if (@hasDecl(std.posix.MSG, "NOSIGNAL")) std.posix.MSG.NOSIGNAL else 0;
+
+    fn nowMs() i64 {
+        return std.Io.Clock.awake.now(std.Io.Threaded.global_single_threaded.io()).toMilliseconds();
+    }
+
+    /// Wait until `fd` is ready for `events`, at most until `start_ms` +
+    /// `timeout_ms`: `GrpcError.Timeout` after that.
+    fn waitFd(fd: std.posix.fd_t, events: i16, start_ms: i64, timeout_ms: u32) !void {
+        while (true) {
+            const left = @as(i64, timeout_ms) - (nowMs() - start_ms);
+            if (left <= 0) return GrpcError.Timeout;
+            var pfd = [_]std.posix.pollfd{.{ .fd = fd, .events = events, .revents = 0 }};
+            const rc = std.c.poll(&pfd, 1, @intCast(@min(left, std.math.maxInt(i32))));
+            if (rc > 0) return;
+            if (rc < 0 and std.posix.errno(rc) != .INTR) return GrpcError.ConnectionFailed;
+        }
     }
 
     /// Disconnect from the server
@@ -265,8 +356,24 @@ pub const GrpcClient = struct {
         return std.Io.Threaded.global_single_threaded.io();
     }
 
-    /// Write all bytes to the connection.
+    /// Write all bytes to the connection, within `config.timeout_ms`.
     fn writeAll(self: *Self, data: []const u8) !void {
+        if (builtin.os.tag != .windows) {
+            const stream = self.tcp_stream orelse return GrpcError.ConnectionFailed;
+            const fd = stream.socket.handle;
+            const start = nowMs();
+            var off: usize = 0;
+            while (off < data.len) {
+                try waitFd(fd, std.posix.POLL.OUT, start, self.config.timeout_ms);
+                const n = std.c.send(fd, data[off..].ptr, data.len - off, send_flags);
+                if (n < 0) switch (std.posix.errno(n)) {
+                    .INTR, .AGAIN => continue,
+                    else => return GrpcError.ConnectionFailed,
+                };
+                off += @intCast(n);
+            }
+            return;
+        }
         if (self.tcp_stream) |tcp_stream| {
             const io = getIo();
             var write_buf: [4096]u8 = undefined;
@@ -282,8 +389,25 @@ pub const GrpcClient = struct {
         }
     }
 
-    /// Read exactly `buf.len` bytes from the connection.
-    fn readExact(self: *Self, buf: []u8) !void {
+    /// Read exactly `buf.len` bytes from the connection, giving up at
+    /// `start_ms` + `timeout_ms` (`GrpcError.Timeout`).
+    fn readExact(self: *Self, buf: []u8, start_ms: i64, timeout_ms: u32) !void {
+        if (builtin.os.tag != .windows) {
+            const stream = self.tcp_stream orelse return GrpcError.ConnectionFailed;
+            const fd = stream.socket.handle;
+            var off: usize = 0;
+            while (off < buf.len) {
+                try waitFd(fd, std.posix.POLL.IN, start_ms, timeout_ms);
+                const n = std.c.read(fd, buf[off..].ptr, buf.len - off);
+                if (n == 0) return GrpcError.ConnectionFailed; // closed
+                if (n < 0) switch (std.posix.errno(n)) {
+                    .INTR, .AGAIN => continue,
+                    else => return GrpcError.ConnectionFailed,
+                };
+                off += @intCast(n);
+            }
+            return;
+        }
         if (self.tcp_stream) |tcp_stream| {
             const io = getIo();
             var read_buf: [4096]u8 = undefined;
@@ -309,15 +433,24 @@ pub const GrpcClient = struct {
         try self.writeAll(framed);
     }
 
-    /// Receive a gRPC message
+    /// Receive a gRPC message, waiting at most `config.timeout_ms`.
     pub fn receive(self: *Self) ![]u8 {
+        return self.receiveTimeout(self.config.timeout_ms);
+    }
+
+    /// Receive a gRPC message, waiting at most `timeout_ms` for all of it
+    /// (`GrpcError.Timeout`; SONNY-6617: the read waited until the server
+    /// answered or closed).
+    pub fn receiveTimeout(self: *Self, timeout_ms: u64) ![]u8 {
         if (!self.connected) {
             return GrpcError.ConnectionFailed;
         }
+        const wait: u32 = @intCast(@min(timeout_ms, std.math.maxInt(u32)));
+        const start = nowMs();
 
         // Read 5-byte gRPC header
         var header: [5]u8 = undefined;
-        try self.readExact(&header);
+        try self.readExact(&header, start, wait);
 
         // Parse header
         const parsed = decodeGrpcHeader(&header);
@@ -329,7 +462,7 @@ pub const GrpcClient = struct {
         const body = try self.allocator.alloc(u8, parsed.length);
         errdefer self.allocator.free(body);
 
-        try self.readExact(body);
+        try self.readExact(body, start, wait);
 
         return body;
     }
@@ -345,9 +478,14 @@ pub const GrpcClient = struct {
         }
     }
 
-    /// Receive a protobuf message
+    /// Receive a protobuf message, waiting at most `config.timeout_ms`.
     pub fn receiveProto(self: *Self) !proto.QuicServerMessage {
-        const body = try self.receive();
+        return self.receiveProtoTimeout(self.config.timeout_ms);
+    }
+
+    /// Receive a protobuf message, waiting at most `timeout_ms`.
+    pub fn receiveProtoTimeout(self: *Self, timeout_ms: u64) !proto.QuicServerMessage {
+        const body = try self.receiveTimeout(timeout_ms);
         defer self.allocator.free(body);
 
         // Decode protobuf message
@@ -364,8 +502,8 @@ pub const GrpcClient = struct {
             .password = password orelse "",
             .tenant_id = tenant,
             .client_name = "geode-zig-grpc",
-            .client_version = "0.1.0",
-            .wanted_conformance = "minimum",
+            .client_version = @import("version").VERSION,
+            .wanted_conformance = "min",
             .graph = graph,
             .role = role,
         };
