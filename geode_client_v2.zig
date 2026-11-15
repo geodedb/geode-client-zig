@@ -76,9 +76,14 @@ pub const GeodeClient = struct {
     // FLE role sent in HELLO field 8 (GAP-0841). Null when not using FLE.
     role: ?[]const u8 = null,
 
-    /// How long `connect` waits for the QUIC handshake and `sendHello` for
-    /// the HELLO answer (Config.timeout_ms; DSN timeout_ms / connect_timeout).
-    /// `connect` refuses a value outside 1..3600000 (SONNY-6589).
+    /// How long the client waits for the server: the QUIC handshake or the
+    /// gRPC TCP connect, the HELLO answer, the first answer to a query,
+    /// begin, commit, rollback or ping, and a write held up by flow control
+    /// (Config.timeout_ms; DSN timeout_ms / connect_timeout; SONNY-6589,
+    /// SONNY-6617). A query's later pages wait at most 5 s each, or this if
+    /// shorter. `connect` refuses a value outside 1..3600000 with
+    /// `error.InvalidTimeout` (only a Config built or changed in code can hold
+    /// one: the DSN parsers refuse it or fall back to the default).
     timeout_ms: u32 = config.DEFAULT_TIMEOUT_MS,
     /// Rows per page (Config.page_size; DSN page_size).
     page_size: u32 = config.DEFAULT_PAGE_SIZE,
@@ -425,7 +430,12 @@ pub const GeodeClient = struct {
         _ = grpc_cfg.withTimeout(self.timeout_ms);
 
         self.grpc_client = grpc.GrpcClient.init(self.allocator, grpc_cfg);
-        try self.grpc_client.?.connect();
+        // SONNY-6617: the TCP connect gives up after timeout_ms, as the QUIC
+        // handshake does.
+        self.grpc_client.?.connect() catch |err| return switch (err) {
+            error.Timeout => error.ConnectionTimeout,
+            else => err,
+        };
     }
 
     pub fn openStream(self: *GeodeClient) !void {
@@ -472,7 +482,8 @@ pub const GeodeClient = struct {
         // PERF-002: Use poll()-based blocking instead of sleep-based polling.
         // quic.poll() uses epoll/kqueue internally, so it returns as soon as
         // the transport is ready rather than sleeping a fixed duration.
-        const write_timeout_ns: u64 = 30 * std.time.ns_per_s;
+        // SONNY-6617: the client's timeout (a fixed 30 s before).
+        const write_timeout_ns: u64 = @as(u64, self.timeout_ms) * std.time.ns_per_ms;
         const start = nowNs();
 
         while (written < data.len or (fin and data.len == 0)) {
@@ -533,7 +544,12 @@ pub const GeodeClient = struct {
             .quic => return try self.receiveProtoQuic(timeout_ms),
             .grpc => {
                 if (self.grpc_client) |*gc| {
-                    return try gc.receiveProto();
+                    // SONNY-6617: the gRPC read waited until the server
+                    // answered or closed.
+                    return gc.receiveProtoTimeout(timeout_ms) catch |err| switch (err) {
+                        error.Timeout => error.ReceiveTimeout,
+                        else => err,
+                    };
                 } else {
                     return error.NotConnected;
                 }
@@ -921,7 +937,9 @@ pub const GeodeClient = struct {
         };
         errdefer result.deinit();
 
-        var timeout_ms: u64 = 30000;
+        // SONNY-6617: the first answer waits the client's timeout (a fixed
+        // 30 s before); a later page at most 5 s, or the timeout if shorter.
+        var timeout_ms: u64 = self.timeout_ms;
         while (true) {
             var response = try self.receiveProto(timeout_ms);
             defer response.deinit(self.allocator);
@@ -933,7 +951,7 @@ pub const GeodeClient = struct {
 
             // Follow-up frames for the same query should already be queued or
             // arrive quickly after the initial schema response.
-            timeout_ms = 5000;
+            timeout_ms = @min(@as(u64, self.timeout_ms), 5000);
         }
     }
 
@@ -1000,7 +1018,7 @@ pub const GeodeClient = struct {
         };
         try self.sendProto(msg);
 
-        var response = try self.receiveProto(30000);
+        var response = try self.receiveProto(self.timeout_ms);
         defer response.deinit(self.allocator);
         if (response.begin) |begin_resp| {
             if (begin_resp.tx_id.len > 0) {
@@ -1020,7 +1038,7 @@ pub const GeodeClient = struct {
         };
         try self.sendProto(msg);
 
-        var response = try self.receiveProto(30000);
+        var response = try self.receiveProto(self.timeout_ms);
         defer response.deinit(self.allocator);
         if (response.commit) |commit_resp| {
             if (!commit_resp.success) {
@@ -1041,7 +1059,7 @@ pub const GeodeClient = struct {
         };
         try self.sendProto(msg);
 
-        var response = try self.receiveProto(30000);
+        var response = try self.receiveProto(self.timeout_ms);
         defer response.deinit(self.allocator);
         if (response.rollback) |rollback_resp| {
             if (!rollback_resp.success) {
@@ -1062,7 +1080,7 @@ pub const GeodeClient = struct {
         };
         try self.sendProto(msg);
 
-        var response = try self.receiveProto(30000);
+        var response = try self.receiveProto(self.timeout_ms);
         defer response.deinit(self.allocator);
         if (response.ping) |ping_resp| {
             return ping_resp.ok;

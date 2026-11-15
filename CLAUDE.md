@@ -392,8 +392,7 @@ var hello = proto.HelloRequest{
     .username = "admin",
     .password = "secret",
     .client_name = "geode-zig",
-    .client_version = "0.1.0",
-    .wanted_conformance = "minimum",
+    // Defaults: the library version (config.VERSION) and "min".
 };
 
 // Execute query

@@ -157,6 +157,14 @@ pub fn build(b: *std.Build) void {
     validate_mod.addImport("error", error_mod);
     validate_mod.addImport("gql", gql_mod);
 
+    // The library version (src/version.zig), one module for config, proto
+    // and grpc (SONNY-6617: the HELLO's default client_version).
+    const version_mod = b.createModule(.{
+        .root_source_file = b.path("src/version.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Config module
     const cfg_mod = b.createModule(.{
         .root_source_file = b.path("src/config.zig"),
@@ -164,6 +172,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     cfg_mod.addImport("error", error_mod);
+    cfg_mod.addImport("version", version_mod);
     cfg_mod.addImport("validate", validate_mod);
     // cfg_mod uses cb.secureZero — wired after crypto_backend_mod exists below.
 
@@ -251,6 +260,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     grpc_mod.addImport("proto", proto_mod);
+    grpc_mod.addImport("version", version_mod);
+    // SONNY-6617: the gRPC socket is polled through libc (std.c).
+    grpc_mod.link_libc = true;
+    proto_mod.addImport("version", version_mod);
     // grpc_mod uses cb.secureZero — wired after crypto_backend_mod exists below.
 
     // Encryption module (client-side field-level encryption config)
@@ -604,6 +617,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     config_tests.root_module.addImport("error", error_mod);
+    config_tests.root_module.addImport("version", version_mod);
     config_tests.root_module.addImport("validate", validate_mod);
     config_tests.root_module.addImport("crypto_backend", crypto_backend_mod);
     config_tests.root_module.addImport("redact", redact_mod);
@@ -761,6 +775,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    proto_tests.root_module.addImport("version", version_mod);
     const run_proto_tests = b.addRunArtifact(proto_tests);
     test_step.dependOn(&run_proto_tests.step);
 
@@ -773,6 +788,8 @@ pub fn build(b: *std.Build) void {
         }),
     });
     grpc_tests.root_module.addImport("proto", proto_mod);
+    grpc_tests.root_module.addImport("version", version_mod);
+    grpc_tests.root_module.link_libc = true;
     grpc_tests.root_module.addImport("crypto_backend", crypto_backend_mod);
     if (fips) {
         const link_helper = @import("src/link.zig");
@@ -970,6 +987,26 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_request_timeouts_tests.step);
     const request_timeouts_step = b.step("test-request-timeouts", "Test that every request, write and gRPC wait honours timeout_ms, the lenient parser's fallbacks and the HELLO defaults (SONNY-6617)");
     request_timeouts_step.dependOn(&run_request_timeouts_tests.step);
+
+    // SONNY-6617: the inline tests of geode_client_v2.zig. The public
+    // `geode_client` module cannot be a test root (see the note below:
+    // linkSystemDeps would mutate it), so a second module with the same
+    // root file and imports carries the system libraries instead.
+    const client_inline_mod = b.createModule(.{
+        .root_source_file = b.path("geode_client_v2.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    {
+        var it = geode_client_mod.import_table.iterator();
+        while (it.next()) |e| client_inline_mod.addImport(e.key_ptr.*, e.value_ptr.*);
+    }
+    const client_inline_tests = b.addTest(.{ .root_module = client_inline_mod });
+    linkSystemDeps(client_inline_tests, target);
+    const run_client_inline_tests = b.addRunArtifact(client_inline_tests);
+    test_step.dependOn(&run_client_inline_tests.step);
+    const client_inline_step = b.step("test-client-inline", "Run the inline tests of geode_client_v2.zig (SONNY-6617; unwired since 2026-05-01)");
+    client_inline_step.dependOn(&run_client_inline_tests.step);
 
     // Test geode_client module — DELETED 2026-05-01. Previously this
     // block did `b.addTest(.{ .root_module = geode_client_mod })`

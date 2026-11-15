@@ -106,7 +106,7 @@ _ = cfg.withTimeout(60000);
 | `password` | `?[]const u8` | `null` | Authentication password |
 | `insecure` | `bool` | `false` | Skip TLS verification |
 | `page_size` | `u32` | `1000` | Result pagination size |
-| `timeout_ms` | `u32` | `30000` | Connection timeout (ms) |
+| `timeout_ms` | `u32` | `30000` | How long the client waits for the server (ms): connect, HELLO, each request's answer, a blocked write; QUIC and gRPC |
 
 **SECURITY WARNING: The `insecure` option disables TLS certificate verification, making connections vulnerable to man-in-the-middle attacks. Only use this option for local development or testing with self-signed certificates. Never use in production environments. When `insecure=true`, the connection cannot verify server identity, and all data transmitted (including credentials) could be intercepted or modified by an attacker.**
 
