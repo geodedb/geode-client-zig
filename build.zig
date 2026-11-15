@@ -934,6 +934,23 @@ pub fn build(b: *std.Build) void {
         dsn_userinfo_step.dependOn(&run_dsn_tests.step);
     }
 
+    // SONNY-6589: initFromConfig applies timeout_ms, page_size, tls and the
+    // HELLO strings; connect and sendHello honour timeout_ms over real sockets.
+    const config_timeouts_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/config_timeouts_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    config_timeouts_tests.root_module.addImport("geode_client", geode_client_mod);
+    config_timeouts_tests.root_module.addImport("quic", quic_mod);
+    linkSystemDeps(config_timeouts_tests, target);
+    const run_config_timeouts_tests = b.addRunArtifact(config_timeouts_tests);
+    test_step.dependOn(&run_config_timeouts_tests.step);
+    const config_timeouts_step = b.step("test-config-timeouts", "Test that the client applies Config timeouts, TLS and HELLO fields (SONNY-6589)");
+    config_timeouts_step.dependOn(&run_config_timeouts_tests.step);
+
     // Test geode_client module — DELETED 2026-05-01. Previously this
     // block did `b.addTest(.{ .root_module = geode_client_mod })`
     // followed by `linkSystemDeps(client_tests, target)`. Because

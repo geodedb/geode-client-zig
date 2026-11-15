@@ -3,7 +3,7 @@
 //
 // A loopback QUIC echo server and its test PKI, shared by the dial tests
 // (tests/ipv6_dial_test.zig, SONNY-6494; tests/dsn_userinfo_test.zig,
-// SONNY-6550).
+// SONNY-6550; tests/config_timeouts_test.zig, SONNY-6589).
 //
 // The server is a real QUIC endpoint from the vendored quic library with a
 // CA-signed certificate made by openssl (IP SANs for ::1 and 127.0.0.1),
@@ -104,12 +104,18 @@ pub fn makePki() !Pki {
 }
 
 /// A QUIC server endpoint on `bind_addr` that echoes every stream byte.
+/// With `echo = false` it completes the handshake and reads, but never
+/// answers. The first `captured.len` bytes read are kept in `captured`; read
+/// them after `stop` (which joins the server thread).
 pub const EchoServer = struct {
     ep: *quic.QuicEndpoint,
     cfg: quic.QuicConfig,
     alloc: std.mem.Allocator,
     done: std.atomic.Value(bool) = .init(false),
     thread: ?std.Thread = null,
+    echo: bool = true,
+    captured: [4096]u8 = undefined,
+    captured_len: usize = 0,
 
     const alpn = [_][]const u8{"geode/1"};
 
@@ -121,6 +127,7 @@ pub const EchoServer = struct {
             .inline_server_priv_p256 = pki.key_der,
         };
         self.done = .init(false);
+        self.captured_len = 0;
         self.ep = try quic.endpointInit(&self.alloc, bind_addr, &self.cfg);
         errdefer quic.endpointDeinit(self.ep);
         self.thread = try std.Thread.spawn(.{}, run, .{self});
@@ -162,6 +169,10 @@ pub const EchoServer = struct {
                 }
                 const sid = streams[i] orelse continue;
                 const got = quic.readStream(c, sid, &buf) catch continue;
+                const keep = @min(got, self.captured.len - self.captured_len);
+                @memcpy(self.captured[self.captured_len..][0..keep], buf[0..keep]);
+                self.captured_len += keep;
+                if (!self.echo) continue;
                 var sent: usize = 0;
                 while (sent < got and !self.done.load(.acquire)) {
                     const w = quic.writeStream(c, sid, buf[sent..got], false) catch break;
@@ -176,6 +187,17 @@ pub const EchoServer = struct {
 
 /// Start an echo server on `bind_addr`, or skip when the host cannot bind it.
 pub fn startServer(server: *EchoServer, bind_addr: []const u8, pki: *const Pki) !void {
+    server.echo = true;
+    return startConfigured(server, bind_addr, pki);
+}
+
+/// Start a server that completes the handshake but never answers.
+pub fn startSilentServer(server: *EchoServer, bind_addr: []const u8, pki: *const Pki) !void {
+    server.echo = false;
+    return startConfigured(server, bind_addr, pki);
+}
+
+fn startConfigured(server: *EchoServer, bind_addr: []const u8, pki: *const Pki) !void {
     server.start(bind_addr, pki) catch |err| {
         std.debug.print("SKIP: cannot bind a QUIC server on {s} ({s}); the host has no usable address of that family\n", .{ bind_addr, @errorName(err) });
         return error.SkipZigTest;

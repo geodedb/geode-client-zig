@@ -76,6 +76,21 @@ pub const GeodeClient = struct {
     // FLE role sent in HELLO field 8 (GAP-0841). Null when not using FLE.
     role: ?[]const u8 = null,
 
+    /// How long `connect` waits for the QUIC handshake and `sendHello` for
+    /// the HELLO answer (Config.timeout_ms; DSN timeout_ms / connect_timeout).
+    /// `connect` refuses a value outside 1..3600000 (SONNY-6589).
+    timeout_ms: u32 = config.DEFAULT_TIMEOUT_MS,
+    /// Rows per page (Config.page_size; DSN page_size).
+    page_size: u32 = config.DEFAULT_PAGE_SIZE,
+    /// TLS on a gRPC connection (Config.tls; QUIC always uses TLS). Null on
+    /// a client built in code: TLS is then `!insecure`, as before.
+    tls: ?bool = null,
+    /// HELLO fields 4-6 (Config.hello_name / hello_ver / conformance), owned.
+    /// Null sends the protocol defaults (proto.HelloRequest).
+    hello_name: ?[]const u8 = null,
+    hello_ver: ?[]const u8 = null,
+    conformance: ?[]const u8 = null,
+
     /// Initialize a QUIC client (backward compatible).
     pub fn init(allocator: std.mem.Allocator, host: []const u8, port: u16, insecure: bool, username: []const u8, password: []const u8) !GeodeClient {
         return initWithTransport(allocator, host, port, insecure, username, password, .quic);
@@ -119,6 +134,13 @@ pub const GeodeClient = struct {
             cfg.password orelse "",
             cfg.transport,
         );
+        errdefer client.deinit();
+        client.timeout_ms = cfg.timeout_ms;
+        client.page_size = cfg.page_size;
+        client.tls = cfg.tls;
+        client.hello_name = try allocator.dupe(u8, cfg.hello_name);
+        client.hello_ver = try allocator.dupe(u8, cfg.hello_ver);
+        client.conformance = try allocator.dupe(u8, cfg.conformance);
         if (cfg.graph) |g| {
             client.graph = try allocator.dupe(u8, g);
         }
@@ -208,6 +230,12 @@ pub const GeodeClient = struct {
         if (self.server_name) |name| {
             self.allocator.free(name);
             self.server_name = null;
+        }
+        inline for (.{ "hello_name", "hello_ver", "conformance" }) |field| {
+            if (@field(self, field)) |v| {
+                self.allocator.free(v);
+                @field(self, field) = null;
+            }
         }
 
         // Clean up QUIC resources. Flush the endpoint after close so the server
@@ -341,6 +369,8 @@ pub const GeodeClient = struct {
         // SONNY-6550: port 0 cannot be dialled (a Config built in code
         // skips the DSN parsers' check).
         validate.port(self.port) catch return error.InvalidPort;
+        // SONNY-6589: 0 would give up at once (a lenient DSN keeps it).
+        validate.timeout(self.timeout_ms) catch return error.InvalidTimeout;
         const transport_tag: obs.Transport = switch (self.transport) {
             .quic => .quic,
             .grpc => .grpc,
@@ -373,7 +403,7 @@ pub const GeodeClient = struct {
         // Wait for handshake confirmation using poll()-based blocking.
         // poll() blocks on epoll/kqueue until packets arrive, so there is no
         // need for an additional sleep between iterations.
-        const timeout_ns: u64 = 30 * std.time.ns_per_s;
+        const timeout_ns: u64 = @as(u64, self.timeout_ms) * std.time.ns_per_ms;
         const start = nowNs();
         while (true) {
             const remaining = remainingMs(start, timeout_ns);
@@ -391,7 +421,8 @@ pub const GeodeClient = struct {
         _ = grpc_cfg.withHost(self.host);
         _ = grpc_cfg.withPort(self.port);
         _ = grpc_cfg.withInsecure(self.insecure);
-        _ = grpc_cfg.withTls(!self.insecure);
+        _ = grpc_cfg.withTls(self.tls orelse !self.insecure);
+        _ = grpc_cfg.withTimeout(self.timeout_ms);
 
         self.grpc_client = grpc.GrpcClient.init(self.allocator, grpc_cfg);
         try self.grpc_client.?.connect();
@@ -713,19 +744,20 @@ pub const GeodeClient = struct {
         // tenant_id (field 3) and role (field 8) ride the HELLO only when
         // set so single-tenant / non-FLE connections send absent fields
         // (GAP-0841). encodeString omits empty/absent optional strings.
-        const msg = proto.QuicClientMessage{
-            .hello = proto.HelloRequest{
-                .username = self.username,
-                .password = self.password,
-                .tenant_id = self.tenant,
-                .graph = self.graph,
-                .role = self.role,
-            },
+        var hello_req = proto.HelloRequest{
+            .username = self.username,
+            .password = self.password,
+            .tenant_id = self.tenant,
+            .graph = self.graph,
+            .role = self.role,
         };
-        try self.sendProto(msg);
+        if (self.hello_name) |v| hello_req.client_name = v;
+        if (self.hello_ver) |v| hello_req.client_version = v;
+        if (self.conformance) |v| hello_req.wanted_conformance = v;
+        try self.sendProto(.{ .hello = hello_req });
 
         // Wait for hello response
-        var response = try self.receiveProto(30000);
+        var response = try self.receiveProto(self.timeout_ms);
         defer response.deinit(self.allocator);
         if (response.hello) |hello| {
             if (hello.success) {
