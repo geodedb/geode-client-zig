@@ -797,6 +797,10 @@ pub fn build(b: *std.Build) void {
     }
     const run_grpc_tests = b.addRunArtifact(grpc_tests);
     test_step.dependOn(&run_grpc_tests.step);
+    // SONNY-6617: compile the gRPC socket code without running it, so a
+    // cross target can be checked (`zig build check-grpc -Dtarget=aarch64-macos`).
+    const grpc_check = b.step("check-grpc", "Compile the gRPC transport tests without running (cross-target check)");
+    grpc_check.dependOn(&grpc_tests.step);
 
     // Test quote module
     const quote_tests = b.addTest(.{

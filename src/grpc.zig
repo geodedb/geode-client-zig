@@ -268,15 +268,27 @@ pub const GrpcClient = struct {
             },
         }
         const family: c_uint = if (address.* == .ip4) posix.AF.INET else posix.AF.INET6;
-        const sock_flags: c_uint = if (@hasDecl(posix.SOCK, "NONBLOCK")) posix.SOCK.NONBLOCK | posix.SOCK.CLOEXEC else 0;
-        const fd = std.c.socket(family, posix.SOCK.STREAM | sock_flags, 0);
+        // A plain socket, then O_NONBLOCK and FD_CLOEXEC by fcntl: portable
+        // to Linux, macOS and the BSDs. SOCK_NONBLOCK / SOCK_CLOEXEC are type
+        // flags only some kernels take; std.posix.SOCK declares them on
+        // Darwin as shim bits for std's own socket wrapper, and the kernel
+        // refuses them (the socket() call failed on macOS).
+        const fd = std.c.socket(family, posix.SOCK.STREAM, 0);
         if (fd < 0) return GrpcError.ConnectionFailed;
         errdefer _ = std.c.close(fd);
-        if (!@hasDecl(posix.SOCK, "NONBLOCK")) {
-            const fl = std.c.fcntl(fd, posix.F.GETFL);
-            if (fl < 0) return GrpcError.ConnectionFailed;
-            const nonblock: c_int = @bitCast(@as(u32, @bitCast(posix.O{ .NONBLOCK = true })));
-            if (std.c.fcntl(fd, posix.F.SETFL, fl | nonblock) < 0) return GrpcError.ConnectionFailed;
+        const fd_flags = std.c.fcntl(fd, posix.F.GETFD);
+        if (fd_flags < 0 or std.c.fcntl(fd, posix.F.SETFD, fd_flags | posix.FD_CLOEXEC) < 0) return GrpcError.ConnectionFailed;
+        const fl = std.c.fcntl(fd, posix.F.GETFL);
+        if (fl < 0) return GrpcError.ConnectionFailed;
+        const OInt = @typeInfo(posix.O).@"struct".backing_integer.?;
+        const nonblock: c_int = @intCast(@as(OInt, @bitCast(posix.O{ .NONBLOCK = true })));
+        if (std.c.fcntl(fd, posix.F.SETFL, fl | nonblock) < 0) return GrpcError.ConnectionFailed;
+        // A write to a closed peer must fail, not raise SIGPIPE: SO_NOSIGPIPE
+        // where the OS has it (macOS, the BSDs), MSG_NOSIGNAL per send
+        // otherwise (`send_flags`).
+        if (comptime @hasDecl(posix.SO, "NOSIGPIPE")) {
+            const one: c_int = 1;
+            if (std.c.setsockopt(fd, posix.SOL.SOCKET, posix.SO.NOSIGPIPE, @ptrCast(&one), @sizeOf(c_int)) != 0) return GrpcError.ConnectionFailed;
         }
         if (std.c.connect(fd, @ptrCast(&storage), len) != 0) {
             switch (posix.errno(-1)) {
@@ -302,6 +314,9 @@ pub const GrpcClient = struct {
         }
         return .{ .socket = .{ .handle = fd, .address = address.* } };
     }
+
+    /// MSG_NOSIGNAL where the socket has no SO_NOSIGPIPE (Linux).
+    const send_flags: u32 = if (@hasDecl(std.posix.SO, "NOSIGPIPE")) 0 else if (@hasDecl(std.posix.MSG, "NOSIGNAL")) std.posix.MSG.NOSIGNAL else 0;
 
     fn nowMs() i64 {
         return std.Io.Clock.awake.now(std.Io.Threaded.global_single_threaded.io()).toMilliseconds();
@@ -350,8 +365,7 @@ pub const GrpcClient = struct {
             var off: usize = 0;
             while (off < data.len) {
                 try waitFd(fd, std.posix.POLL.OUT, start, self.config.timeout_ms);
-                const no_sigpipe: u32 = if (@hasDecl(std.posix.MSG, "NOSIGNAL")) std.posix.MSG.NOSIGNAL else 0;
-                const n = std.c.send(fd, data[off..].ptr, data.len - off, no_sigpipe);
+                const n = std.c.send(fd, data[off..].ptr, data.len - off, send_flags);
                 if (n < 0) switch (std.posix.errno(n)) {
                     .INTR, .AGAIN => continue,
                     else => return GrpcError.ConnectionFailed,
