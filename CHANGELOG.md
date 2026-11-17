@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.20] - 2026-11-17
+
+### Changed
+
+- quic v0.1.55 (from v0.1.51; SONNY-6522, SONNY-6649, SONNY-6654,
+  SONNY-6655, SONNY-6673). A long transfer no longer stops for good after a
+  burst loss right after a QUIC key update, the client takes an RTT sample
+  from the handshake (a request lost right after connecting is resent after
+  ~0.1 s instead of ~1 s), a server's UDP port can no longer be bound by a
+  second socket, no two packets share a packet number (and so an AEAD nonce),
+  received ACK ranges are no longer read from a dead stack frame in release
+  builds, and a client writing a stream in a loop no longer starves its own
+  ACK processing. API-compatible.
+- Dependency cascade (SONNY-6630): tls v0.1.28, json v0.1.21, config
+  v0.1.19, slog v0.1.16, uri v0.1.17, uuid v0.1.10 (was an untagged commit),
+  gql v0.1.22, metrics v0.1.10 and the lazy otel v0.1.29, whose tree now pins
+  thread-pool v0.2.11 throughout. thread-pool stays pinned to the v0.2.11
+  commit.
+
 ## [0.3.19] - 2026-11-15
 
 ### Fixed
