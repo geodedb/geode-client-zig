@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.21] - 2026-11-18
+
+### Changed
+
+- quic v0.1.57 (SONNY-6737): when the socket accepts only part of a
+  batched send, every paced datagram is still sent exactly once; before,
+  the ones past the accepted part were freed unsent (left to loss
+  recovery), and the per-datagram fallback sent some twice. Its tree is on
+  otel v0.1.30.
+- dns v0.1.29, strings v0.1.7, auth v0.1.23 (was untagged `4620287`),
+  gql v0.1.23 and the lazy otel v0.1.30 (grpc-zig v0.1.16), the SONNY-6630
+  cascade releases, whose trees all pin thread-pool v0.2.11, json v0.1.21
+  and config v0.1.19. No API change.
+
+### Tests
+
+- `integration: arithmetic expressions` delimits the reserved aliases
+  `sum` and `product` (ISO/IEC 39075:2024 21.3), which geode refuses as
+  plain aliases (SONNY-6630).
+
 ## [0.3.20] - 2026-11-17
 
 ### Changed
