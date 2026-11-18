@@ -303,7 +303,9 @@ test "integration: arithmetic expressions" {
     var ctx = try TestContext.init(std.testing.allocator);
     defer ctx.deinit();
 
-    var result = try ctx.query("RETURN 2 + 3 AS sum, 10 - 4 AS diff, 3 * 4 AS product");
+    // SUM and PRODUCT are reserved words (ISO/IEC 39075:2024 21.3); geode
+    // refuses them as plain aliases (42000), so they are delimited.
+    var result = try ctx.query("RETURN 2 + 3 AS `sum`, 10 - 4 AS diff, 3 * 4 AS `product`");
     defer result.deinit();
 
     try std.testing.expect(!result.hasError());
