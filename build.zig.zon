@@ -87,8 +87,11 @@
             // 2026-11-18: v0.1.56 (54491db, SONNY-6630) — otel v0.1.30 (lazy), so
             // one otel/thread-pool tree; no transport change (test-only fixes since
             // v0.1.55). Lockstep with geode.
-            .url = "git+https://gitlab.com/devnw/zig/quic.git?ref=v0.1.56#54491db86e1aceec79b80053938a67c0ec1e772f",
-            .hash = "quic-0.1.56-gBIqUQlKRwAs1d-cRuoA3iM__-rxYczHsSkBSy3waYeZ",
+            // 2026-11-18: v0.1.57 (7bdc807, SONNY-6737) — after a partial sendBatch
+            // every paced datagram is sent exactly once (none freed unsent, none
+            // sent twice). Same otel v0.1.30 tree. Lockstep with geode.
+            .url = "git+https://gitlab.com/devnw/zig/quic.git?ref=v0.1.57#7bdc8073bde250d6371d1fdc3808cd1363647f7e",
+            .hash = "quic-0.1.57-gBIqUQ2LRwBumm60rOnTJEjPv06fMFO2EwpPw0MrnufD",
         },
         // TLS 1.3 library for QUIC (must match the version quic v0.1.33 uses)
         // 2026-06-23: v0.1.16 — FIPS stack: tls gains OpenSSL FIPS backend wiring.
